@@ -6,7 +6,6 @@ from __future__ import annotations
 import ctypes
 import gc
 import os
-import shutil
 import sqlite3
 import statistics
 import tempfile
@@ -71,7 +70,8 @@ def row(label, tmin, tmed, extra=""):
 def main():
     tmp = Path(tempfile.mkdtemp(prefix="ham_bench_"))
     from config.settings import Settings
-    s = Settings()
+    # 隔离 config：benchmark 不得写真实 config.json（任务书第一阶段 #1）
+    s = Settings(path=tmp / "config.json")
     s.set_many(data_dir=str(tmp / "data"), logs_dir=str(tmp / "logs"), backup_dir=str(tmp / "backup"))
 
     t0 = time.perf_counter()
@@ -128,7 +128,7 @@ def main():
 
     # ============ 轮3：录入/提交性能 ============
     print("\n===== 轮3 录入/提交性能（150 条，无 Excel） =====")
-    svc2_settings = Settings(); svc2_settings.set_many(
+    svc2_settings = Settings(path=tmp / "config2.json"); svc2_settings.set_many(
         data_dir=str(tmp / "data2"), logs_dir=str(tmp / "logs2"), backup_dir=str(tmp / "backup2"))
     from services.app_service import AppService as _AS
     svc2 = _AS(svc2_settings)

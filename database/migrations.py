@@ -176,6 +176,85 @@ MIGRATIONS: dict[int, list[str]] = {
         "ALTER TABLE checkins ADD COLUMN excel_synced INTEGER DEFAULT 0",
         "ALTER TABLE checkins ADD COLUMN excel_row INTEGER",
     ],
+    3: [
+        # 任务书第一阶段 #3：并发下不允许重复 (session_id, sequence_no)。
+        # 先清理既有重复（保留最小 id，重复序号属于历史数据损坏），再建唯一索引。
+        """
+        DELETE FROM checkins
+        WHERE sequence_no IS NOT NULL
+          AND id NOT IN (
+            SELECT MIN(id) FROM checkins WHERE sequence_no IS NOT NULL
+            GROUP BY session_id, sequence_no
+          )
+        """,
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_checkins_session_seq "
+        "ON checkins(session_id, sequence_no)",
+    ],
+    4: [
+        # 任务书第一阶段 #5：Excel 绑定是 Session 级的，记录每个场次的 sheet 名。
+        "ALTER TABLE sessions ADD COLUMN excel_sheet_name TEXT",
+    ],
+    5: [
+        # 任务书第一阶段 #9/#10：Excel 同步状态机。
+        # pending/written/persisted/verified/conflict/error + 错误信息 + 同步时间 + 绑定指纹。
+        "ALTER TABLE checkins ADD COLUMN excel_sync_status TEXT DEFAULT 'pending'",
+        "ALTER TABLE checkins ADD COLUMN excel_last_error TEXT",
+        "ALTER TABLE checkins ADD COLUMN excel_synced_at TEXT",
+        "ALTER TABLE checkins ADD COLUMN excel_binding_id TEXT",
+        # 旧库回填：excel_synced=1 视为已持久化并验证
+        "UPDATE checkins SET excel_sync_status = CASE WHEN excel_synced=1 "
+        "THEN 'verified' ELSE 'pending' END",
+    ],
+    6: [
+        # 任务书第二阶段 #12~#14：365dt 真增量。
+        # per-callsign 同步状态（(source, uid, callsign) 命名空间，UID 切换自动隔离）。
+        """
+        CREATE TABLE IF NOT EXISTS source_station_state (
+            source TEXT NOT NULL,
+            source_uid TEXT NOT NULL,
+            callsign TEXT NOT NULL,
+            ranking_count INTEGER DEFAULT 0,
+            last_history_key TEXT,
+            last_seen_at TEXT,
+            last_fetch_at TEXT,
+            status TEXT DEFAULT 'pending',
+            error_message TEXT,
+            PRIMARY KEY (source, source_uid, callsign)
+        )
+        """,
+        # 由数据库负责最终去重：UNIQUE(source, source_record_id)（仅非空 source_record_id）
+        # 先清理既有重复（保留最小 id），再建部分唯一索引。
+        """
+        DELETE FROM checkins
+        WHERE source_record_id IS NOT NULL AND source_record_id != ''
+          AND id NOT IN (
+            SELECT MIN(id) FROM checkins
+            WHERE source_record_id IS NOT NULL AND source_record_id != ''
+            GROUP BY source, source_record_id
+          )
+        """,
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_checkins_source_record "
+        "ON checkins(source, source_record_id) "
+        "WHERE source_record_id IS NOT NULL AND source_record_id != ''",
+        # 外部场次稳定键：避免结束用户同名场次（任务书第二阶段 #20）
+        "ALTER TABLE sessions ADD COLUMN external_source TEXT",
+        "ALTER TABLE sessions ADD COLUMN external_uid TEXT",
+        "ALTER TABLE sessions ADD COLUMN external_key TEXT",
+    ],
+    7: [
+        # 任务书第三阶段 #2：导入文件完成状态（只有 completed 才能整文件跳过）。
+        """
+        CREATE TABLE IF NOT EXISTS import_jobs (
+            source TEXT NOT NULL,
+            source_file TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            imported_count INTEGER DEFAULT 0,
+            error_message TEXT,
+            updated_at TEXT,
+            PRIMARY KEY (source, source_file)
+        )
+        """,
+    ],
 }
 
 

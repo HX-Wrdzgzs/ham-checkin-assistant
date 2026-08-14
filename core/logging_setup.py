@@ -41,3 +41,12 @@ def setup_logging(logs_dir: Path) -> None:
 
 def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(f"ham.{name}")
+
+
+def log_file_path() -> str:
+    """当前 app 日志文件路径（未配置时返回约定路径）。"""
+    for handler in logging.getLogger("ham.app").handlers:
+        base = getattr(handler, "baseFilename", None)
+        if base:
+            return str(base)
+    return str(Path("logs") / "app.log")

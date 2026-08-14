@@ -1,11 +1,12 @@
 """Excel 表头识别：不写死列，通过表头别名动态映射列（规格第 48 节）。"""
 from __future__ import annotations
 
-FIELDS = ("sequence", "time", "callsign", "qth", "device", "antenna", "power", "signal")
+FIELDS = ("sequence", "date", "time", "callsign", "qth", "device", "antenna", "power", "signal")
 
 # 别名表：统一转大写去空格后匹配
 HEADER_ALIASES: dict[str, list[str]] = {
     "sequence": ["序号", "序", "NO", "NO.", "#", "编号", "SEQUENCE"],
+    "date": ["日期", "点名日期", "DATE", "上报日期"],
     "time": ["时间", "TIME", "点名时间", "上报时间", "TIME(HHMM)"],
     "callsign": ["呼号", "CALLSIGN", "CALL", "电台呼号", "CALL SIGN"],
     "qth": ["QTH", "地点", "位置", "QTH地点"],

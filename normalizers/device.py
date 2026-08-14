@@ -1,7 +1,7 @@
 """设备规范化：别名匹配（忽略大小写、连字符、空格）。"""
 from __future__ import annotations
 
-from normalizers.dictionaries import AliasStore, norm_key
+from normalizers.dictionaries import AliasStore
 
 
 def resolve_device(store: AliasStore, token: str):

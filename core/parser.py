@@ -46,13 +46,15 @@ def _is_explicit_power(store: AliasStore, t: str) -> bool:
 
 class Parser:
     def __init__(self, store: AliasStore, region: RegionIndex, predictor: Predictor,
-                 fuzzy_high: float = 92.0, fuzzy_mid: float = 75.0) -> None:
+                 fuzzy_high: float = 92.0, fuzzy_mid: float = 75.0,
+                 fuzzy_margin: float = 5.0) -> None:
         self.store = store
         self.region = region
         self.qth_norm = QthNormalizer(store, region)
         self.predictor = predictor
         self.fuzzy_high = fuzzy_high
         self.fuzzy_mid = fuzzy_mid
+        self.fuzzy_margin = fuzzy_margin
         self._qth_fuzzy_opts = None
 
     def invalidate_caches(self) -> None:
@@ -89,7 +91,9 @@ class Parser:
             if self._is_alias_token(t):
                 continue
             std, valid, issues = normalize_callsign(t)
-            if std and (valid or _looks_like_callsign(t)):
+            has_slash = "/" in (t or "")
+            # 含 / 的呼号必须整体合法（///、A/// 等拒绝，任务书第二阶段 #8）
+            if std and (valid or (not has_slash and _looks_like_callsign(t))):
                 result.callsign = ParseField(std, "input", 1.0,
                                              candidates=issues if issues else [], raw=t)
                 used[i] = True
@@ -152,19 +156,10 @@ class Parser:
 
         result.unmatched = [t for i, t in enumerate(tokens) if not used[i]]
 
-        # 7. 历史补全（呼号已知；仅补缺失字段，作为建议可被 Tab 接受）
+        # 7. 历史建议（呼号已知）。只放入 result.history，绝不直接写入字段——
+        #    只有用户 Tab 接受（accept_history）后才进入提交 payload（任务书第二阶段 #1/#2）。
         if result.callsign.value:
-            pred = self.predictor.predict(result.callsign.value)
-            result.history = pred
-            for ft, info in pred.items():
-                field = getattr(result, ft)
-                if not field.value:
-                    val = info["recent"] or info["frequent"]
-                    if val:
-                        src = "history_recent" if info["recent"] else "history_frequent"
-                        field.value = val
-                        field.source = src
-                        field.confidence = confidence_for(src)
+            result.history = self.predictor.predict(result.callsign.value)
 
         # 8. 模糊匹配未匹配 token
         for i, t in enumerate(tokens):
@@ -174,11 +169,28 @@ class Parser:
 
         return result
 
+    def accept_history(self, result: ParseResult) -> ParseResult:
+        """Tab 接受历史建议：把 history 中的 recent/frequent 合入缺失字段，标记为 manual。
+
+        只在用户显式接受后，历史值才进入提交 payload（任务书第二阶段 #1/#2）。
+        """
+        for ft, info in result.history.items():
+            field = getattr(result, ft)
+            if field.value:
+                continue  # 本次显式输入优先，历史绝不覆盖
+            val = (info or {}).get("recent") or (info or {}).get("frequent")
+            if val:
+                field.value = val
+                field.source = "manual"
+                field.confidence = confidence_for("manual")
+        return result
+
     def _try_fuzzy(self, result: ParseResult, token: str, used: list, i: int) -> None:
         best_level, best_hits, best_kind = "low", [], None
         # QTH：字符 + 拼音 + 省份权重（选项缓存，避免每次解析重建全量列表）
         level, hits = fuzzy_resolve_pinyin(
-            token, self._qth_fuzzy_options(), self.fuzzy_high, self.fuzzy_mid)
+            token, self._qth_fuzzy_options(), self.fuzzy_high, self.fuzzy_mid,
+            min_margin=self.fuzzy_margin)
         if level != "low":
             best_level, best_hits, best_kind = level, hits, "qth"
         # 设备 / 天线 / 功率：字符相似度
@@ -187,7 +199,8 @@ class Parser:
             (self.store.options("antenna"), "antenna"),
             (self.store.options("power"), "power"),
         ]:
-            level, hits = fuzzy_resolve(token, opts, self.fuzzy_high, self.fuzzy_mid)
+            level, hits = fuzzy_resolve(token, opts, self.fuzzy_high, self.fuzzy_mid,
+                                        min_margin=self.fuzzy_margin)
             if level == "low":
                 continue
             if best_level == "low" or (hits and hits[0][0] > (best_hits[0][0] if best_hits else 0)):

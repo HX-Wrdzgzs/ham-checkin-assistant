@@ -87,6 +87,11 @@ class TestParser(unittest.TestCase):
         self.assertEqual(self.parser.parse("bg4tki 南京南").qth.value, "南京南")
 
     def test_history_suggestion_not_auto(self):
+        """历史只是建议，绝不写入实际字段；Tab 接受后才进入字段。
+
+        （原实现把历史直接写进 qth.value 并标记 history_recent，导致「只输呼号
+        → Enter 直接提交历史值」。按任务书第二阶段 #1/#2 已改：parse 只填 result.history。）
+        """
         s = self.repo.create_session("测试", "2026-08-08")
         c = Checkin(session_id=s.id, sequence_no=1, checkin_time="2026-08-08T10:00:00",
                     callsign="BA4XXX", qth_standard="南京栖霞", device_standard="K6",
@@ -96,10 +101,14 @@ class TestParser(unittest.TestCase):
         self.repo.upsert_station_from_checkin(c)
         r = self.parser.parse("ba4xxx")
         self.assertEqual(r.callsign.value, "BA4XXX")
-        # 历史只是建议，不能自动提交：字段必须有值但来源是 history
-        self.assertEqual(r.qth.value, "南京栖霞")
-        self.assertEqual(r.qth.source, "history_recent")
+        # 历史只是建议，不自动提交：实际字段必须为空
+        self.assertEqual(r.qth.value, "")
+        self.assertEqual(r.qth.source, "")
         self.assertEqual(r.history["qth"]["recent"], "南京栖霞")
+        # Tab 接受后才进入字段
+        r2 = self.parser.accept_history(r)
+        self.assertEqual(r2.qth.value, "南京栖霞")
+        self.assertEqual(r2.qth.source, "manual")
 
     def test_partial_history(self):
         s = self.repo.create_session("测试", "2026-08-08")
@@ -111,8 +120,15 @@ class TestParser(unittest.TestCase):
         r = self.parser.parse("ba4xxx 10")
         self.assertEqual(r.power.value, "10W")
         self.assertEqual(r.power.source, "input")  # 本次输入优先
-        self.assertEqual(r.qth.value, "南京栖霞")   # 历史补全
-        self.assertEqual(r.device.value, "K6")
+        # 历史不进字段，只作建议
+        self.assertEqual(r.qth.value, "")
+        self.assertEqual(r.device.value, "")
+        self.assertEqual(r.history["qth"]["recent"], "南京栖霞")
+        self.assertEqual(r.history["device"]["recent"], "K6")
+        # 显式输入不被历史覆盖
+        r2 = self.parser.accept_history(r)
+        self.assertEqual(r2.power.value, "10W")
+        self.assertEqual(r2.qth.value, "南京栖霞")
 
     def test_fuzzy_njqix(self):
         r = self.parser.parse("bg4tki njqix k6")

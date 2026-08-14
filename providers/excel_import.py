@@ -16,7 +16,6 @@ from openpyxl import load_workbook
 from database.models import Checkin, RawImport
 from database.repository import Repository
 from excel import template
-from excel.exporter import hhmm
 from providers.base import DataProvider
 
 
@@ -37,50 +36,72 @@ class ExcelImportProvider(DataProvider):
 
     # ---------- 导入 ----------
     def import_file(self, path: Path, standardizer=None) -> tuple[int, int, str]:
-        """返回 (导入数, 跳过数, 说明)。"""
+        """返回 (导入数, 跳过数, 说明)。原子导入：失败整体回滚（任务书第三阶段 #1/#2）。"""
         path = Path(path)
         if not path.exists():
             return 0, 0, "文件不存在"
+        if path.suffix.lower() == ".xls":
+            return 0, 0, "暂不支持 .xls，请另存为 .xlsx 后导入（任务书第三阶段 #4）"
+        if path.suffix.lower() != ".xlsx":
+            return 0, 0, "仅支持 .xlsx 文件"
         fh = self.repo.file_hash(str(path))
-        if self._file_imported(fh):
+        if self.repo.import_job_completed("excel_import", fh):
             return 0, 0, "该文件已导入过（已跳过）"
 
-        wb = load_workbook(path, data_only=True, read_only=True)
-        rows: list[dict] = []
-        first_date = ""
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            data = [[c.value for c in row] for row in ws.iter_rows()]
-            header_idx, mapping = template.find_header_row(data)
-            if header_idx is None or not mapping.get("callsign"):
-                continue
-            for ri in range(header_idx + 1, len(data)):
-                row_vals = data[ri]
-                rec = self._row_to_record(mapping, row_vals, fh, sheet_name, ri)
-                if rec is None:
+        # 1) 解析（流式，不写库；任何异常都不产生半导入）
+        try:
+            wb = load_workbook(path, data_only=True, read_only=True)
+        except Exception as e:  # noqa: BLE001
+            self.repo.mark_import_job("excel_import", fh, "failed", error=str(e))
+            return 0, 0, f"文件无法读取：{e}"
+        try:
+            prepared: list[dict] = []
+            first_date = ""
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                rows_iter = ws.iter_rows(values_only=True)
+                # 缓冲前 12 行识别表头（find_header_row 只查前 10 行）
+                head = []
+                for _ in range(12):
+                    try:
+                        head.append(next(rows_iter))
+                    except StopIteration:
+                        break
+                header_idx, mapping = template.find_header_row(head)
+                if header_idx is None or not mapping.get("callsign"):
                     continue
-                if not first_date:
-                    first_date = rec.get("date", "")
-                rows.append(rec)
-        wb.close()
-        if not rows:
+                # 表头之后的行 = 缓冲中剩余 + 流式剩余（逐行处理，不整体加载）
+                all_data = list(head[header_idx + 1:]) + list(rows_iter)
+                for ri, row_vals in enumerate(all_data, start=header_idx + 2):
+                    rec = self._row_to_record(mapping, row_vals, fh, sheet_name, ri)
+                    if rec is None:
+                        continue
+                    if not first_date:
+                        first_date = rec.get("date", "")
+                    prepared.append(rec)
+        finally:
+            wb.close()
+        if not prepared:
+            self.repo.mark_import_job("excel_import", fh, "failed",
+                                      error="未识别到有效数据行")
             return 0, 0, "未识别到有效数据行"
 
-        date = self._guess_date(path, rows, first_date)
-        session = self.repo.create_session(
-            name=path.stem, date=date, repeater_name="历史导入"
-        )
-        imported = 0
-        for rec in rows:
-            checkin = self._build_checkin(session.id, rec, standardizer)
-            seq = self.repo.next_sequence(session.id)
-            checkin.sequence_no = seq
-            self.repo.add_checkin(checkin)
-            self.repo.update_profiles_from_checkin(checkin)
-            self.repo.upsert_station_from_checkin(checkin)
-            imported += 1
+        date = self._guess_date(path, [p["rec"] for p in prepared], first_date)
+        session = self.repo.create_session(name=path.stem, date=date, repeater_name="历史导入")
+        raw_imports = [p["raw"] for p in prepared]
+        checkins = [self._build_checkin(session.id, p["rec"], standardizer) for p in prepared]
+        try:
+            imported, skipped = self.repo.import_records_atomic(session.id, raw_imports, checkins)
+        except Exception as e:  # noqa: BLE001
+            # 原子失败：不留 raw_imports/checkins 半导入，也不标记 completed
+            self.repo.mark_import_job("excel_import", fh, "failed", error=str(e))
+            return 0, 0, f"导入失败（已回滚）：{e}"
         self.repo.end_session(session.id)
-        return imported, len(rows) - imported, f"导入 {imported} 条"
+        # 重建投影（checkins 为唯一事实源）
+        self.repo.rebuild_all_stations()
+        self.repo.rebuild_all_profiles()
+        self.repo.mark_import_job("excel_import", fh, "completed", imported_count=imported)
+        return imported, skipped, f"导入 {imported} 条，跳过 {skipped} 条"
 
     def import_files(self, paths: Iterable[Path], standardizer=None) -> dict[str, tuple[int, int, str]]:
         out = {}
@@ -92,14 +113,16 @@ class ExcelImportProvider(DataProvider):
         return out
 
     def import_folder(self, folder: Path, standardizer=None) -> dict[str, tuple[int, int, str]]:
-        files = sorted(folder.glob("*.xlsx")) + sorted(folder.glob("*.xls"))
+        # 任务书第三阶段 #4：只支持 .xlsx
+        files = sorted(folder.glob("*.xlsx"))
         return self.import_files(files, standardizer)
 
     # ---------- 内部 ----------
     def _file_imported(self, fh: str) -> bool:
-        return self.repo.file_imported("excel_import", fh)
+        return self.repo.import_job_completed("excel_import", fh)
 
     def _row_to_record(self, mapping: dict, row_vals: list, fh: str, sheet: str, ri: int) -> dict | None:
+        """解析一行 → {rec, raw}，不写库（原子导入时统一写）。"""
         def get(field: str) -> str:
             col = mapping.get(field)
             if col is None or col >= len(row_vals):
@@ -110,27 +133,30 @@ class ExcelImportProvider(DataProvider):
         callsign = get("callsign")
         if not callsign:
             return None
+        date, time = get("date"), get("time")
+        # 业务指纹：内容相关（跨文件去重，任务书第三阶段 #3）
+        business_hash = self.repo.record_hash(
+            "excel_import", callsign.upper(), date, time,
+            get("qth"), get("device"), get("antenna"), get("power"), get("signal"))
         rec = {
             "callsign": callsign,
-            "time": get("time"),
+            "time": time,
             "qth": get("qth"),
             "device": get("device"),
             "antenna": get("antenna"),
             "power": get("power"),
             "signal": get("signal"),
-            "date": get("date"),
+            "date": date,
             "raw_json": json.dumps({k: get(k) for k in
                                     ("sequence", "time", "callsign", "qth", "device", "antenna", "power", "signal")},
                                    ensure_ascii=False),
+            "record_hash": business_hash,
         }
-        rec["record_hash"] = self.repo.record_hash(
-            "excel_import", fh, sheet, str(ri), rec["raw_json"])
-        # 登记原始数据（UNIQUE 去重）
-        self.repo.record_import(RawImport(
+        raw = RawImport(
             source="excel_import", source_file=fh, sheet_name=sheet,
-            row_number=ri, raw_json=rec["raw_json"], record_hash=rec["record_hash"],
-        ))
-        return rec
+            row_number=ri, raw_json=rec["raw_json"], record_hash=business_hash,
+        )
+        return {"rec": rec, "raw": raw}
 
     @staticmethod
     def _guess_date(path: Path, rows: list[dict], first_date: str) -> str:
@@ -142,10 +168,12 @@ class ExcelImportProvider(DataProvider):
         return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d")
 
     def _build_checkin(self, session_id: int, rec: dict, standardizer) -> Checkin:
-        now = datetime.now().isoformat(timespec="seconds")
+        from core.datetime_util import normalize_checkin_time
+
         c = Checkin(
             session_id=session_id,
-            checkin_time=rec.get("time") or now,
+            # 任务书第三阶段 #6：统一 YYYY-MM-DDTHH:MM:SS
+            checkin_time=normalize_checkin_time(rec.get("date", ""), rec.get("time", "")),
             callsign=(rec.get("callsign") or "").upper(),
             qth_raw=rec.get("qth", ""), device_raw=rec.get("device", ""),
             antenna_raw=rec.get("antenna", ""), power_raw=rec.get("power", ""),

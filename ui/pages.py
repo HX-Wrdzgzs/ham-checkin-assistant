@@ -4,18 +4,17 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal, Slot
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QDialog, QFileDialog,
-    QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+    QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
     QLineEdit, QMessageBox, QPushButton, QSpinBox, QTabWidget, QTableWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from excel.exporter import hhmm, export_template
 from services.app_service import AppService
-from ui.source_labels import field_name, source_label
+from ui.source_labels import source_label
 
 
 def _button(text: str, on_click=None, icon_text: str = "") -> QPushButton:
@@ -187,7 +186,7 @@ class StationPage(QWidget):
 
     def refresh(self) -> None:
         kw = self.search.text().strip()
-        stations = self.service.search_stations(kw or "") if kw else self.service.all_callsigns()[:200]
+        stations = self.service.list_stations(kw, limit=200)
         rows = [[s["callsign"], s["checkin_count"], s["last_seen"], s["last_qth"],
                  s["last_device"], s["last_power"]]
                 for s in stations]
@@ -265,16 +264,23 @@ class HistoryPage(QWidget):
         self.refresh()
 
     def _sync(self) -> None:
+        if getattr(self, "_sync_in_progress", False):
+            self._log("同步正在进行，请稍候")
+            return
         self._sync_threaded()
 
     def _sync_threaded(self) -> None:
+        self._sync_in_progress = True
         self._sync_worker = _SyncWorker(self.service)
-        self._sync_worker.finished.connect(self._sync_done)
+        # 任务书第二阶段 #22：必须连 worker.done，而不是 QThread.finished（无参信号）
+        self._sync_worker.done.connect(self._sync_done)
         self._sync_worker.message.connect(self._log)
         self.status_lbl.setText("365dt 同步中…")
         self._sync_worker.start()
 
     def _sync_done(self, result: dict) -> None:
+        self._sync_in_progress = False
+        self.status_lbl.setText("")
         if result.get("ok"):
             failed = result.get("failed") or []
             msg = (f"365dt 同步完成：新增 {result.get('inserted')} 条，"
@@ -347,10 +353,14 @@ class _SyncWorker(QThread):
         self.service = service
 
     def run(self) -> None:
-        def progress(done, total, msg):
-            self.message.emit(f"  {msg}")
-        result = self.service.sync_365dt(progress)
-        self.done.emit(result)
+        # 任务书第二阶段 #23：run() 总异常保护，保证 UI 永远能收到 done。
+        try:
+            def progress(done, total, msg):
+                self.message.emit(f"  {msg}")
+            result = self.service.sync_365dt(progress)
+            self.done.emit(result)
+        except Exception as e:  # noqa: BLE001
+            self.done.emit({"ok": False, "message": f"同步异常：{e}"})
 
 
 # --------------------------------------------------------------------------
@@ -519,7 +529,11 @@ class SettingsPage(QWidget):
 
     # ---- 保存 ----
     def _save(self) -> None:
-        self.s.set_many(
+        errors = self.s.validate()
+        if errors:
+            QMessageBox.warning(self, "设置校验失败", "\n".join(errors))
+            return
+        ok = self.s.set_many(
             default_province=self.ed_default_province.text().strip() or "江苏",
             default_repeater_name=self.ed_default_repeater.text().strip(),
             default_operator_callsign=self.ed_default_operator.text().strip(),
@@ -535,4 +549,8 @@ class SettingsPage(QWidget):
         )
         # 省份改变时重建区划索引
         self.service.rebuild_region()
+        if not ok:
+            # 任务书第三阶段 #16：保存失败必须提示，不得假装成功
+            QMessageBox.warning(self, "设置", "配置保存失败（磁盘错误），请检查写入权限")
+            return
         QMessageBox.information(self, "设置", "已保存（部分设置重启后完全生效）")

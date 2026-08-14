@@ -14,6 +14,10 @@ class Session:
     started_at: str = ""
     ended_at: str = ""
     excel_path: str = ""
+    excel_sheet_name: str = ""
+    external_source: str = ""
+    external_uid: str = ""
+    external_key: str = ""
     status: str = "active"
     created_at: str = ""
     updated_at: str = ""
@@ -45,6 +49,10 @@ class Checkin:
     updated_at: str = ""
     excel_synced: int = 0
     excel_row: int | None = None
+    excel_sync_status: str = "pending"
+    excel_last_error: str = ""
+    excel_synced_at: str = ""
+    excel_binding_id: str = ""
 
 
 @dataclass

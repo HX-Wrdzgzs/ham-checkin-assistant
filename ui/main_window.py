@@ -1,12 +1,11 @@
 """主窗口：选项卡 + 托盘 + 悬浮快速录入窗 + 全局快捷键 + 崩溃恢复 + 启动同步。"""
 from __future__ import annotations
 
-from datetime import datetime
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QDialogButtonBox, QHBoxLayout, QInputDialog, QLabel,
+    QApplication, QHBoxLayout, QInputDialog, QLabel,
     QMainWindow, QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QTabWidget,
     QVBoxLayout, QWidget,
 )
@@ -148,13 +147,19 @@ class MainWindow(QMainWindow):
         # 必须在窗口 show 之后再弹恢复对话框：直接在这里弹模态框时父窗口
         # 尚未可见，对话框会不可见地阻塞 __init__，导致窗口不出现、启动同步
         # 也不执行（ponytail: 2026-08-08 启动卡死 bug）。延迟到事件循环跑起来。
-        QTimer.singleShot(0, self._crash_recovery)
-        # 全新运行（无任何场次）自动建一场，避免“没得记录”
-        if self.service.current_session() is None and not self.service.all_sessions():
-            self.service.create_session()
+        # 正确顺序（任务书第一阶段 #5）：读已有 active → 崩溃恢复 → 处理完成
+        # → 仍无 current session 才创建新场次（绝不先建 ghost 再恢复）。
+        QTimer.singleShot(0, self._startup_after_recovery)
         self._refresh_session()
         self._refresh_all()
         self._startup_sync()
+
+    def _startup_after_recovery(self) -> None:
+        self._crash_recovery()
+        # 恢复处理完成后仍无当前场次 → 才创建新场次
+        if self.service.current_session() is None:
+            self.service.create_session()
+        self._refresh_all()
 
     # ---------- 刷新 ----------
     def _refresh_session(self) -> None:
@@ -185,11 +190,21 @@ class MainWindow(QMainWindow):
         choice, ok = QInputDialog.getItem(self, "选择场次", "选择当前场次：", items, 0, False)
         if ok:
             idx = items.index(choice)
-            self.service.set_current_session(sessions[idx].id)
+            target = sessions[idx]
+            if not self.service.set_current_session(target.id):
+                # ended 场次默认只读，需显式重新打开（任务书第一阶段 #4）
+                again = QMessageBox.question(
+                    self, "场次已结束",
+                    f"「{target.name}」已结束（只读）。\n是否重新打开该场次以便继续录入？",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if again == QMessageBox.Yes:
+                    self.service.reopen_session(target.id)
+                else:
+                    return
             self._refresh_all()
 
     def _crash_recovery(self) -> None:
-        active = self.service.active_sessions()
+        active = self.service.startup_sessions()
         if not active:
             return
         items = [f"[{s.id}] {s.name}　{s.date}" for s in active]
@@ -199,19 +214,18 @@ class MainWindow(QMainWindow):
                                               f"{s.name} {s.date}" for s in active),
                                           items, 0, False)
         if not ok:
-            self.service.set_current_session(None)
+            self.service.handle_crash_recovery("defer")
             return
         idx = items.index(choice)
         if idx < len(active):
-            self.service.set_current_session(active[idx].id)
-            ok2, msg = self.service.excel_connect()
-            self.statusBar().showMessage(f"已继续场次，Excel：{msg}", 5000)
+            sid = self.service.handle_crash_recovery(str(active[idx].id))
+            if sid is not None:
+                ok2, msg = self.service.excel_connect()
+                self.statusBar().showMessage(f"已继续场次，Excel：{msg}", 5000)
         elif "结束所有" in choice:
-            for s in active:
-                self.service.repo.end_session(s.id)
-            self.service.set_current_session(None)
+            self.service.handle_crash_recovery("end_all")
         else:
-            self.service.set_current_session(None)
+            self.service.handle_crash_recovery("defer")
 
     # ---------- 提交 / 撤销 ----------
     def _feedback(self, text: str, ok: bool = True) -> None:
@@ -300,6 +314,10 @@ class MainWindow(QMainWindow):
     def _quit(self) -> None:
         self.floating.save_position()
         self.hotkey.stop()
+        # 任务书第二阶段 #25：停止/等待后台 worker，不能 close DB 时 worker 还在跑
+        w = getattr(self, "_sync_worker", None)
+        if w is not None and w.isRunning():
+            w.wait(3000)
         self.service.close()
         self._tray.hide()
         QApplication.quit()

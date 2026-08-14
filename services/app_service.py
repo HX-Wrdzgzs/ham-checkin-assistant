@@ -39,37 +39,63 @@ def _norm(v) -> str:
 
 
 def build_consistency_report(sqlite_checkins: list, excel_rows: list[dict]) -> tuple[bool, str]:
-    """比对 SQLite 本场记录与 Excel 读回数据（P0-6）。返回 (是否一致, 报告文本)。"""
-    excel_by_seq: dict[int, dict] = {}
-    for row in excel_rows:
-        seq = _norm(row.get("sequence"))
-        if seq.isdigit():
-            excel_by_seq[int(seq)] = row
+    """比对 SQLite 本场记录与 Excel 读回数据（任务书第一阶段 #14）。
+
+    检测：DUPLICATE_SEQUENCE / INVALID_SEQUENCE / MISSING_IN_EXCEL /
+    EXTRA_IN_EXCEL / FIELD_DIFF / IDENTITY_CONFLICT。
+    excel_rows 由 controller.read_data() 提供，含内部空行与 _row 行号，
+    空行后的数据也会被继续检查，不会被 dict 覆盖吞掉。
+    """
     lines = [f"SQLite：{len(sqlite_checkins)} 条　Excel：{len(excel_rows)} 行"]
     diffs: list[str] = []
-    sqlite_seqs = {c.sequence_no for c in sqlite_checkins}
+    excel_by_seq: dict[str, dict] = {}
+    seen_seq: dict[str, int] = {}
+    for row in excel_rows:
+        s = _norm(row.get("sequence"))
+        if not s:
+            continue  # 空序列行：非数据行，跳过（但扫描不中断）
+        seen_seq[s] = seen_seq.get(s, 0) + 1
+        if s not in excel_by_seq:
+            excel_by_seq[s] = row
+
+    sqlite_seqs = {str(c.sequence_no) for c in sqlite_checkins}
+
+    # 重复 / 非法序列（单独报告，禁止 dict 覆盖吞掉）
+    for s, n in seen_seq.items():
+        if n > 1:
+            diffs.append(f"DUPLICATE_SEQUENCE #{s} 出现 {n} 次")
+        if not s.isdigit() or int(s) <= 0:
+            diffs.append(f"INVALID_SEQUENCE #{s}")
 
     for c in sqlite_checkins:
-        ex = excel_by_seq.get(c.sequence_no)
+        key = str(c.sequence_no)
+        ex = excel_by_seq.get(key)
         if ex is None:
-            diffs.append(f"#{c.sequence_no} {c.callsign}：Excel 缺失")
+            diffs.append(f"MISSING_IN_EXCEL #{c.sequence_no} {c.callsign}")
             continue
         if _norm(ex.get("callsign")).upper() != _norm(c.callsign).upper():
-            diffs.append(f"#{c.sequence_no} 呼号不同：SQLite={c.callsign} Excel={ex.get('callsign')}")
+            diffs.append(f"IDENTITY_CONFLICT #{c.sequence_no} 呼号："
+                         f"SQLite={c.callsign} Excel={ex.get('callsign')}")
+            continue
         if _norm(ex.get("time")) != _norm(hhmm(c.checkin_time)):
-            diffs.append(f"#{c.sequence_no} 时间不同：SQLite={hhmm(c.checkin_time)} Excel={ex.get('time')}")
-        for field in ("qth", "device", "antenna", "power"):
-            if _norm(ex.get(field)) != _norm(getattr(c, f"{field}_standard")):
-                diffs.append(f"#{c.sequence_no} {field.upper()}不同：SQLite={getattr(c, f'{field}_standard')} Excel={ex.get(field)}")
+            diffs.append(f"FIELD_DIFF #{c.sequence_no} TIME："
+                         f"SQLite={hhmm(c.checkin_time)} Excel={ex.get('time')}")
+        for field, attr in (("qth", "qth_standard"), ("device", "device_standard"),
+                            ("antenna", "antenna_standard"), ("power", "power_standard"),
+                            ("signal", "signal")):
+            if _norm(ex.get(field)) != _norm(getattr(c, attr, "")):
+                diffs.append(f"FIELD_DIFF #{c.sequence_no} {field.upper()}："
+                             f"SQLite={getattr(c, attr, '')} Excel={ex.get(field)}")
 
-    for seq in sorted(excel_by_seq):
-        if seq > 0 and seq not in sqlite_seqs:
-            diffs.append(f"#{seq} SQLite 缺失（Excel 多出）")
+    # Excel 多出的行（EXTRA_IN_EXCEL）
+    for s in sorted(seen_seq, key=lambda x: (not x.isdigit(), int(x) if x.isdigit() else 0)):
+        if s.isdigit() and int(s) > 0 and s not in sqlite_seqs:
+            diffs.append(f"EXTRA_IN_EXCEL #{s}")
 
     if not diffs:
         return True, "\n".join(lines) + "\n\n结果：PASS"
     head = "\n".join(lines) + f"\n\n发现差异（{len(diffs)} 处）："
-    return False, head + "\n" + "\n".join(diffs[:40])
+    return False, head + "\n" + "\n".join(diffs[:60])
 
 
 class AppService:
@@ -89,6 +115,7 @@ class AppService:
             self.store, self.region, self.predictor,
             fuzzy_high=float(settings.get("fuzzy_high", 92)),
             fuzzy_mid=float(settings.get("fuzzy_mid", 75)),
+            fuzzy_margin=float(settings.get("fuzzy_margin", 5)),
         )
         # 预热解析缓存（模糊选项/频率），避免首键卡顿
         self.parser._qth_fuzzy_options()
@@ -102,18 +129,38 @@ class AppService:
             self.standardizer,
         )
         self._current_session_id: int | None = None
+        self._sync_in_progress = False
         app_log.info("AppService ready, db=%s", settings.db_path)
 
     # ---------- 场次 ----------
-    def create_session(self, name: str = "", date: str = "") -> Session:
+    def _apply_excel_binding(self, session: Session) -> None:
+        """切换场次时应用该场次的 Excel 绑定：断开旧绑定 → 连接目标 → 校验表头。
+
+        无绑定的场次保持未连接；A 场 Excel 绝不继承给 B 场（任务书第一阶段 #5）。
+        """
+        self.excel.disconnect()
+        if not session.excel_path:
+            return
+        ok, msg = self.excel.connect(session.excel_path, session.excel_sheet_name)
+        if not ok:
+            app_log.warning("session #%d excel binding connect failed: %s", session.id, msg)
+
+    def create_session(self, name: str = "", date: str = "",
+                       excel_path: str = "", excel_sheet_name: str = "") -> Session:
+        """新建场次。默认无 Excel 绑定（A 场 Excel 绝不继承给 B 场，任务书第一阶段 #5）。
+
+        绑定只能通过显式 excel_connect() 写入当前场次。
+        """
         session = self.repo.create_session(
             name=name or f"第{len(self.repo.list_sessions()) + 1}场点名",
             date=date or datetime.now().strftime("%Y-%m-%d"),
             operator_callsign=self.settings.get("default_operator_callsign", ""),
             repeater_name=self.settings.get("default_repeater_name", ""),
-            excel_path=self.settings.get("excel_template", ""),
+            excel_path=excel_path,
+            excel_sheet_name=excel_sheet_name,
         )
         self._current_session_id = session.id
+        self._apply_excel_binding(session)
         return session
 
     def current_session(self) -> Session | None:
@@ -121,11 +168,77 @@ class AppService:
             return None
         return self.repo.get_session(self._current_session_id)
 
-    def set_current_session(self, session_id: int | None) -> None:
+    def set_current_session(self, session_id: int | None) -> bool:
+        """设置当前场次。ended 场次拒绝（必须显式 reopen），返回是否成功。"""
+        if session_id is None:
+            self._current_session_id = None
+            self.excel.disconnect()
+            return True
+        s = self.repo.get_session(session_id)
+        if s is None:
+            self._current_session_id = None
+            self.excel.disconnect()
+            return False
+        if s.status == "ended":
+            # ended 场次默认只读，禁止 set 后直接写（任务书第一阶段 #4）
+            return False
         self._current_session_id = session_id
+        self._apply_excel_binding(s)
+        return True
+
+    def reopen_session(self, session_id: int) -> bool:
+        """显式重新打开已结束场次（恢复可写）。只有显式调用才允许。"""
+        s = self.repo.get_session(session_id)
+        if s is None or s.status != "ended":
+            return False
+        self.repo.update_session(session_id, status="active")
+        self._current_session_id = session_id
+        self._apply_excel_binding(s)
+        app_log.info("reopened session #%d %s", session_id, s.name)
+        return True
 
     def active_sessions(self) -> list[Session]:
         return self.repo.active_sessions()
+
+    def startup_sessions(self) -> list[Session]:
+        """启动时读取的已有 active sessions（崩溃残留）。
+
+        正确顺序（任务书第一阶段 #5）：打开 DB → 读已有 active → 崩溃恢复 →
+        处理完成 → 仍无 current session 才创建新场次。禁止先建再恢复。
+        """
+        return self.repo.active_sessions()
+
+    def handle_crash_recovery(self, choice) -> int | None:
+        """崩溃恢复决策。choice: 'end_all' / 'defer' / session_id(str)。
+
+        返回恢复的 session_id（或 None）。绝不创建幽灵 active session。
+        """
+        if choice == "end_all":
+            for s in self.repo.active_sessions():
+                self.repo.end_session(s.id)
+            self._current_session_id = None
+            return None
+        if choice == "defer":
+            self._current_session_id = None
+            return None
+        try:
+            sid = int(choice)
+        except (TypeError, ValueError):
+            self._current_session_id = None
+            return None
+        s = self.repo.get_session(sid)
+        if s is None or s.status != "active":
+            self._current_session_id = None
+            return None
+        self._current_session_id = sid
+        return sid
+
+    def ensure_session(self) -> Session:
+        """恢复处理完成后仍无 current session → 才创建新场次（避免 ghost active session）。"""
+        s = self.current_session()
+        if s is None:
+            s = self.create_session()
+        return s
 
     def all_sessions(self) -> list[Session]:
         return self.repo.list_sessions()
@@ -134,6 +247,8 @@ class AppService:
         s = self.current_session()
         if s:
             self.repo.end_session(s.id)
+        # 结束后清空当前场次：后续提交必须新建或显式选择，绝不续写 ended（任务书第一阶段 #4）
+        self._current_session_id = None
 
     def list_checkins(self, session_id: int | None = None) -> list[Checkin]:
         sid = session_id or (self.current_session().id if self.current_session() else None)
@@ -144,6 +259,10 @@ class AppService:
     # ---------- 解析与提交 ----------
     def parse(self, text: str) -> ParseResult:
         return self.parser.parse(text)
+
+    def accept_history(self, result: ParseResult) -> ParseResult:
+        """Tab：接受历史建议（仅补缺失字段），进入提交 payload（任务书第二阶段 #1/#2）。"""
+        return self.parser.accept_history(result)
 
     def _excel_values(self, c: Checkin) -> dict:
         return {
@@ -158,19 +277,26 @@ class AppService:
         }
 
     def commit(self, result: ParseResult) -> dict:
-        """确认一条记录：SQLite COMMIT 成功后再写 Excel。"""
+        """确认一条记录：SQLite COMMIT 成功后再写 Excel。
+
+        Excel 写入走状态机（任务书第一阶段 #9/#10/#11）：
+        写内存(written) → Save(persisted) → 失败则 DB 保持 error/pending。
+        只有 Save 成功才把 DB 状态置为 persisted。
+        """
         if not result.callsign.value:
             return {"ok": False, "message": "缺少呼号，无法提交"}
         session = self.current_session()
-        if session is None:
-            # 无当前场次时自动创建，保证录入不中断
+        if session is None or session.status == "ended":
+            # 无当前场次 / 当前场次已结束：自动新建场次。绝不写入 ended 场次。
+            if session is not None:
+                app_log.info("current session #%d is ended, auto-creating new session", session.id)
             session = self.create_session()
             app_log.info("auto-created session #%d %s", session.id, session.name)
 
         f = result.fields()
         c = Checkin(
             session_id=session.id,
-            sequence_no=self.repo.next_sequence(session.id),
+            sequence_no=self.repo.allocate_sequence(session.id),
             checkin_time=datetime.now().isoformat(timespec="seconds"),
             callsign=result.callsign.value,
             qth_raw=f["qth"].raw or f["qth"].value, qth_standard=f["qth"].value,
@@ -183,18 +309,41 @@ class AppService:
         )
         dup = self.repo.duplicate_in_session(session.id, c.callsign)
         self.repo.add_checkin(c)
-        self.repo.update_profiles_from_checkin(c)
-        self.repo.upsert_station_from_checkin(c)
+        # station/profile 是 checkins 的投影：按时间重建，避免 count+1 漂移
+        self.repo.rebuild_station(c.callsign)
+        self.repo.rebuild_profiles_for(c.callsign)
+        self._invalidate_runtime_caches()
         app_log.info("committed #%d %s", c.sequence_no, c.callsign)
 
-        excel_ok, excel_msg, excel_row = True, "未连接 Excel", None
+        # --- Excel：写 → Save → 确认成功 → 才更新 DB 状态 ---
+        excel_ok, excel_msg, excel_row, excel_state = True, "未连接 Excel", None, "pending"
         if self.excel.sheet is not None:
-            excel_ok, excel_msg, excel_row = self.excel.write(
-                self._excel_values(c), auto_save=bool(self.settings.get("excel_auto_save", True)))
-        if excel_ok and excel_row is not None:
-            self.repo.mark_excel_synced(c.id, excel_row)
+            now = datetime.now().isoformat(timespec="seconds")
+            write_ok, write_msg, excel_row = self.excel.write(
+                self._excel_values(c), auto_save=False)
+            if not write_ok:
+                excel_ok, excel_msg, excel_state = False, write_msg, "error"
+                self.repo.set_excel_state(c.id, "error", row=excel_row,
+                                          error=write_msg, binding_id=self.excel.binding_id)
+            else:
+                save_ok, save_msg = self.excel.save()
+                if save_ok:
+                    excel_state = "persisted"
+                    self.repo.set_excel_state(c.id, "persisted", row=excel_row,
+                                              synced_at=now, binding_id=self.excel.binding_id)
+                else:
+                    excel_ok, excel_msg, excel_state = False, save_msg, "error"
+                    self.repo.set_excel_state(c.id, "error", row=excel_row,
+                                              error=save_msg, binding_id=self.excel.binding_id)
         return {"ok": True, "checkin": c, "duplicate": dup,
-                "excel_ok": excel_ok, "excel_msg": excel_msg}
+                "excel_ok": excel_ok, "excel_msg": excel_msg,
+                "excel_row": excel_row, "excel_state": excel_state}
+
+    def _invalidate_runtime_caches(self) -> None:
+        """统一缓存失效入口（提交/撤销/编辑/导入/同步后调用，任务书第二阶段 #10）。"""
+        if hasattr(self, "_freq_cache"):
+            del self._freq_cache
+        self.parser.invalidate_caches()
 
     def undo_last(self) -> dict:
         session = self.current_session()
@@ -205,9 +354,15 @@ class AppService:
             return {"ok": False, "message": "没有可撤销的记录"}
         self.repo.soft_delete_checkin(last.id)
         app_log.info("undo #%d %s", last.sequence_no, last.callsign)
+        # 撤销后重建该呼号投影 + 失效缓存（任务书第一阶段 #17）
+        self.repo.rebuild_station(last.callsign)
+        self.repo.rebuild_profiles_for(last.callsign)
+        self._invalidate_runtime_caches()
         excel_msg = "未连接 Excel"
         if self.excel.sheet is not None:
-            _, excel_msg = self.excel_resync()
+            excel_ok, excel_msg = self.excel_resync()
+            if not excel_ok:
+                app_log.warning("undo excel resync failed: %s", excel_msg)
         return {"ok": True, "checkin": last, "excel_msg": excel_msg}
 
     # ---------- Excel ----------
@@ -218,10 +373,19 @@ class AppService:
         )
         if ok:
             self.settings.set("excel_template", self.excel.excel_path)
+            self.settings.set("excel_sheet_name", getattr(self.excel.sheet, "Name", "") or "")
+            # 把绑定写入当前场次（Session 级绑定，任务书第一阶段 #5）
+            s = self.current_session()
+            if s is not None:
+                self.repo.update_session(s.id, excel_path=self.excel.excel_path,
+                                         excel_sheet_name=getattr(self.excel.sheet, "Name", "") or "")
         return ok, msg
 
     def excel_resync(self) -> tuple[bool, str]:
-        """整场重写（撤销/彻底重排后使用）：清空并重写，之后全部标记已同步。"""
+        """整场重写（撤销/彻底重排后使用）：只清理受管列并重写，之后全部标记 persisted。
+
+        rewrite_all 或 Save 失败时不标记已同步（任务书第一阶段 #7/#11）。
+        """
         session = self.current_session()
         if session is None:
             return False, "无当前场次"
@@ -235,30 +399,62 @@ class AppService:
         return ok, msg
 
     def excel_sync_missing(self) -> tuple[bool, str]:
-        """只补同步尚未写入 Excel 的缺失记录（不重写整场）。"""
+        """补同步：collect pending → 全部写入 → Save → 验证 → 单事务标记 persisted/verified。
+
+        任何一步失败都不得提前把成功状态写入 DB（任务书第一阶段 #12）。
+        """
         session = self.current_session()
         if session is None:
             return False, "无当前场次"
         if self.excel.sheet is None:
             return False, "未连接 Excel，请先连接"
         unsynced = self.repo.list_unsynced(session.id)
+        if not unsynced:
+            return True, "没有缺失记录"
+        self.excel.reset_next_row()
+        now = datetime.now().isoformat(timespec="seconds")
+        rows: dict[int, int] = {}
+        # 1) 全部写入（不 Save，不提前标成功）
         for c in unsynced:
             ok, msg, row = self.excel.write(self._excel_values(c), auto_save=False)
             if not ok:
+                self.repo.set_excel_state(c.id, "error", error=msg,
+                                          binding_id=self.excel.binding_id)
                 return False, f"补同步失败（#{c.sequence_no} {c.callsign}）：{msg}"
-            self.repo.mark_excel_synced(c.id, row)
-        if unsynced:
-            self.excel.save()
+            rows[c.id] = row
+        # 2) Save 一次
+        save_ok, save_msg = self.excel.save()
+        if not save_ok:
+            for c in unsynced:
+                self.repo.set_excel_state(c.id, "error", error=save_msg,
+                                          binding_id=self.excel.binding_id)
+            return False, f"Excel 保存失败：{save_msg}"
+        # 3) 读回验证写入行（身份校验）
+        conflicts = []
+        for c in unsynced:
+            r = rows.get(c.id)
+            if r is None or not self.excel.verify_row_identity(r, c.sequence_no, c.callsign):
+                conflicts.append(f"#{c.sequence_no} {c.callsign}")
+        if conflicts:
+            for c in unsynced:
+                self.repo.set_excel_state(c.id, "conflict", row=rows.get(c.id),
+                                          error="行身份不匹配", binding_id=self.excel.binding_id)
+            return False, "补同步行身份冲突：" + ",".join(conflicts)
+        # 4) 单事务标记 persisted
+        for c in unsynced:
+            self.repo.set_excel_state(c.id, "persisted", row=rows[c.id],
+                                      synced_at=now, binding_id=self.excel.binding_id)
         return True, f"已补同步 {len(unsynced)} 条缺失记录"
 
     def excel_status_text(self) -> str:
         if self.excel.sheet is None:
             return "○ 未连接"
         try:
+            wb = self.excel.excel_path or ""
             name = self.excel.sheet.Name
         except Exception:  # noqa: BLE001
             name = "?"
-        return f"● 已连接：{name}"
+        return f"● 已连接：{name}（{wb}）"
 
     def check_consistency(self) -> tuple[bool, str]:
         """SQLite 本场 vs Excel 读回数据比对（P0-6）。"""
@@ -328,7 +524,14 @@ class AppService:
 
     # ---------- 365dt ----------
     def sync_365dt(self, progress=None) -> dict:
-        return self.sync_service.sync_once(progress)
+        """同一时间只允许一个同步任务（任务书第二阶段 #21）。"""
+        if getattr(self, "_sync_in_progress", False):
+            return {"ok": False, "message": "同步正在进行，请稍候"}
+        self._sync_in_progress = True
+        try:
+            return self.sync_service.sync_once(progress)
+        finally:
+            self._sync_in_progress = False
 
     def sync_state_text(self) -> str:
         st = self.repo.get_sync_state("365dt")
@@ -354,6 +557,22 @@ class AppService:
     def all_callsigns(self) -> list[str]:
         return [r["callsign"] for r in self.repo.as_dict_rows(
             "SELECT callsign FROM stations WHERE callsign!='' ORDER BY checkin_count DESC")]
+
+    def list_stations(self, keyword: str = "", limit: int = 200) -> list[dict]:
+        """呼号库列表：始终返回统一 dict（修复 StationPage 类型错误，任务书第一阶段 #18）。
+
+        字段固定：callsign / checkin_count / last_seen / last_qth / last_device / last_power。
+        """
+        rows = self.repo.search_stations(keyword, limit=limit) if keyword \
+            else self.repo.as_dict_rows(
+                "SELECT * FROM stations WHERE callsign!='' "
+                "ORDER BY checkin_count DESC LIMIT ?", (limit,))
+        return [
+            {"callsign": r["callsign"], "checkin_count": r["checkin_count"],
+             "last_seen": r["last_seen"], "last_qth": r["last_qth"],
+             "last_device": r["last_device"], "last_power": r["last_power"]}
+            for r in rows
+        ]
 
     def rebuild_region(self) -> None:
         """默认省份改变时重建区划索引（同步更新 Parser / 标准器引用）。"""
@@ -446,7 +665,11 @@ class AppService:
                     "antenna_standard": "antenna", "power_standard": "power"}
 
     def update_checkin(self, checkin_id: int, field: str, new_value: str) -> dict:
-        """修改记录：SQLite + 审计 + Excel 就地更新 + 画像重算（P2-34）。"""
+        """修改记录：SQLite + 审计 + Excel 就地更新（先做行身份校验）+ 投影重建。
+
+        修改呼号时按任务书第一阶段 #16：保存 old_callsign → 更新 → 重建旧站/新站
+        → 同步 Excel → 审计。
+        """
         c = self.repo.get_checkin(checkin_id)
         if c is None:
             return {"ok": False, "message": "记录不存在"}
@@ -456,21 +679,91 @@ class AppService:
             return {"ok": False, "message": "不支持的字段"}
         target = col or field
         old = getattr(c, target, "")
+        new_value = (new_value or "").strip()
+        old_callsign = c.callsign
         self.repo.update_checkin(checkin_id, **{target: new_value})
         self.repo.add_audit(checkin_id, field, old, new_value)
-        # Excel 就地更新（该记录已同步且行号已知时）
+
         excel_msg = "未连接 Excel"
-        if col and self.excel.sheet is not None and c.excel_row:
-            ok, excel_msg = self.excel.update_row(
-                c.excel_row, {self._EXCEL_FIELD[col]: new_value},
-                auto_save=bool(self.settings.get("excel_auto_save", True)))
+        if field == "callsign":
+            excel_msg = self._update_callsign_excel(c, new_value)
+        elif col:
+            excel_msg = self._update_field_excel(c, col, new_value)
+
+        # 投影重建（checkins 为唯一事实源，绝不 count+1）
+        if field == "callsign":
+            new_cs = (new_value or "").strip().upper() or c.callsign
+            self.repo.rebuild_profiles_for(old_callsign)
+            self.repo.rebuild_station(old_callsign)   # 旧呼号：无记录 → 删除投影
+            self.repo.rebuild_profiles_for(new_cs)
+            self.repo.rebuild_station(new_cs)         # 新呼号
         else:
-            excel_msg = ""
-        # 画像重算该呼号
-        if col:
-            self.repo.refresh_station_profiles_for(c.callsign)
-            self.repo.upsert_station_from_checkin(self.repo.get_checkin(checkin_id))
+            self.repo.rebuild_profiles_for(c.callsign)
+            self.repo.rebuild_station(c.callsign)
+        self._invalidate_runtime_caches()
         return {"ok": True, "excel_msg": excel_msg}
+
+    def _update_field_excel(self, c: Checkin, col: str, new_value: str) -> str:
+        """就地更新 Excel 行：先验证 row.sequence==sequence_no 且 row.callsign==callsign。
+
+        不匹配 → 搜索唯一匹配 → 唯一才更新；否则标记 conflict 绝不乱写（任务书第一阶段 #8/#9）。
+        """
+        if self.excel.sheet is None:
+            return "未连接 Excel"
+        excel_field = self._EXCEL_FIELD.get(col)
+        if excel_field is None:
+            return ""
+        auto = bool(self.settings.get("excel_auto_save", True))
+        now = datetime.now().isoformat(timespec="seconds")
+        row = c.excel_row
+        if row and self.excel.verify_row_identity(row, c.sequence_no, c.callsign):
+            ok, msg = self.excel.update_row(row, {excel_field: new_value}, auto_save=auto)
+            if ok:
+                self.repo.set_excel_state(c.id, "persisted", row=row, synced_at=now,
+                                          binding_id=self.excel.binding_id)
+                return msg
+            self.repo.set_excel_state(c.id, "error", row=row, error=msg,
+                                      binding_id=self.excel.binding_id)
+            return msg
+        # 身份不匹配：搜索唯一匹配
+        found = self.excel.find_row(c.sequence_no, c.callsign)
+        if found is None:
+            self.repo.set_excel_state(c.id, "conflict", row=row,
+                                      error="行身份不匹配且无唯一匹配",
+                                      binding_id=self.excel.binding_id)
+            return "Excel 行身份冲突，已标记，未修改"
+        ok, msg = self.excel.update_row(found, {excel_field: new_value}, auto_save=auto)
+        if ok:
+            self.repo.set_excel_state(c.id, "persisted", row=found, synced_at=now,
+                                      binding_id=self.excel.binding_id)
+            return f"已在第 {found} 行更新"
+        self.repo.set_excel_state(c.id, "error", row=found, error=msg,
+                                  binding_id=self.excel.binding_id)
+        return msg
+
+    def _update_callsign_excel(self, c: Checkin, new_value: str) -> str:
+        """修改呼号时同步 Excel 行（同样先做身份校验）。"""
+        if self.excel.sheet is None:
+            return "未连接 Excel"
+        auto = bool(self.settings.get("excel_auto_save", True))
+        now = datetime.now().isoformat(timespec="seconds")
+        row = c.excel_row
+        if not row or not self.excel.verify_row_identity(row, c.sequence_no, c.callsign):
+            found = self.excel.find_row(c.sequence_no, c.callsign)
+            if found is None:
+                self.repo.set_excel_state(c.id, "conflict", row=row,
+                                          error="行身份不匹配且无唯一匹配",
+                                          binding_id=self.excel.binding_id)
+                return "Excel 行身份冲突，已标记，未修改"
+            row = found
+        ok, msg = self.excel.update_row(row, {"callsign": new_value}, auto_save=auto)
+        if ok:
+            self.repo.set_excel_state(c.id, "persisted", row=row, synced_at=now,
+                                      binding_id=self.excel.binding_id)
+            return msg
+        self.repo.set_excel_state(c.id, "error", row=row, error=msg,
+                                  binding_id=self.excel.binding_id)
+        return msg
 
     # ---------- 输入自动补全（V2.6，轻量候选） ----------
     def token_is_complete(self, token: str) -> bool:
@@ -592,6 +885,11 @@ class AppService:
         return abbr, conflicts
 
     def close(self) -> None:
+        # 任务书第二阶段 #25 退出顺序：释放 Excel → 关闭 worker DB → 关闭主 DB。
+        try:
+            self.excel.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
         try:
             self.conn.close()
         except Exception:  # noqa: BLE001

@@ -10,10 +10,10 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QListWidget, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QListWidget, QVBoxLayout, QWidget,
 )
 
-from database.models import ParseField, ParseResult
+from database.models import ParseResult
 from services.app_service import AppService
 from ui.source_labels import source_label
 
@@ -338,9 +338,8 @@ class QuickInputPanel(QWidget):
     def _accept_history(self) -> None:
         if not self._result:
             return
-        for f in self._result.fields().values():
-            if f.source.startswith("history_"):
-                f.source = "manual"
+        # Tab：把历史建议合入字段（显式接受）后，才能随 Enter 提交（任务书第二阶段 #1/#2）
+        self._result = self.service.accept_history(self._result)
         self._render()
 
     def _clear(self) -> None:

@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from normalizers.dictionaries import AliasStore, norm_key
-from normalizers.region_index import RegionEntry, RegionIndex
+from normalizers.region_index import RegionIndex
 
 _HAN = "\u4e00-\u9fff"
 

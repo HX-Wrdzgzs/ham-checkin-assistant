@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Syntax / import smoke (Test Stage 1)
+        run: |
+          python -m compileall -q .
+          python -c "from services.app_service import AppService"
+          python -c "from core.parser import Parser"
+          python -c "from database.db import connect"
+      - name: Unit / regression tests (Test Stage 2)
+        run: python -m unittest discover -s tests -v
+      - name: Migration tests (Test Stage 5)
+        run: python -m unittest tests.regression.test_migrations -v

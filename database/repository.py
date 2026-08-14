@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import sqlite3
+import threading
 from datetime import datetime
 from typing import Iterable
 
@@ -39,17 +39,21 @@ def now_iso() -> str:
 class Repository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
+        # 进程内序列分配锁：多线程并发提交时避免读到同一序号（数据库 UNIQUE 索引兜底）。
+        self._alloc_lock = threading.Lock()
 
     # ---------- sessions ----------
     def create_session(self, name: str, date: str, operator_callsign: str = "",
-                       repeater_name: str = "", excel_path: str = "") -> Session:
+                       repeater_name: str = "", excel_path: str = "",
+                       excel_sheet_name: str = "") -> Session:
         ts = now_iso()
         with self.conn:
             cur = self.conn.execute(
                 """INSERT INTO sessions(name, date, operator_callsign, repeater_name,
-                   started_at, excel_path, status, created_at, updated_at)
-                   VALUES(?,?,?,?,?,?, 'active', ?, ?)""",
-                (name, date, operator_callsign, repeater_name, ts, excel_path, ts, ts),
+                   started_at, excel_path, excel_sheet_name, status, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,?, 'active', ?, ?)""",
+                (name, date, operator_callsign, repeater_name, ts, excel_path,
+                 excel_sheet_name, ts, ts),
             )
         return self.get_session(cur.lastrowid)
 
@@ -68,6 +72,35 @@ class Repository:
             "SELECT * FROM sessions WHERE name=? ORDER BY id DESC LIMIT 1", (name,)
         ).fetchone()
         return self._session_from_row(row) if row else None
+
+    def find_session_by_external(self, source: str, uid: str, external_key: str) -> Session | None:
+        """按稳定外部键找场次（任务书第二阶段 #20：避免结束用户同名场次）。"""
+        row = self.conn.execute(
+            "SELECT * FROM sessions WHERE external_source=? AND external_uid=? AND external_key=? "
+            "ORDER BY id DESC LIMIT 1",
+            (source, uid, external_key),
+        ).fetchone()
+        return self._session_from_row(row) if row else None
+
+    def find_or_create_external_session(self, source: str, uid: str, external_key: str,
+                                        name: str, date: str) -> Session:
+        """按外部键查找，找不到则创建并结束（历史场次不作为进行中）。"""
+        s = self.find_session_by_external(source, uid, external_key)
+        if s is not None:
+            return s
+        ts = now_iso()
+        with self.conn:
+            cur = self.conn.execute(
+                """INSERT INTO sessions(name, date, started_at, status,
+                   external_source, external_uid, external_key, created_at, updated_at)
+                   VALUES(?,?,?,'active',?,?,?,?,?)""",
+                (name, date, ts, source, uid, external_key, ts, ts),
+            )
+            self.conn.execute(
+                "UPDATE sessions SET status='ended', ended_at=?, updated_at=? WHERE id=?",
+                (now_iso(), now_iso(), cur.lastrowid),
+            )
+        return self.get_session(cur.lastrowid)
 
     def active_sessions(self) -> list[Session]:
         rows = self.conn.execute(
@@ -103,6 +136,17 @@ class Repository:
             (session_id,),
         ).fetchone()
         return int(row["m"]) + 1
+
+    def allocate_sequence(self, session_id: int) -> int:
+        """线程安全地分配下一序号（任务书第一阶段 #3：并发不产生重复序号）。"""
+        with self._alloc_lock:
+            return self.next_sequence(session_id)
+
+    def add_checkin_with_seq(self, session_id: int, c: Checkin) -> Checkin:
+        """分配序号并插入，进程内原子；数据库 UNIQUE(session_id, sequence_no) 兜底。"""
+        with self._alloc_lock:
+            c.sequence_no = self.next_sequence(session_id)
+            return self.add_checkin(c)
 
     def add_checkin(self, c: Checkin) -> Checkin:
         ts = now_iso()
@@ -165,6 +209,21 @@ class Repository:
         ).fetchone()
         return row is not None
 
+    def add_checkin_dedupe(self, c: Checkin) -> bool:
+        """按 UNIQUE(source, source_record_id) 由数据库去重，并在分配锁内分配序号。
+
+        返回 True=已插入，False=重复（任务书第二阶段 #14：由 DB 负责最终 dedupe）。
+        锁内分配保证同一进程内不产生重复 (session_id, sequence_no)。
+        """
+        try:
+            with self._alloc_lock:
+                c.sequence_no = self.next_sequence(c.session_id)
+                self.add_checkin(c)
+            return True
+        except sqlite3.IntegrityError:
+            # 唯一约束冲突 = source_record 重复（分配锁内不可能撞序号）
+            return False
+
     def soft_delete_checkin(self, checkin_id: int) -> None:
         with self.conn:
             self.conn.execute(
@@ -182,37 +241,62 @@ class Repository:
                 (*fields.values(), now_iso(), checkin_id),
             )
 
-    # ---------- Excel 同步跟踪（V2：断线后只补缺失记录） ----------
+    # ---------- Excel 同步跟踪（任务书第一阶段 #9/#10 状态机） ----------
+    # 状态：pending / written / persisted / verified / conflict / error
+    _UNSYNCED_STATES = ("pending", "written", "error")
+
+    def set_excel_state(self, checkin_id: int, status: str, row: int | None = None,
+                        error: str = "", synced_at: str = "", binding_id: str = "") -> None:
+        """更新单条记录的 Excel 同步状态。"""
+        with self.conn:
+            sql = ("UPDATE checkins SET excel_sync_status=?, excel_last_error=?, "
+                   "excel_synced_at=COALESCE(?, excel_synced_at)")
+            params: list = [status, error]
+            if synced_at:
+                params.append(synced_at)
+            else:
+                params.append(None)
+            if row is not None:
+                sql += ", excel_row=?"
+                params.append(row)
+            if binding_id:
+                sql += ", excel_binding_id=?"
+                params.append(binding_id)
+            if status == "persisted" or status == "verified":
+                sql += ", excel_synced=1"
+            else:
+                sql += ", excel_synced=0"
+            sql += " WHERE id=?"
+            params.append(checkin_id)
+            self.conn.execute(sql, tuple(params))
+
     def mark_excel_synced(self, checkin_id: int, excel_row: int | None = None) -> None:
-        if excel_row is not None:
-            with self.conn:
-                self.conn.execute(
-                    "UPDATE checkins SET excel_synced=1, excel_row=? WHERE id=?",
-                    (excel_row, checkin_id))
-        else:
-            with self.conn:
-                self.conn.execute(
-                    "UPDATE checkins SET excel_synced=1 WHERE id=?", (checkin_id,))
+        """兼容旧接口：标记为 verified。"""
+        self.set_excel_state(checkin_id, "verified", row=excel_row,
+                             synced_at=now_iso())
 
     def list_unsynced(self, session_id: int) -> list[Checkin]:
+        placeholders = ",".join("?" * len(self._UNSYNCED_STATES))
         rows = self.conn.execute(
-            "SELECT * FROM checkins WHERE session_id=? AND is_deleted=0 AND excel_synced=0 "
-            "ORDER BY sequence_no",
-            (session_id,),
+            "SELECT * FROM checkins WHERE session_id=? AND is_deleted=0 "
+            f"AND excel_sync_status IN ({placeholders}) ORDER BY sequence_no",
+            (session_id, *self._UNSYNCED_STATES),
         ).fetchall()
         return [self._checkin_from_row(r) for r in rows]
 
     def reset_excel_sync(self, session_id: int) -> None:
         with self.conn:
             self.conn.execute(
-                "UPDATE checkins SET excel_synced=0, excel_row=NULL WHERE session_id=?",
+                "UPDATE checkins SET excel_sync_status='pending', excel_row=NULL, "
+                "excel_last_error='' WHERE session_id=?",
                 (session_id,))
 
     def mark_all_excel_synced(self, session_id: int) -> None:
         with self.conn:
             self.conn.execute(
-                "UPDATE checkins SET excel_synced=1 WHERE session_id=? AND is_deleted=0",
-                (session_id,))
+                "UPDATE checkins SET excel_sync_status='verified', excel_synced=1, "
+                "excel_synced_at=? WHERE session_id=? AND is_deleted=0",
+                (now_iso(), session_id))
 
     @staticmethod
     def _checkin_from_row(row) -> Checkin:
@@ -253,6 +337,95 @@ class Repository:
             (kw, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # ---------- station/profile 投影重建（任务书第一阶段 #15/#16/#17） ----------
+    # checkins 是唯一事实源；stations / station_profiles 只是投影/cache，
+    # 编辑/撤销/导入/改呼号后调用 rebuild_* 保持一致性，绝不手工 count+1。
+
+    def rebuild_station(self, callsign: str) -> None:
+        """按 checkins（时间序）重建单个呼号的 station 投影。幂等。"""
+        if not callsign:
+            return
+        callsign = callsign.upper()
+        with self.conn:
+            row = self.conn.execute(
+                """SELECT MIN(checkin_time) AS first_seen,
+                          MAX(checkin_time) AS last_seen, COUNT(*) AS n
+                   FROM checkins WHERE callsign=? AND is_deleted=0""",
+                (callsign,),
+            ).fetchone()
+            n = int(row["n"] or 0)
+            if n == 0:
+                self.conn.execute("DELETE FROM stations WHERE callsign=?", (callsign,))
+                return
+            latest = self.conn.execute(
+                """SELECT qth_standard, device_standard, antenna_standard, power_standard
+                   FROM checkins WHERE callsign=? AND is_deleted=0
+                   ORDER BY checkin_time DESC, id DESC LIMIT 1""",
+                (callsign,),
+            ).fetchone()
+            now = now_iso()
+            self.conn.execute(
+                """INSERT INTO stations(callsign, first_seen, last_seen, checkin_count,
+                   last_qth, last_device, last_antenna, last_power, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(callsign) DO UPDATE SET
+                     first_seen=excluded.first_seen,
+                     last_seen=excluded.last_seen,
+                     checkin_count=excluded.checkin_count,
+                     last_qth=excluded.last_qth,
+                     last_device=excluded.last_device,
+                     last_antenna=excluded.last_antenna,
+                     last_power=excluded.last_power,
+                     updated_at=excluded.updated_at""",
+                (callsign, row["first_seen"], row["last_seen"], n,
+                 latest["qth_standard"], latest["device_standard"],
+                 latest["antenna_standard"], latest["power_standard"], now, now),
+            )
+
+    def rebuild_all_stations(self) -> int:
+        with self.conn:
+            calls = [r["callsign"] for r in self.conn.execute(
+                "SELECT DISTINCT callsign FROM checkins WHERE is_deleted=0 AND callsign!=''")]
+        for cs in calls:
+            self.rebuild_station(cs)
+        return len(calls)
+
+    def rebuild_profiles_for(self, callsign: str) -> None:
+        """按 checkins 重建单个呼号的画像投影。幂等。"""
+        if not callsign:
+            return
+        callsign = callsign.upper()
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM station_profiles WHERE callsign=?", (callsign,))
+            rows = self.conn.execute(
+                """SELECT qth_standard, device_standard, antenna_standard, power_standard,
+                          checkin_time
+                   FROM checkins WHERE callsign=? AND is_deleted=0 ORDER BY checkin_time""",
+                (callsign,),
+            ).fetchall()
+            for r in rows:
+                for ft in ("qth", "device", "antenna", "power"):
+                    v = r[f"{ft}_standard"]
+                    if v:
+                        self.conn.execute(
+                            """INSERT INTO station_profiles(callsign, field_type, field_value,
+                               use_count, last_used) VALUES(?,?,?,1,?)
+                               ON CONFLICT(callsign, field_type, field_value) DO UPDATE SET
+                                 use_count=use_count+1,
+                                 last_used=CASE WHEN ? > last_used THEN ? ELSE last_used END""",
+                            (callsign, ft, v, r["checkin_time"], r["checkin_time"], r["checkin_time"]),
+                        )
+
+    def rebuild_all_profiles(self) -> int:
+        with self.conn:
+            calls = [r["callsign"] for r in self.conn.execute(
+                "SELECT DISTINCT callsign FROM checkins WHERE is_deleted=0 AND callsign!=''")]
+        for cs in calls:
+            self.rebuild_profiles_for(cs)
+        return len(calls)
+
 
     def bump_profile(self, callsign: str, field_type: str, field_value: str) -> None:
         if not callsign or not field_type or not field_value:
@@ -463,6 +636,73 @@ class Repository:
         ).fetchone()
         return row is not None
 
+    # ---------- 导入 job 状态（任务书第三阶段 #2） ----------
+    def import_job_completed(self, source: str, file_hash: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM import_jobs WHERE source=? AND source_file=? AND status='completed'",
+            (source, file_hash),
+        ).fetchone()
+        return row is not None
+
+    def mark_import_job(self, source: str, file_hash: str, status: str,
+                        imported_count: int = 0, error: str = "") -> None:
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO import_jobs(source, source_file, status, imported_count,
+                   error_message, updated_at) VALUES(?,?,?,?,?,?)
+                   ON CONFLICT(source, source_file) DO UPDATE SET
+                     status=excluded.status,
+                     imported_count=excluded.imported_count,
+                     error_message=excluded.error_message,
+                     updated_at=excluded.updated_at""",
+                (source, file_hash, status, imported_count, error, now_iso()),
+            )
+
+    def import_records_atomic(self, session_id: int, raw_imports: list[RawImport],
+                              checkins: list[Checkin]) -> tuple[int, int]:
+        """单事务导入：raw_imports + checkins 原子写入（任务书第三阶段 #1）。
+
+        - source_record 重复 → 逐条跳过（DB 负责跨文件去重）。
+        - 任意非去重异常 → 整个事务回滚，0 half-import。
+        - 序列在分配锁内分配，避免并发重复。
+        """
+        imported = skipped = 0
+        with self._alloc_lock:
+            with self.conn:
+                for r in raw_imports:
+                    self.conn.execute(
+                        """INSERT INTO raw_imports(source, source_file, sheet_name, row_number,
+                           raw_json, record_hash, imported_at) VALUES(?,?,?,?,?,?,?)
+                           ON CONFLICT(source, source_file, sheet_name, row_number) DO NOTHING""",
+                        (r.source, r.source_file, r.sheet_name, r.row_number,
+                         r.raw_json, r.record_hash, now_iso()),
+                    )
+                for c in checkins:
+                    ts = now_iso()
+                    c.created_at = ts
+                    c.updated_at = ts
+                    c.sequence_no = self.next_sequence(session_id)
+                    if not c.checkin_time:
+                        c.checkin_time = ts
+                    try:
+                        self.conn.execute(
+                            """INSERT INTO checkins(session_id, sequence_no, checkin_time, callsign,
+                               qth_raw, qth_standard, device_raw, device_standard,
+                               antenna_raw, antenna_standard, power_raw, power_standard,
+                               signal, source, raw_input, source_record_id, source_url,
+                               is_deleted, created_at, updated_at)
+                               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
+                            (c.session_id, c.sequence_no, c.checkin_time, c.callsign,
+                             c.qth_raw, c.qth_standard, c.device_raw, c.device_standard,
+                             c.antenna_raw, c.antenna_standard, c.power_raw, c.power_standard,
+                             c.signal, c.source, c.raw_input, c.source_record_id, c.source_url,
+                             c.created_at, c.updated_at),
+                        )
+                        imported += 1
+                    except sqlite3.IntegrityError:
+                        skipped += 1  # 重复记录 → 跳过，不中断导入
+        return imported, skipped
+
     def record_import(self, r: RawImport) -> None:
         with self.conn:
             self.conn.execute(
@@ -504,6 +744,60 @@ class Repository:
                 (s.source, s.source_uid, s.last_check_at, s.last_success_at,
                  s.last_record_id, s.last_session_id, s.last_hash, s.status, s.error_message),
             )
+
+    # ---------- source station state（任务书第二阶段 #12/#13 真增量） ----------
+    def get_source_station_state(self, source: str, uid: str, callsign: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM source_station_state WHERE source=? AND source_uid=? AND callsign=?",
+            (source, uid, callsign),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def upsert_source_station_state(self, source: str, uid: str, callsign: str, *,
+                                    ranking_count: int = 0, last_history_key: str = "",
+                                    last_seen_at: str = "", last_fetch_at: str = "",
+                                    status: str = "pending", error_message: str = "") -> None:
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO source_station_state(source, source_uid, callsign,
+                   ranking_count, last_history_key, last_seen_at, last_fetch_at,
+                   status, error_message)
+                   VALUES(?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(source, source_uid, callsign) DO UPDATE SET
+                     ranking_count=excluded.ranking_count,
+                     last_history_key=COALESCE(excluded.last_history_key, last_history_key),
+                     last_seen_at=COALESCE(excluded.last_seen_at, last_seen_at),
+                     last_fetch_at=COALESCE(excluded.last_fetch_at, last_fetch_at),
+                     status=excluded.status,
+                     error_message=excluded.error_message""",
+                (source, uid, callsign, ranking_count, last_history_key, last_seen_at,
+                 last_fetch_at, status, error_message),
+            )
+
+    def list_retryable_source_stations(self, source: str, uid: str, limit: int = 100) -> list[dict]:
+        """上次失败/未同步的呼号（retry 候选）。"""
+        rows = self.conn.execute(
+            "SELECT * FROM source_station_state WHERE source=? AND source_uid=? "
+            "AND status IN ('failed','pending') ORDER BY last_fetch_at IS NULL DESC, "
+            "callsign LIMIT ?",
+            (source, uid, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_source_station_keys(self, source: str, uid: str) -> set[str]:
+        rows = self.conn.execute(
+            "SELECT callsign FROM source_station_state WHERE source=? AND source_uid=?",
+            (source, uid),
+        ).fetchall()
+        return {r["callsign"] for r in rows}
+
+    def source_station_states(self, source: str, uid: str) -> dict[str, dict]:
+        """当前 (source, uid) 命名空间下所有 per-callsign 状态（批量读取）。"""
+        rows = self.conn.execute(
+            "SELECT * FROM source_station_state WHERE source=? AND source_uid=?",
+            (source, uid),
+        ).fetchall()
+        return {r["callsign"]: dict(r) for r in rows}
 
     # ---------- audit ----------
     def add_audit(self, record_id: int, field_name: str, old_value: str, new_value: str) -> None:

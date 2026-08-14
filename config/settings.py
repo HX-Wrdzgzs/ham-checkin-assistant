@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 from pathlib import Path
@@ -31,7 +32,8 @@ DEFAULTS: dict = {
     # 365dt
     "dt365_uid": "ET6RPQCR",
     "dt365_url": "https://api.365dt.net/dianming/user/ranking.asp?uid={uid}",
-    "dt365_max_fetch": 1597,
+    # 默认同步规模：首次 100~300 即可，避免一次性抓 1597（任务书第二阶段 #18）
+    "dt365_max_fetch": 200,
     # 目录
     "data_dir": "data",
     "logs_dir": "logs",
@@ -40,6 +42,7 @@ DEFAULTS: dict = {
     # 模糊匹配阈值
     "fuzzy_high": 92.0,
     "fuzzy_mid": 75.0,
+    "fuzzy_margin": 5.0,
     # 悬浮窗
     "window_opacity": 0.95,
     "window_on_top": True,
@@ -67,28 +70,62 @@ class Settings:
                 # 配置损坏时回退默认值，不阻塞启动
                 pass
 
-    def save(self) -> None:
+    def save(self) -> bool:
+        """原子写配置：tmp → flush → fsync → 原子替换（任务书第三阶段 #16）。
+
+        返回 True=成功，False=失败（调用方必须提示用户，不得假装保存成功）。
+        """
         with self._lock:
+            tmp = self._path.with_suffix(self._path.suffix + ".tmp")
             try:
-                with open(self._path, "w", encoding="utf-8") as f:
+                self._path.parent.mkdir(parents=True, exist_ok=True)
+                with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(self._data, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, self._path)
+                return True
             except OSError:
-                pass
+                try:
+                    if tmp.exists():
+                        tmp.unlink()
+                except OSError:
+                    pass
+                return False
+
+    def validate(self) -> list[str]:
+        """配置 schema 校验（任务书第三阶段 #17），返回问题列表。"""
+        errors: list[str] = []
+        try:
+            mid = float(self.get("fuzzy_mid", 75))
+            high = float(self.get("fuzzy_high", 92))
+        except (TypeError, ValueError):
+            errors.append("fuzzy_mid / fuzzy_high 必须为数字")
+            mid, high = 75, 92
+        if mid >= high:
+            errors.append("fuzzy_mid 必须小于 fuzzy_high")
+        for key in ("dt365_max_fetch", "backup_keep"):
+            try:
+                if float(self.get(key, 0)) <= 0:
+                    errors.append(f"{key} 必须为正数")
+            except (TypeError, ValueError):
+                errors.append(f"{key} 必须为数字")
+        return errors
 
     def get(self, key: str, default=None):
         with self._lock:
             return self._data.get(key, default if default is not None else DEFAULTS.get(key))
 
-    def set(self, key: str, value) -> None:
+    def set(self, key: str, value) -> bool:
         with self._lock:
             self._data[key] = value
-        self.save()
+        return self.save()
 
-    def set_many(self, **kwargs) -> None:
+    def set_many(self, **kwargs) -> bool:
         with self._lock:
             for k, v in kwargs.items():
                 self._data[k] = v
-        self.save()
+        return self.save()
 
     @property
     def data_dir(self) -> Path:

@@ -5,8 +5,11 @@
     python build.py
 产物在 dist/HAM点名助手/
 
-重要：PyInstaller --noconfirm 会删除并重建 dist/HAM点名助手（含运行时数据）。
-本脚本在打包前把 exe 旁的 data/、logs/、config.json 备份，打包后恢复，避免丢失数据库。
+数据保护（任务书第一阶段 #2）：
+- dist 重建前完整备份 runtime（data/、logs/、backup/、config.json）。
+- build 失败后也必须恢复 runtime（try/finally）。
+- 部署到 Downloads 前保留既有 runtime，绝不直接丢用户数据。
+- 部署顺序：build → 校验产物 → 保留既有 runtime → 原子替换程序文件 → 恢复 runtime。
 """
 from __future__ import annotations
 
@@ -19,52 +22,60 @@ NAME = "HAM点名助手"
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist" / NAME
 BAK = ROOT / "build" / f"{NAME}_databak"
-_RUNTIME = ("data", "logs", "config.json")
+DEPLOY_BAK = ROOT / "build" / f"{NAME}_deploy_bak"
+_RUNTIME = ("data", "logs", "backup", "config.json")
 
 
-def backup_runtime() -> None:
-    """打包前备份运行时数据（data/、logs/、config.json）。"""
-    if not DIST.exists():
+def backup_runtime(dist: Path = DIST, bak: Path = BAK) -> None:
+    """打包前备份运行时数据（data/、logs/、backup/、config.json）。"""
+    if not dist.exists():
         return
-    if BAK.exists():
-        shutil.rmtree(BAK)
-    BAK.mkdir(parents=True)
+    if bak.exists():
+        shutil.rmtree(bak)
+    bak.mkdir(parents=True)
     for item in _RUNTIME:
-        src = DIST / item
+        src = dist / item
         if src.is_dir():
-            shutil.copytree(src, BAK / item)
+            shutil.copytree(src, bak / item)
         elif src.exists():
-            shutil.copy2(src, BAK / item)
+            shutil.copy2(src, bak / item)
 
 
-def restore_runtime() -> None:
+def restore_runtime(dist: Path = DIST, bak: Path = BAK) -> None:
     """打包后把运行时数据恢复到新 exe 旁，确保重新打包不丢数据。"""
-    if not BAK.exists():
+    if not bak.exists():
         return
-    DIST.mkdir(parents=True, exist_ok=True)
+    dist.mkdir(parents=True, exist_ok=True)
     for item in _RUNTIME:
-        src = BAK / item
+        src = bak / item
         if src.is_dir():
-            shutil.copytree(src, DIST / item, dirs_exist_ok=True)
+            shutil.copytree(src, dist / item, dirs_exist_ok=True)
         elif src.exists():
-            shutil.copy2(src, DIST / item)
+            shutil.copy2(src, dist / item)
 
 
-def deploy_to_downloads() -> None:
-    """打包后把整个软件复制到用户「下载」文件夹，方便直接使用。"""
-    dl = Path.home() / "Downloads"
-    if not dl.exists():
-        print("未找到下载文件夹，跳过部署:", dl)
-        return
-    target = dl / NAME
-    if target.exists():
+def deploy_program(src_dist: Path, target: Path, runtime_bak: Path) -> bool:
+    """部署到目标目录。
+
+    顺序：保留既有 runtime → 替换程序文件 → 恢复 runtime。
+    绝不覆盖已有 DB/backup/config（都从 runtime_bak 恢复回来）。
+    """
+    if not src_dist.exists():
+        return False
+    had_target = target.exists()
+    if had_target:
+        backup_runtime(target, runtime_bak)
+        # 程序文件整体替换；runtime 已安全备份，替换后恢复
         shutil.rmtree(target)
-    shutil.copytree(DIST, target)
-    print(f"已输出到下载文件夹: {target}")
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src_dist, target, dirs_exist_ok=True)
+    if had_target:
+        restore_runtime(target, runtime_bak)
+    return True
 
 
-def main() -> int:
-    backup_runtime()
+def build_exe() -> int:
+    """运行 PyInstaller，返回退出码。"""
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
@@ -77,10 +88,22 @@ def main() -> int:
         "app.py",
     ]
     print("Running:", " ".join(cmd))
-    code = subprocess.call(cmd)
-    restore_runtime()
+    return subprocess.call(cmd)
+
+
+def main() -> int:
+    backup_runtime()
+    try:
+        code = build_exe()
+    finally:
+        # build 失败也必须恢复 runtime（任务书第一阶段 #2）
+        restore_runtime()
     if code == 0:
-        deploy_to_downloads()
+        dl = Path.home() / "Downloads"
+        if dl.exists():
+            deploy_program(DIST, dl / NAME, DEPLOY_BAK)
+        else:
+            print("未找到下载文件夹，跳过部署:", dl)
     return code
 
 
