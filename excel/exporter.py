@@ -7,7 +7,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from database.repository import Repository
-from excel.template import EXPORT_HEADERS
+from excel.template import EXPORT_HEADERS, excel_safe_text
 
 
 def hhmm(iso_time: str) -> str:
@@ -40,13 +40,16 @@ def export_session(repo: Repository, session_id: int, dest_path: str) -> str:
     for cell in ws[ws.max_row]:
         cell.font = Font(bold=True)
     for c in checkins:
+        # P1-12：导出也做公式注入防护（外部字符串按文本写入）
         ws.append([
-            c.sequence_no, hhmm(c.checkin_time), c.callsign,
-            c.qth_standard, c.device_standard, c.antenna_standard,
-            c.power_standard, c.signal, c.source,
+            c.sequence_no, hhmm(c.checkin_time), excel_safe_text(c.callsign),
+            excel_safe_text(c.qth_standard), excel_safe_text(c.device_standard),
+            excel_safe_text(c.antenna_standard), excel_safe_text(c.power_standard),
+            excel_safe_text(c.signal), c.source,
+            excel_safe_text(c.unmatched),
         ])
     # 列宽
-    for col, width in zip("ABCDEFGHI", (6, 8, 12, 16, 16, 14, 8, 8, 12)):
+    for col, width in zip("ABCDEFGHIJ", (6, 8, 12, 16, 16, 14, 8, 8, 12, 24)):
         ws.column_dimensions[col].width = width
     wb.save(dest_path)
     return dest_path
@@ -60,7 +63,7 @@ def export_template(path: str) -> str:
     ws.append(EXPORT_HEADERS)
     for cell in ws[1]:
         cell.font = Font(bold=True)
-    for col, width in zip("ABCDEFGHI", (6, 8, 12, 16, 16, 14, 8, 8, 12)):
+    for col, width in zip("ABCDEFGHIJ", (6, 8, 12, 16, 16, 14, 8, 8, 12, 24)):
         ws.column_dimensions[col].width = width
     wb.save(path)
     return path

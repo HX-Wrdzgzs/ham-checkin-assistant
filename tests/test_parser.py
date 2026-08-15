@@ -77,6 +77,75 @@ class TestParser(unittest.TestCase):
         r = self.parser.parse("gl")
         self.assertGreaterEqual(len(r.qth.candidates), 2)
 
+    def test_repeated_yz_can_fill_qth_and_antenna(self):
+        """同一个缩写可按字段消费：第一个 yz 是扬州，第二个 yz 是原装天线。"""
+        r = self.parser.parse("ba4rll qyt6900 5w yz yz")
+        self.assertEqual(r.callsign.value, "BA4RLL")
+        self.assertEqual(r.qth.value, "扬州")
+        self.assertEqual(r.antenna.value, "原")
+        self.assertEqual(r.device.value, "全易通 QYT-6900")
+        self.assertEqual(r.power.value, "5W")
+        self.assertEqual(r.unmatched, [])
+
+    def test_observed_free_text_fields_are_not_misclassified_or_dropped(self):
+        """现场常见的未收录值也要落到字段/未识别，而不是被 QTH 兜底吞掉。"""
+        cases = [
+            ("ba4rll 1907 25 njgl 4.2米玻璃钢", "南京鼓楼", "YAESU FT-1907R",
+             "4.2米玻璃钢", "25W", []),
+            ("ba4qdi icom705 504天线 10w 东南大学四牌楼校区",
+             "东南大学四牌楼校区", "ICOM IC-705", "504天线", "10W", []),
+            ("ba4tlc ryt6900 yz 5 南京江宁", "南京江宁", "全易通 QYT-6900",
+             "原", "5W", []),
+            ("bg4x yz mysterytoken", "扬州", "", "", "", ["mysterytoken"]),
+        ]
+        for text, qth, device, antenna, power, unmatched in cases:
+            with self.subTest(text=text):
+                r = self.parser.parse(text)
+                self.assertEqual(r.qth.value, qth)
+                self.assertEqual(r.device.value, device)
+                self.assertEqual(r.antenna.value, antenna)
+                self.assertEqual(r.power.value, power)
+                self.assertEqual(r.unmatched, unmatched)
+
+    def test_single_yz_with_explicit_chinese_qth_is_antenna(self):
+        """“yz 湖北”中湖北是现场 QTH，yz 不应抢成扬州。"""
+        r = self.parser.parse("bg6xhb vr-n76 yz ht 湖北")
+        self.assertEqual(r.qth.value, "湖北")
+        self.assertEqual(r.device.value, "威诺 VR-N76")
+        self.assertEqual(r.antenna.value, "原")
+        self.assertEqual(r.unmatched, ["ht"])
+
+    def test_late_roster_compound_device_forms(self):
+        """名单后半段的品牌+型号写法必须作为一个设备消费。"""
+        cases = [
+            ("ba4vdx bf 5rh srh-771 5w 江宁", "BF 5RH", "南京江宁"),
+            ("bg4qbf bf 5rmini yz 5w zj", "BF 5R Mini", "镇江"),
+            ("ba4uom bf uv-32 njqx yz 高", "BF UV-32", "南京栖霞"),
+            ("ba4tmu bf uv-5r njqh yz 5w", "BF UV-5R", "南京秦淮"),
+            ("ba4tlh wpks 2108 770 25 南京江宁", "WPks 2108", "南京江宁"),
+            ("ba4tlc ryt 6900 yz 5 南京江宁", "全易通 QYT-6900", "南京江宁"),
+        ]
+        for text, device, qth in cases:
+            with self.subTest(text=text):
+                r = self.parser.parse(text)
+                self.assertEqual(r.device.value, device)
+                self.assertEqual(r.qth.value, qth)
+                self.assertEqual(r.unmatched, [])
+
+    def test_compound_antenna_text_is_kept_as_antenna(self):
+        r = self.parser.parse("bg6xhb vr-n76 HT湖北上台 湖北")
+        self.assertEqual(r.qth.value, "湖北")
+        self.assertEqual(r.device.value, "威诺 VR-N76")
+        self.assertEqual(r.antenna.value, "HT湖北上台")
+        self.assertEqual(r.unmatched, [])
+
+    def test_yz_before_specific_qth_is_not_false_antenna(self):
+        """“yz yzjd”中的前置 yz 是地点前缀，不应凭空写成原装天线。"""
+        r = self.parser.parse("ba4vrm nrl yz yzjd")
+        self.assertEqual(r.qth.value, "扬州江都")
+        self.assertEqual(r.antenna.value, "")
+        self.assertEqual(r.unmatched, [])
+
     def test_chinese_not_collapsed(self):
         """“南京南/南京南站”不得被静默折叠成“南京”，应保留原文。"""
         self.assertEqual(self.parser.parse("南京南").qth.value, "南京南")
@@ -97,8 +166,8 @@ class TestParser(unittest.TestCase):
                     callsign="BA4XXX", qth_standard="南京栖霞", device_standard="K6",
                     antenna_standard="771", power_standard="5W", source="local")
         self.repo.add_checkin(c)
-        self.repo.update_profiles_from_checkin(c)
-        self.repo.upsert_station_from_checkin(c)
+        self.repo.rebuild_profiles_for(c.callsign)
+        self.repo.rebuild_station(c.callsign)
         r = self.parser.parse("ba4xxx")
         self.assertEqual(r.callsign.value, "BA4XXX")
         # 历史只是建议，不自动提交：实际字段必须为空
@@ -116,7 +185,7 @@ class TestParser(unittest.TestCase):
                     callsign="BA4XXX", qth_standard="南京栖霞", device_standard="K6",
                     antenna_standard="771", power_standard="5W", source="local")
         self.repo.add_checkin(c)
-        self.repo.update_profiles_from_checkin(c)
+        self.repo.rebuild_profiles_for(c.callsign)
         r = self.parser.parse("ba4xxx 10")
         self.assertEqual(r.power.value, "10W")
         self.assertEqual(r.power.source, "input")  # 本次输入优先
@@ -142,6 +211,16 @@ class TestParser(unittest.TestCase):
         self.assertEqual(self.parser.parse("bg4tki nanjing").qth.value, "南京")
         self.assertEqual(self.parser.parse("bg4tki qixia").qth.value, "南京栖霞")
         self.assertEqual(self.parser.parse("bg4tki anhuiwuhu").qth.value, "安徽芜湖")
+
+    def test_fuzzy_qth_ambiguous_key_not_auto_accepted(self):
+        """P2：歧义缩写地点（gl → 南京鼓楼/徐州鼓楼）拼音模糊命中时强制候选，
+        不得按 key 丢弃歧义地点而自信猜错（"gulou" 模糊命中鼓楼）。"""
+        r = self.parser.parse("bg4tki gulou")
+        self.assertEqual(r.qth.value, "", "歧义地点不得自动接受")
+        self.assertIn("南京鼓楼", r.qth.candidates)
+        self.assertIn("徐州鼓楼", r.qth.candidates)
+        # 明确地点仍正常自动接受
+        self.assertEqual(self.parser.parse("bg4tki qixia").qth.value, "南京栖霞")
 
     def test_alias_beats_callsign_and_power(self):
         # id52 长得像呼号，但已收录为设备 → 按设备解析

@@ -32,16 +32,15 @@ def _install_exception_hooks() -> None:
             pass
 
     sys.excepthook = excepthook
-    # 线程异常（QThread.run 等）也会进入 sys.excepthook
-    if hasattr(sys, "threading"):
-        import threading
+    # 线程异常（QThread.run 等）也会进入 sys.excepthook（P3：直接挂 threading.excepthook）
+    import threading
 
-        def thread_hook(args):
-            exc_type, exc_value, exc_tb = args.exc_type, args.exc_value, args.exc_tb
-            text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-            log.error("Unhandled thread exception:\n%s", text)
+    def thread_hook(args):
+        exc_type, exc_value, exc_tb = args.exc_type, args.exc_value, args.exc_tb
+        text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        log.error("Unhandled thread exception:\n%s", text)
 
-        threading.excepthook = thread_hook
+    threading.excepthook = thread_hook
     # Qt 消息（qWarning/qCritical 等）重定向到日志
     qInstallMessageHandler(_qt_message_handler)
 
@@ -64,10 +63,26 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("江苏省中继点名助手")
     app.setOrganizationName("HAM")
+    # P3：非 Windows 的目录锁退出时释放；Windows 句柄随进程退出自动回收
+    from ui.single_instance import release
+
+    app.aboutToQuit.connect(release)
 
     from services.app_service import AppService
 
-    svc = AppService(settings)
+    try:
+        svc = AppService(settings)
+    except RuntimeError as exc:
+        # 数据目录丢失时必须明确阻止启动，不能让 AppService 静默创建空库。
+        log.error("AppService stopped for data safety: %s", exc)
+        QMessageBox.critical(None, "数据目录不可用", str(exc))
+        release()
+        return 1
+
+    # P2：配置损坏时保留坏文件并提示用户（不静默）
+    note = settings.corrupt_config_note
+    if note:
+        QMessageBox.warning(None, "配置提示", note)
 
     from ui.main_window import MainWindow
 

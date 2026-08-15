@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import unittest
 
-from tests.helpers import make_service
+from tests.helpers import make_service, make_settings
 
 
 class TestCrashRecovery(unittest.TestCase):
@@ -75,6 +75,37 @@ class TestCrashRecovery(unittest.TestCase):
             self.assertEqual(s2.id, s.id)
         finally:
             svc.close()
+
+    def test_local_session_list_excludes_external_sessions(self):
+        """场次选择和恢复使用本地场次，不把 365dt 外部场次混进来。"""
+        svc = make_service()
+        try:
+            local = svc.create_session("本地场", "2026-08-14")
+            external = svc.repo.create_session("外部历史", "2024-07-26")
+            svc.repo.update_session(external.id, external_source="365dt",
+                                    external_uid="ET6RPQCR", external_key="2024-07-26")
+            self.assertEqual([s.id for s in svc.all_sessions()], [local.id])
+            self.assertEqual([s.id for s in svc.startup_sessions()], [local.id])
+        finally:
+            svc.close()
+
+    def test_clean_shutdown_resumes_last_local_session_without_prompt(self):
+        """正常退出后再次启动自动回到上次本地 active 场次，不弹恢复选择。"""
+        settings, _tmp = make_settings()
+        from services.app_service import AppService
+
+        svc = AppService(settings)
+        local = svc.create_session("本地场", "2026-08-14")
+        self.assertTrue(svc.mark_clean_shutdown())
+        svc.close()
+
+        resumed = AppService(settings)
+        try:
+            self.assertEqual(resumed.startup_sessions(), [])
+            self.assertIsNotNone(resumed.current_session())
+            self.assertEqual(resumed.current_session().id, local.id)
+        finally:
+            resumed.close()
 
 
 if __name__ == "__main__":

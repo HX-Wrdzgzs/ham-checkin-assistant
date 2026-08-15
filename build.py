@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -54,23 +55,59 @@ def restore_runtime(dist: Path = DIST, bak: Path = BAK) -> None:
             shutil.copy2(src, dist / item)
 
 
-def deploy_program(src_dist: Path, target: Path, runtime_bak: Path) -> bool:
-    """部署到目标目录。
+def _verify_artifact(src_dist: Path) -> bool:
+    """部署前校验产物完整（至少 EXE 存在）。"""
+    exe = src_dist / f"{NAME}.exe"
+    if not exe.exists():
+        return False
+    return True
 
-    顺序：保留既有 runtime → 替换程序文件 → 恢复 runtime。
-    绝不覆盖已有 DB/backup/config（都从 runtime_bak 恢复回来）。
+
+def deploy_program(src_dist: Path, target: Path, runtime_bak: Path) -> bool:
+    """可回滚部署（P1-15）。
+
+    顺序：复制到 target.new → 校验产物 → 保留既有 runtime →
+    target → target.old → target.new → target → 恢复 runtime → 成功后删 old。
+    任何失败自动 rollback（恢复 target.old），绝不留下半成品。
     """
     if not src_dist.exists():
         return False
+    parent = target.parent
+    target_new = parent / (target.name + ".new")
+    target_old = parent / (target.name + ".old")
+    # 1) 只复制程序载荷到 target.new。
+    #    src_dist 旁可能保留着上一次运行的 data/logs/backup/config.json；
+    #    这些是用户运行时数据，不能在首次部署到 Downloads 时被复制进发布包。
+    def ignore_runtime(_path: str, names: list[str]) -> set[str]:
+        return {name for name in names if name in _RUNTIME}
+
+    if target_new.exists():
+        shutil.rmtree(target_new)
+    shutil.copytree(src_dist, target_new, ignore=ignore_runtime)
+    # 2) smoke verify
+    if not _verify_artifact(target_new):
+        shutil.rmtree(target_new)
+        return False
     had_target = target.exists()
+    # 3) 保留既有 runtime → 原子切换
     if had_target:
         backup_runtime(target, runtime_bak)
-        # 程序文件整体替换；runtime 已安全备份，替换后恢复
-        shutil.rmtree(target)
-    target.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src_dist, target, dirs_exist_ok=True)
+        if target_old.exists():
+            shutil.rmtree(target_old)
+        os.replace(target, target_old)   # target -> target.old
+    try:
+        os.replace(target_new, target)   # target.new -> target
+    except Exception:  # noqa: BLE001
+        if had_target and target_old.exists():
+            os.replace(target_old, target)  # rollback
+        return False
+    # 4) 恢复 runtime，成功后删除 old
     if had_target:
         restore_runtime(target, runtime_bak)
+        try:
+            shutil.rmtree(target_old)
+        except OSError:
+            pass
     return True
 
 
@@ -93,6 +130,7 @@ def build_exe() -> int:
 
 def main() -> int:
     backup_runtime()
+    code = -1  # P3：异常路径下 code 也必有值，杜绝 UnboundLocalError
     try:
         code = build_exe()
     finally:

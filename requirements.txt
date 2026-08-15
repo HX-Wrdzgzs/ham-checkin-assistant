@@ -1,7 +1,7 @@
-# 运行时依赖（任务书第四阶段 #12）
-PySide6>=6.6
-pywin32>=306
-openpyxl>=3.1
-rapidfuzz>=3.0
-pypinyin>=0.51
-requests>=2.31
+# 运行时依赖（P3：固定已验证版本；升级需重跑全套测试）
+PySide6==6.11.1
+pywin32==312
+openpyxl==3.1.5
+rapidfuzz==3.14.5
+pypinyin==0.55.0
+requests==2.34.2

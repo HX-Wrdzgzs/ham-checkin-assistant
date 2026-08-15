@@ -79,7 +79,7 @@ class TestCommitUndo(unittest.TestCase):
             c = Checkin(session_id=s.id, sequence_no=1, callsign="BG4TKI",
                         qth_standard="南京栖霞", source="local")
             repo.add_checkin(c)
-            repo.update_profiles_from_checkin(c)
+            repo.rebuild_profiles_for(c.callsign)
             self.assertEqual(repo.next_sequence(s.id), 2)
             repo.soft_delete_checkin(c.id)
             self.assertEqual(len(repo.list_checkins(s.id)), 0)
@@ -141,7 +141,7 @@ class TestSyncTolerance(unittest.TestCase):
             result = svc.sync_once()
             self.assertFalse(result["ok"])
             self.assertIn("365dt", result["message"])
-            state = repo.get_sync_state("365dt")
+            state = repo.get_sync_state("365dt", "TESTUID")
             self.assertEqual(state.status, "error")
             # 数据库仍可用
             repo.create_session("仍可用", "2026-08-08")
@@ -280,6 +280,24 @@ class TestV2Features(unittest.TestCase):
             # 画像已重算
             prof = [p.field_value for p in svc.repo.profiles_for("BG4TKI", "qth")]
             self.assertEqual(prof, ["南京鼓楼"])
+        finally:
+            svc.close()
+
+    def test_update_callsign_normalizes_and_validates(self):
+        """P2：呼号修改先规范化+校验；非法值拒绝写入。"""
+        svc = make_service()
+        try:
+            svc.create_session("t", "2026-08-08")
+            res = svc.commit(svc.parse("bg4tki njqx"))
+            cid = res["checkin"].id
+            # 小写 → 规范化大写
+            out = svc.update_checkin(cid, "callsign", "ba4xxx")
+            self.assertTrue(out["ok"])
+            self.assertEqual(svc.repo.get_checkin(cid).callsign, "BA4XXX")
+            # 非法呼号 → 拒绝，DB 不变
+            out = svc.update_checkin(cid, "callsign", "abc")
+            self.assertFalse(out["ok"])
+            self.assertEqual(svc.repo.get_checkin(cid).callsign, "BA4XXX")
         finally:
             svc.close()
 

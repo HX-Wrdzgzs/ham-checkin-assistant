@@ -122,7 +122,18 @@ def backup_daily(db_path: Path, backup_dir: Path, keep: int = 30,
     today = datetime.now().strftime("%Y-%m-%d")
     dest = backup_dir / f"ham_checkin_{today}.db"
     if dest.exists():
-        return dest  # 当天已备份
+        # P2：当天已有备份也验证 quick_check；损坏则重建，绝不静默沿用坏备份
+        try:
+            chk = sqlite3.connect(str(dest))
+            try:
+                ok_existing = _quick_check_ok(chk)
+            finally:
+                chk.close()
+        except sqlite3.Error:
+            ok_existing = False
+        if ok_existing:
+            return dest
+        logger.warning("same-day backup corrupt, redo: %s", dest)
     tmp = backup_dir / f"ham_checkin_{today}.db.tmp"
     try:
         src = sqlite3.connect(str(db_path))

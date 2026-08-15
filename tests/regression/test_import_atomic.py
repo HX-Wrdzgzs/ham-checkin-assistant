@@ -43,7 +43,7 @@ def _env():
 
 class TestImportAtomic(unittest.TestCase):
     def test_import_atomic_rolls_back_on_failure(self):
-        """导入中途失败 → raw_imports 与 checkins 全部回滚，job 标记 failed。"""
+        """导入中途失败 → session/raw_imports/checkins 全部回滚，job 标记 failed。"""
         tmp, conn, repo, std = _env()
         try:
             f = tmp / "半导入.xlsx"
@@ -51,7 +51,7 @@ class TestImportAtomic(unittest.TestCase):
                           [2, "2010", "BG4TKI", "扬州", "705", "原", "10W"]])
             prov = ExcelImportProvider(repo)
             with mock.patch.object(
-                    repo, "import_records_atomic",
+                    repo, "import_file_atomic",
                     side_effect=RuntimeError("mid-import failure")):
                 imp, skip, msg = prov.import_file(f, std)
             self.assertEqual(imp, 0)
@@ -60,11 +60,29 @@ class TestImportAtomic(unittest.TestCase):
                              "失败后不得留下任何 checkin")
             self.assertEqual(conn.execute("SELECT COUNT(*) c FROM raw_imports").fetchone()["c"], 0,
                              "失败后不得留下 raw_imports（0 half-import）")
+            # P1-8：失败后不得留下 ghost active session
+            self.assertEqual(conn.execute("SELECT COUNT(*) c FROM sessions").fetchone()["c"], 0,
+                             "失败后不得留下任何 session（含 active ghost）")
             # 未标记 completed → 允许重新导入
             self.assertFalse(repo.import_job_completed("excel_import", repo.file_hash(str(f))))
             imp2, _, msg2 = prov.import_file(f, std)
             self.assertEqual(imp2, 2, "重试应成功")
             self.assertTrue(repo.import_job_completed("excel_import", repo.file_hash(str(f))))
+        finally:
+            conn.close()
+
+    def test_import_success_session_ended(self):
+        """成功导入后 session 已结束（非 active ghost）。"""
+        tmp, conn, repo, std = _env()
+        try:
+            f = tmp / "成功.xlsx"
+            make_xlsx(f, [[1, "2000", "BA4XXX", "南京", "K6", "771", "5W"]])
+            prov = ExcelImportProvider(repo)
+            imp, _, _ = prov.import_file(f, std)
+            self.assertEqual(imp, 1)
+            sessions = [dict(r) for r in conn.execute("SELECT * FROM sessions")]
+            self.assertEqual(len(sessions), 1)
+            self.assertEqual(sessions[0]["status"], "ended")
         finally:
             conn.close()
 

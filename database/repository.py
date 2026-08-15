@@ -61,9 +61,10 @@ class Repository:
         row = self.conn.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
         return self._session_from_row(row) if row else None
 
-    def list_sessions(self, limit: int = 200) -> list[Session]:
+    def list_sessions(self, limit: int = 200, local_only: bool = False) -> list[Session]:
+        where = " WHERE external_source IS NULL OR TRIM(external_source)=''" if local_only else ""
         rows = self.conn.execute(
-            "SELECT * FROM sessions ORDER BY id DESC LIMIT ?", (limit,)
+            f"SELECT * FROM sessions{where} ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         return [self._session_from_row(r) for r in rows]
 
@@ -102,9 +103,10 @@ class Repository:
             )
         return self.get_session(cur.lastrowid)
 
-    def active_sessions(self) -> list[Session]:
+    def active_sessions(self, local_only: bool = False) -> list[Session]:
+        where = " AND (external_source IS NULL OR TRIM(external_source)='')" if local_only else ""
         rows = self.conn.execute(
-            "SELECT * FROM sessions WHERE status='active' ORDER BY id"
+            f"SELECT * FROM sessions WHERE status='active'{where} ORDER BY id"
         ).fetchall()
         return [self._session_from_row(r) for r in rows]
 
@@ -159,13 +161,14 @@ class Repository:
                 """INSERT INTO checkins(session_id, sequence_no, checkin_time, callsign,
                    qth_raw, qth_standard, device_raw, device_standard,
                    antenna_raw, antenna_standard, power_raw, power_standard,
-                   signal, source, raw_input, source_record_id, source_url,
+                   signal, source, raw_input, source_record_id, source_url, unmatched,
                    is_deleted, created_at, updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
                 (c.session_id, c.sequence_no, c.checkin_time, c.callsign,
                  c.qth_raw, c.qth_standard, c.device_raw, c.device_standard,
                  c.antenna_raw, c.antenna_standard, c.power_raw, c.power_standard,
                  c.signal, c.source, c.raw_input, c.source_record_id, c.source_url,
+                 c.unmatched,
                  c.created_at, c.updated_at),
             )
             c.id = cur.lastrowid
@@ -210,19 +213,33 @@ class Repository:
         return row is not None
 
     def add_checkin_dedupe(self, c: Checkin) -> bool:
-        """按 UNIQUE(source, source_record_id) 由数据库去重，并在分配锁内分配序号。
+        """按 UNIQUE(source, source_record_id) 去重（P2：只把 source_record 冲突当重复）。
 
-        返回 True=已插入，False=重复（任务书第二阶段 #14：由 DB 负责最终 dedupe）。
-        锁内分配保证同一进程内不产生重复 (session_id, sequence_no)。
+        - 先确认是否已有同 (source, source_record_id) 的有效记录 → 是则重复（False）。
+        - 否则插入；非 source_record 的 IntegrityError（如序列）必须上抛，不误判为重复。
         """
-        try:
-            with self._alloc_lock:
-                c.sequence_no = self.next_sequence(c.session_id)
-                self.add_checkin(c)
-            return True
-        except sqlite3.IntegrityError:
-            # 唯一约束冲突 = source_record 重复（分配锁内不可能撞序号）
+        if c.source_record_id:
+            dup = self.conn.execute(
+                "SELECT 1 FROM checkins WHERE source=? AND source_record_id=? AND is_deleted=0 "
+                "LIMIT 1",
+                (c.source, c.source_record_id),
+            ).fetchone()
+            if dup:
+                return False
+        with self._alloc_lock:
+            c.sequence_no = self.next_sequence(c.session_id)
+            self.add_checkin(c)
+        return True
+
+    def _is_source_record_dup(self, c: Checkin) -> bool:
+        """是否已有同 (source, source_record_id) 的有效记录（P2 精确去重）。"""
+        if not c.source_record_id:
             return False
+        return self.conn.execute(
+            "SELECT 1 FROM checkins WHERE source=? AND source_record_id=? AND is_deleted=0 "
+            "LIMIT 1",
+            (c.source, c.source_record_id),
+        ).fetchone() is not None
 
     def soft_delete_checkin(self, checkin_id: int) -> None:
         with self.conn:
@@ -243,7 +260,9 @@ class Repository:
 
     # ---------- Excel 同步跟踪（任务书第一阶段 #9/#10 状态机） ----------
     # 状态：pending / written / persisted / verified / conflict / error
-    _UNSYNCED_STATES = ("pending", "written", "error")
+    # conflict 也必须能被“保存/补同步”重新处理；否则一次行身份冲突后，
+    # 记录会永久脱离重试队列，用户只能靠整场重写才能恢复。
+    _UNSYNCED_STATES = ("pending", "written", "error", "conflict")
 
     def set_excel_state(self, checkin_id: int, status: str, row: int | None = None,
                         error: str = "", synced_at: str = "", binding_id: str = "") -> None:
@@ -270,6 +289,27 @@ class Repository:
             params.append(checkin_id)
             self.conn.execute(sql, tuple(params))
 
+    def set_excel_states_atomic(self, states: list[dict]) -> None:
+        """单事务批量更新 Excel 同步状态（P1-7：excel_sync_missing 一次 commit）。
+
+        states: [{"checkin_id", "status", "row", "error"}]；未 Save 永远不进 persisted/verified。
+        """
+        with self.conn:
+            for s in states:
+                cid = s["checkin_id"]
+                status = s.get("status", "error")
+                row = s.get("row")
+                error = s.get("error", "")
+                synced = 1 if status in ("persisted", "verified") else 0
+                synced_at = now_iso() if synced else None
+                self.conn.execute(
+                    """UPDATE checkins SET excel_sync_status=?, excel_last_error=?,
+                       excel_synced_at=COALESCE(?, excel_synced_at),
+                       excel_row=COALESCE(?, excel_row),
+                       excel_synced=? WHERE id=?""",
+                    (status, error, synced_at, row, synced, cid),
+                )
+
     def mark_excel_synced(self, checkin_id: int, excel_row: int | None = None) -> None:
         """兼容旧接口：标记为 verified。"""
         self.set_excel_state(checkin_id, "verified", row=excel_row,
@@ -288,7 +328,7 @@ class Repository:
         with self.conn:
             self.conn.execute(
                 "UPDATE checkins SET excel_sync_status='pending', excel_row=NULL, "
-                "excel_last_error='' WHERE session_id=?",
+                "excel_last_error='' WHERE session_id=? AND is_deleted=0",
                 (session_id,))
 
     def mark_all_excel_synced(self, session_id: int) -> None:
@@ -303,8 +343,8 @@ class Repository:
         return Checkin(**{k: row[k] for k in row.keys()})
 
     # ---------- stations / profiles ----------
-    def upsert_station_from_checkin(self, c: Checkin) -> None:
-        """根据一条签到记录更新呼号概要。"""
+    def _upsert_station_from_checkin(self, c: Checkin) -> None:
+        """（已废弃，改用 rebuild_station）根据一条签到记录更新呼号概要。"""
         if not c.callsign:
             return
         now = now_iso()
@@ -427,7 +467,7 @@ class Repository:
         return len(calls)
 
 
-    def bump_profile(self, callsign: str, field_type: str, field_value: str) -> None:
+    def _bump_profile(self, callsign: str, field_type: str, field_value: str) -> None:
         if not callsign or not field_type or not field_value:
             return
         now = now_iso()
@@ -440,10 +480,10 @@ class Repository:
                 (callsign, field_type, field_value, now),
             )
 
-    def update_profiles_from_checkin(self, c: Checkin) -> None:
+    def _update_profiles_from_checkin(self, c: Checkin) -> None:
         for ft in ("qth", "device", "antenna", "power"):
             val = getattr(c, f"{ft}_standard")
-            self.bump_profile(c.callsign, ft, val)
+            self._bump_profile(c.callsign, ft, val)
 
     def profiles_for(self, callsign: str, field_type: str, limit: int = 5) -> list[StationProfile]:
         rows = self.conn.execute(
@@ -612,7 +652,13 @@ class Repository:
     # ---------- raw imports / dedup ----------
     @staticmethod
     def file_hash(path: str) -> str:
+        """文件指纹 = 文件名 + 内容（P0-3：同名内容文件不同名不得误判已导入）。
+
+        日期常编码在文件名里（2026-08-08.xlsx），内容可能完全相同；
+        仅哈希内容会让不同日期文件被当成同一文件跳过。
+        """
         h = hashlib.sha256()
+        h.update(str(path).encode("utf-8"))
         with open(path, "rb") as f:
             for chunk in iter(lambda: f.read(65536), b""):
                 h.update(chunk)
@@ -689,18 +735,83 @@ class Repository:
                             """INSERT INTO checkins(session_id, sequence_no, checkin_time, callsign,
                                qth_raw, qth_standard, device_raw, device_standard,
                                antenna_raw, antenna_standard, power_raw, power_standard,
-                               signal, source, raw_input, source_record_id, source_url,
+                               signal, source, raw_input, source_record_id, source_url, unmatched,
                                is_deleted, created_at, updated_at)
-                               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
+                               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
                             (c.session_id, c.sequence_no, c.checkin_time, c.callsign,
                              c.qth_raw, c.qth_standard, c.device_raw, c.device_standard,
                              c.antenna_raw, c.antenna_standard, c.power_raw, c.power_standard,
                              c.signal, c.source, c.raw_input, c.source_record_id, c.source_url,
+                             c.unmatched,
                              c.created_at, c.updated_at),
                         )
                         imported += 1
                     except sqlite3.IntegrityError:
-                        skipped += 1  # 重复记录 → 跳过，不中断导入
+                        # 仅在确认为 source_record 冲突时跳过，否则上抛（P2）
+                        if self._is_source_record_dup(c):
+                            skipped += 1
+                        else:
+                            raise
+        return imported, skipped
+
+    def import_file_atomic(self, source: str, session_name: str, date: str,
+                           raw_imports: list[RawImport],
+                           checkins: list[Checkin]) -> tuple[int, int]:
+        """单事务导入整文件：session 创建 → raw_imports → checkins → 结束场次（P1-8）。
+
+        - 失败整体回滚：无 ghost active session、无半导入 raw_imports/checkins。
+        - source_record 重复 → 逐条跳过。
+        - 返回 (imported, skipped)。
+        """
+        imported = skipped = 0
+        ts = now_iso()
+        with self._alloc_lock:
+            with self.conn:
+                cur = self.conn.execute(
+                    """INSERT INTO sessions(name, date, started_at, status, repeater_name,
+                       created_at, updated_at) VALUES(?,?,?,'active',?,?,?)""",
+                    (session_name, date, ts, "历史导入", ts, ts))
+                session_id = cur.lastrowid
+                for r in raw_imports:
+                    self.conn.execute(
+                        """INSERT INTO raw_imports(source, source_file, sheet_name, row_number,
+                           raw_json, record_hash, imported_at) VALUES(?,?,?,?,?,?,?)
+                           ON CONFLICT(source, source_file, sheet_name, row_number) DO NOTHING""",
+                        (r.source, r.source_file, r.sheet_name, r.row_number,
+                         r.raw_json, r.record_hash, now_iso()),
+                    )
+                for c in checkins:
+                    c.session_id = session_id
+                    c.created_at = c.updated_at = now_iso()
+                    c.sequence_no = self.next_sequence(session_id)
+                    if not c.checkin_time:
+                        c.checkin_time = c.created_at
+                    try:
+                        self.conn.execute(
+                            """INSERT INTO checkins(session_id, sequence_no, checkin_time, callsign,
+                               qth_raw, qth_standard, device_raw, device_standard,
+                               antenna_raw, antenna_standard, power_raw, power_standard,
+                               signal, source, raw_input, source_record_id, source_url, unmatched,
+                               is_deleted, created_at, updated_at)
+                               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
+                            (c.session_id, c.sequence_no, c.checkin_time, c.callsign,
+                             c.qth_raw, c.qth_standard, c.device_raw, c.device_standard,
+                             c.antenna_raw, c.antenna_standard, c.power_raw, c.power_standard,
+                             c.signal, c.source, c.raw_input, c.source_record_id, c.source_url,
+                             c.unmatched,
+                             c.created_at, c.updated_at),
+                        )
+                        imported += 1
+                    except sqlite3.IntegrityError:
+                        # 仅在确认为 source_record 冲突时跳过，否则上抛（P2）
+                        if self._is_source_record_dup(c):
+                            skipped += 1
+                        else:
+                            raise
+                # 结束场次（同一事务，绝不留下 active ghost session）
+                self.conn.execute(
+                    "UPDATE sessions SET status='ended', ended_at=?, updated_at=? WHERE id=?",
+                    (now_iso(), now_iso(), session_id))
         return imported, skipped
 
     def record_import(self, r: RawImport) -> None:
@@ -720,9 +831,10 @@ class Repository:
         return [RawImport(**{k: r[k] for k in r.keys()}) for r in rows]
 
     # ---------- sync state ----------
-    def get_sync_state(self, source: str) -> SyncState | None:
+    def get_sync_state(self, source: str, source_uid: str = "") -> SyncState | None:
         row = self.conn.execute(
-            "SELECT * FROM sync_state WHERE source=?", (source,)
+            "SELECT * FROM sync_state WHERE source=? AND source_uid=?",
+            (source, source_uid or ""),
         ).fetchone()
         return SyncState(**{k: row[k] for k in row.keys()}) if row else None
 
@@ -732,8 +844,7 @@ class Repository:
                 """INSERT INTO sync_state(source, source_uid, last_check_at, last_success_at,
                    last_record_id, last_session_id, last_hash, status, error_message)
                    VALUES(?,?,?,?,?,?,?,?,?)
-                   ON CONFLICT(source) DO UPDATE SET
-                     source_uid=excluded.source_uid,
+                   ON CONFLICT(source, source_uid) DO UPDATE SET
                      last_check_at=excluded.last_check_at,
                      last_success_at=excluded.last_success_at,
                      last_record_id=excluded.last_record_id,
@@ -741,7 +852,7 @@ class Repository:
                      last_hash=excluded.last_hash,
                      status=excluded.status,
                      error_message=excluded.error_message""",
-                (s.source, s.source_uid, s.last_check_at, s.last_success_at,
+                (s.source, s.source_uid or "", s.last_check_at, s.last_success_at,
                  s.last_record_id, s.last_session_id, s.last_hash, s.status, s.error_message),
             )
 

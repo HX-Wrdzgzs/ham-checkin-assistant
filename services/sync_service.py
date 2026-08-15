@@ -36,7 +36,7 @@ class SyncService:
         source = self.SOURCE
         uid = self.provider.uid
         now = datetime.now().isoformat(timespec="seconds")
-        state = self.repo.get_sync_state(source) or SyncState(source=source, source_uid=uid)
+        state = self.repo.get_sync_state(source, uid) or SyncState(source=source, source_uid=uid)
         state.last_check_at = now
         state.source_uid = uid
         try:

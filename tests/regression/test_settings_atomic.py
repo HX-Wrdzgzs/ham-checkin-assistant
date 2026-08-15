@@ -58,6 +58,37 @@ class TestSettingsAtomic(unittest.TestCase):
         errors = s.validate()
         self.assertTrue(any("backup_keep" in e for e in errors))
 
+    def test_validate_candidate_before_write(self):
+        """P1-13：校验候选值而不污染当前配置。"""
+        p = self.tmp / "config.json"
+        s = Settings(path=p)
+        s.set_many(fuzzy_mid=75.0, fuzzy_high=92.0)
+        # 非法候选（fuzzy_mid >= fuzzy_high）→ 报错，且当前配置未被污染
+        errors = s.validate_candidate({"fuzzy_mid": 95.0, "fuzzy_high": 92.0})
+        self.assertTrue(errors)
+        self.assertEqual(s.get("fuzzy_mid"), 75.0, "候选校验不得改动当前配置")
+        self.assertEqual(s.get("fuzzy_high"), 92.0)
+        # 合法候选 → 无错误
+        self.assertEqual(s.validate_candidate({"fuzzy_mid": 75.0, "fuzzy_high": 92.0}), [])
+        # backup_keep 非法
+        self.assertTrue(s.validate_candidate({"backup_keep": 0}))
+        self.assertTrue(s.validate_candidate({"dt365_max_fetch": -1}))
+
+    def test_corrupt_config_preserved_and_noted(self):
+        """P2：损坏配置保留坏文件（改名留档）+ corrupt_config_note 提示。"""
+        p = self.tmp / "config.json"
+        p.write_text("{ this is not valid json !!!", encoding="utf-8")
+        s = Settings(path=p)
+        self.assertNotEqual(s.corrupt_config_note, "", "损坏必须记录提示")
+        # 坏文件被保留（改名），未丢失
+        kept = list(self.tmp.glob("config.json.corrupt-*"))
+        self.assertEqual(len(kept), 1, "坏文件必须改名保留")
+        self.assertIn("已备份为", s.corrupt_config_note)
+        # 默认值仍可用，且可正常保存新配置
+        self.assertEqual(s.get("fuzzy_high"), 92.0)
+        self.assertTrue(s.save())
+        self.assertTrue(p.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

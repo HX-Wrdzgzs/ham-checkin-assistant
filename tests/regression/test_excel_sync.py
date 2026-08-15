@@ -125,9 +125,12 @@ class TestExcelSaveErrorPropagation(unittest.TestCase):
         try:
             svc.commit(svc.parse("bg4tki njqx k6 y 5"))
             svc.commit(svc.parse("ba4xxx njqx k6 y 5"))
+            before = list(sheet_records(wb.Sheets("点名表")))
             wb.save_fail = True
             ok, msg = svc.excel_resync()
             self.assertFalse(ok)
+            self.assertEqual(sheet_records(wb.Sheets("点名表")), before,
+                             "整场重写 Save 失败时必须恢复工作簿内存数据")
             for c in svc.repo.list_checkins(svc.current_session().id):
                 self.assertNotEqual(c.excel_sync_status, "verified",
                                     "resync Save 失败不得标记全部已同步")
@@ -151,6 +154,118 @@ class TestExcelSaveErrorPropagation(unittest.TestCase):
             c1b = svc.repo.get_checkin(c1.id)
             self.assertNotEqual(c1b.excel_sync_status, "verified")
             self.assertIn("保存失败", msg2)
+        finally:
+            svc.close()
+
+
+class TestDeferredExcelSave(unittest.TestCase):
+    """快速点名：先写内存、空闲时一次 Save，且不重复追加已有 written 行。"""
+
+    def test_edit_can_defer_excel_save_without_blocking_service_call(self):
+        """修改入口只更新 SQLite 并生成 worker 快照，不同步调用 Excel.Save。"""
+        svc, wb = make_svc_with_excel()
+        try:
+            res = svc.commit(svc.parse("bg4tki njqx k6 y 5"))
+            cid = res["checkin"].id
+            before = wb.save_count
+            out = svc.update_checkin(cid, "qth", "南京鼓楼", defer_excel=True)
+            self.assertTrue(out["ok"])
+            self.assertEqual(wb.save_count, before,
+                             "defer_excel=True 不应在 UI 调用路径同步 Save")
+            self.assertIsNotNone(out["excel_task"])
+            self.assertEqual(out["excel_task"]["excel_field"], "qth")
+            c = svc.repo.get_checkin(cid)
+            self.assertEqual(c.qth_standard, "南京鼓楼")
+            self.assertEqual(c.excel_sync_status, "pending")
+
+            ok, msg = svc.finish_deferred_excel_update({
+                "ok": True,
+                "checkin_id": cid,
+                "row": 2,
+                "binding_id": out["excel_task"]["binding_id"],
+                "message": "已更新第 2 行",
+            })
+            self.assertTrue(ok, msg)
+            self.assertEqual(svc.repo.get_checkin(cid).excel_sync_status, "persisted")
+        finally:
+            svc.close()
+
+    def test_deferred_commit_flushes_once(self):
+        svc, wb = make_svc_with_excel()
+        try:
+            before = wb.save_count
+            res = svc.commit(svc.parse("bg4tki njqx k6 y 5"), save_excel=False)
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["excel_state"], "written")
+            self.assertFalse(res["excel_persisted"])
+            self.assertEqual(wb.save_count, before, "延迟提交不应立即 Save")
+            c = svc.repo.get_checkin(res["checkin"].id)
+            self.assertEqual(c.excel_sync_status, "written")
+
+            ok, msg = svc.flush_excel_pending()
+            self.assertTrue(ok, msg)
+            self.assertEqual(wb.save_count, before + 1)
+            c = svc.repo.get_checkin(c.id)
+            self.assertEqual(c.excel_sync_status, "persisted")
+            self.assertEqual(c.excel_row, 2)
+
+            # 已经 persisted 的记录不再进入补同步，也不产生第二次 Save。
+            ok2, msg2 = svc.flush_excel_pending()
+            self.assertTrue(ok2, msg2)
+            self.assertEqual(wb.save_count, before + 1)
+        finally:
+            svc.close()
+
+    def test_written_row_is_not_duplicated_when_flushed_with_another_record(self):
+        svc, wb = make_svc_with_excel()
+        try:
+            r1 = svc.commit(svc.parse("bg4tki njqx k6 y 5"), save_excel=False)
+            r2 = svc.commit(svc.parse("ba4xxx njqx k6 y 5"), save_excel=False)
+            self.assertEqual(wb.save_count, 0)
+            ok, msg = svc.flush_excel_pending()
+            self.assertTrue(ok, msg)
+            self.assertEqual(wb.save_count, 1)
+            records = sheet_records(wb.Sheets("点名表"))
+            self.assertEqual([r["callsign"] for r in records], ["BG4TKI", "BA4XXX"])
+            self.assertEqual(svc.repo.get_checkin(r1["checkin"].id).excel_row, 2)
+            self.assertEqual(svc.repo.get_checkin(r2["checkin"].id).excel_row, 3)
+        finally:
+            svc.close()
+
+    def test_unmatched_input_is_persisted_to_excel_unmatched_column(self):
+        """无法归类的 token 不能随标准字段丢失，应写入显式“未识别”列。"""
+        from tests.helpers.mock_excel import make_sheet
+
+        # 普通旧表没有该可选列时，首次出现未识别内容应自动补列，不能丢失输入。
+        sheet = make_sheet("点名表")
+        wb = make_workbook("C:/tmp/unmatched.xlsx", sheet=sheet)
+        svc, _ = make_svc_with_excel(wb)
+        try:
+            res = svc.commit(svc.parse("bg4tki njqx k6 y 5 mysterytoken"))
+            self.assertTrue(res["ok"])
+            c = svc.repo.get_checkin(res["checkin"].id)
+            self.assertEqual(c.unmatched, "mysterytoken")
+            self.assertEqual(wb.Sheets("点名表")._data.get((1, 9)), "未识别")
+            self.assertEqual(wb.Sheets("点名表")._data.get((2, 9)), "mysterytoken")
+        finally:
+            svc.close()
+
+    def test_unmatched_column_does_not_overwrite_manual_column(self):
+        """旧模板已有备注列时，补列必须向后寻找空列表头。"""
+        from tests.helpers.mock_excel import make_sheet
+
+        sheet = make_sheet("点名表")
+        sheet.set_cell(1, 9, "备注")
+        sheet.set_cell(2, 9, "人工备注")
+        wb = make_workbook("C:/tmp/unmatched-manual-column.xlsx", sheet=sheet)
+        svc, _ = make_svc_with_excel(wb)
+        try:
+            res = svc.commit(svc.parse("bg4tki njqx k6 y 5 mysterytoken"))
+            self.assertTrue(res["ok"])
+            self.assertEqual(sheet._data.get((1, 9)), "备注")
+            self.assertEqual(sheet._data.get((2, 9)), "人工备注")
+            self.assertEqual(sheet._data.get((1, 10)), "未识别")
+            self.assertEqual(sheet._data.get((2, 10)), "mysterytoken")
         finally:
             svc.close()
 
@@ -221,6 +336,138 @@ class TestConsistency(unittest.TestCase):
         ok, report = self._report([_mk(1, "BG4TKI"), _mk(2, "BA4XXX")], excel)
         self.assertFalse(ok)
         self.assertIn("MISSING_IN_EXCEL", report)
+
+
+class TestSignalSync(unittest.TestCase):
+    """P1-4：signal 修改必须同步 Excel signal 列。"""
+
+    def test_update_signal_syncs_excel(self):
+        wb = make_workbook("C:/tmp/sig.xlsx")
+        svc = make_service()
+        try:
+            svc.create_session("场A", "2026-08-08")
+            install_mock_app(svc.excel, MockApp([wb], wb))
+            ok, msg = svc.excel_connect(str(wb.FullName), wb.Sheets("点名表").Name)
+            self.assertTrue(ok, msg)
+            res = svc.commit(svc.parse("bg4tki njqx k6 y 5 59"))
+            out = svc.update_checkin(res["checkin"].id, "signal", "55")
+            self.assertTrue(out["ok"])
+            c = svc.repo.get_checkin(res["checkin"].id)
+            self.assertEqual(c.signal, "55")
+            # Excel signal 列（第 8 列）已更新
+            self.assertEqual(wb.Sheets("点名表")._data.get((2, 8)), "55")
+            self.assertEqual(c.excel_sync_status, "persisted")
+        finally:
+            svc.close()
+
+    def test_update_signal_save_failure_marks_error(self):
+        wb = make_workbook("C:/tmp/sig2.xlsx")
+        svc = make_service()
+        try:
+            svc.create_session("场A", "2026-08-08")
+            install_mock_app(svc.excel, MockApp([wb], wb))
+            ok, msg = svc.excel_connect(str(wb.FullName), wb.Sheets("点名表").Name)
+            self.assertTrue(ok, msg)
+            res = svc.commit(svc.parse("bg4tki njqx k6 y 5 59"))
+            wb.save_fail = True
+            out = svc.update_checkin(res["checkin"].id, "signal", "55")
+            self.assertTrue(out["ok"])
+            c = svc.repo.get_checkin(res["checkin"].id)
+            self.assertEqual(c.signal, "55")
+            self.assertEqual(c.excel_sync_status, "error", "Save 失败必须标 error")
+        finally:
+            svc.close()
+
+    def test_update_signal_not_connected_stays_pending(self):
+        svc = make_service()
+        try:
+            svc.create_session("场A", "2026-08-08")
+            res = svc.commit(svc.parse("bg4tki njqx k6 y 5 59"))
+            # 未连接 Excel 时改 signal → 状态保持 pending，不假装同步
+            svc.excel.disconnect()
+            out = svc.update_checkin(res["checkin"].id, "signal", "55")
+            self.assertTrue(out["ok"])
+            c = svc.repo.get_checkin(res["checkin"].id)
+            self.assertEqual(c.signal, "55")
+            self.assertEqual(c.excel_sync_status, "pending")
+        finally:
+            svc.close()
+
+
+class TestAtomicBatchState(unittest.TestCase):
+    """P1-7：excel_sync_missing 单事务批量更新状态。"""
+
+    def test_sync_missing_marks_persisted_in_one_batch(self):
+        wb = make_workbook("C:/tmp/batch.xlsx")
+        svc = make_service()
+        try:
+            svc.create_session("场A", "2026-08-08")
+            # 先断开 Excel 提交两条 → pending
+            res1 = svc.commit(svc.parse("bg4tki njqx k6 y 5"))
+            res2 = svc.commit(svc.parse("ba4xxx njqx k6 y 5"))
+            self.assertEqual(svc.repo.get_checkin(res1["checkin"].id).excel_sync_status, "pending")
+            # 连接后补同步
+            install_mock_app(svc.excel, MockApp([wb], wb))
+            ok, msg = svc.excel_connect(str(wb.FullName), wb.Sheets("点名表").Name)
+            self.assertTrue(ok, msg)
+            ok2, msg2 = svc.excel_sync_missing()
+            self.assertTrue(ok2, msg2)
+            c1 = svc.repo.get_checkin(res1["checkin"].id)
+            c2 = svc.repo.get_checkin(res2["checkin"].id)
+            self.assertEqual(c1.excel_sync_status, "persisted")
+            self.assertEqual(c2.excel_sync_status, "persisted")
+            self.assertIsNotNone(c1.excel_row)
+            self.assertIsNotNone(c2.excel_row)
+        finally:
+            svc.close()
+
+
+class TestResyncVerify(unittest.TestCase):
+    """P1-6：resync readback + 逐行 verify + 记录每条 excel_row。"""
+
+    def test_resync_marks_verified_with_rows(self):
+        wb = make_workbook("C:/tmp/resync.xlsx")
+        svc = make_service()
+        try:
+            svc.create_session("场A", "2026-08-08")
+            install_mock_app(svc.excel, MockApp([wb], wb))
+            ok, msg = svc.excel_connect(str(wb.FullName), wb.Sheets("点名表").Name)
+            self.assertTrue(ok, msg)
+            r1 = svc.commit(svc.parse("bg4tki njqx k6 y 5"))  # seq1 → row2
+            r2 = svc.commit(svc.parse("ba4xxx njqx k6 y 5"))  # seq2 → row3
+            # 手动改坏 Excel 一行（模拟用户编辑）
+            sheet = wb.Sheets("点名表")
+            sheet.set_cell(3, 3, "WRONG")
+            ok2, msg2 = svc.excel_resync()
+            self.assertTrue(ok2, msg2)
+            c1 = svc.repo.get_checkin(r1["checkin"].id)
+            c2 = svc.repo.get_checkin(r2["checkin"].id)
+            self.assertEqual(c1.excel_sync_status, "verified")
+            self.assertEqual(c1.excel_row, 2)
+            self.assertEqual(c2.excel_sync_status, "verified")
+            self.assertEqual(c2.excel_row, 3)
+            # readback 确认每行 sequence+callsign 正确
+            self.assertTrue(svc.excel.verify_row_identity(2, 1, "BG4TKI"))
+            self.assertTrue(svc.excel.verify_row_identity(3, 2, "BA4XXX"))
+        finally:
+            svc.close()
+
+    def test_resync_save_failure_marks_error_not_all_synced(self):
+        wb = make_workbook("C:/tmp/resync2.xlsx")
+        svc = make_service()
+        try:
+            svc.create_session("场A", "2026-08-08")
+            install_mock_app(svc.excel, MockApp([wb], wb))
+            ok, msg = svc.excel_connect(str(wb.FullName), wb.Sheets("点名表").Name)
+            self.assertTrue(ok, msg)
+            r1 = svc.commit(svc.parse("bg4tki njqx k6 y 5"))
+            wb.save_fail = True
+            ok2, msg2 = svc.excel_resync()
+            self.assertFalse(ok2)
+            c1 = svc.repo.get_checkin(r1["checkin"].id)
+            self.assertEqual(c1.excel_sync_status, "error", "Save 失败不得标记 verified")
+        finally:
+            svc.close()
 
 
 if __name__ == "__main__":

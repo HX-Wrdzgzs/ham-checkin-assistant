@@ -119,6 +119,53 @@ class TestDeployProtection(unittest.TestCase):
         self.assertTrue(ok)
         self.assertTrue((target / "HAM点名助手.exe").exists())
 
+    def test_deploy_new_target_excludes_source_runtime(self):
+        """首次部署到 Downloads 时不得把 src_dist 的运行数据带入发布包。"""
+        src = _make_dist(self.tmp / "src")
+        (src / "HAM点名助手.exe").write_bytes(b"new-exe")
+        target = self.tmp / "target"
+        ok = deploy_program(src, target, self.tmp / "dep_bak")
+        self.assertTrue(ok)
+        self.assertTrue((target / "app.exe").exists())
+        self.assertFalse((target / "data").exists())
+        self.assertFalse((target / "backup").exists())
+        self.assertFalse((target / "logs").exists())
+        self.assertFalse((target / "config.json").exists())
+
+    def test_deploy_uses_atomic_rename_no_half_target(self):
+        """P1-15：部署走 target.new → 原子切换，不留半成品 target.new/old。
+
+        规范：不允许 build 覆盖已有 DB → 旧 runtime（含 DB）必须恢复。
+        """
+        src = self.tmp / "src"
+        src.mkdir()
+        (src / "HAM点名助手.exe").write_bytes(b"new-exe")
+        (src / "data").mkdir()
+        (src / "data" / "ham_checkin.db").write_bytes(b"fresh-db")
+        target = _make_dist(self.tmp / "target")  # 已有 runtime（db-bytes）
+        ok = deploy_program(src, target, self.tmp / "dep_bak")
+        self.assertTrue(ok)
+        # 没有残留 .new / .old
+        self.assertFalse((self.tmp / "target.new").exists())
+        self.assertFalse((self.tmp / "target.old").exists())
+        # 既有 DB 必须保留（不得被新 build 的 runtime 覆盖）
+        self.assertEqual((target / "data" / "ham_checkin.db").read_bytes(), DB_BYTES,
+                         "既有 DB 必须保留")
+        self.assertEqual((target / "config.json").read_text(encoding="utf-8"), CONFIG_TEXT,
+                         "旧 config 应恢复")
+
+    def test_deploy_artifact_verify_fails(self):
+        """P1-15：产物缺少 EXE → 拒绝部署（smoke verify）。"""
+        src = self.tmp / "src"
+        src.mkdir()
+        (src / "data").mkdir()  # 无 exe
+        target = self.tmp / "target"
+        target.mkdir()
+        ok = deploy_program(src, target, self.tmp / "dep_bak")
+        self.assertFalse(ok)
+        self.assertFalse((self.tmp / "target.new").exists(), "失败不得留 target.new")
+        self.assertTrue(target.exists(), "失败不得破坏原 target")
+
 
 if __name__ == "__main__":
     unittest.main()

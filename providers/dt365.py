@@ -31,13 +31,15 @@ class Dt365Provider(DataProvider):
 
     def __init__(self, uid: str, max_fetch: int = 200,
                  concurrency: int = 5, timeout: int = 8,
-                 retries: int = 3, retry_delay_base: float = 1.0) -> None:
+                 retries: int = 3, retry_delay_base: float = 1.0,
+                 retry_max_wait: float = 60.0) -> None:
         self.uid = uid
         self.max_fetch = max_fetch
         self.concurrency = concurrency
         self.timeout = timeout
         self.retries = retries
         self.retry_delay_base = retry_delay_base  # 测试可设为 0
+        self.retry_max_wait = retry_max_wait  # Retry-After 最大等待上限（秒）
         self.failed: list[str] = []  # 最近一次 fetch_many_stats 失败的呼号
         self.session = requests.Session()
         self.session.headers.update({
@@ -67,7 +69,8 @@ class Dt365Provider(DataProvider):
                     ra = resp.headers.get("Retry-After")
                     delay = float(ra) if ra and ra.replace(".", "", 1).isdigit() else \
                         (self.retry_delay_base * (2 ** attempt))
-                    time.sleep(delay)
+                    # P2：Retry-After 尊重但设上限，避免服务端给出长值导致界面长时间卡死
+                    time.sleep(min(delay, self.retry_max_wait))
                     continue
                 if resp.status_code in RETRYABLE_STATUS:
                     time.sleep(self.retry_delay_base * (2 ** attempt))

@@ -1,7 +1,7 @@
 """快速录入面板：输入 → 解析预览 → 提交/接受历史/清空/撤销。
 
 快捷键：
-Enter 提交；Tab 接受历史；Esc 清空；Ctrl+Z 撤销上一条。
+Enter 提交；Tab 接受历史；Esc 清空；Ctrl+Shift+Z 撤销上一条。
 输入补全：输入中会弹出轻量候选（↑↓ 选择，Enter/Tab 接受）。
 """
 from __future__ import annotations
@@ -30,16 +30,19 @@ class _InputEdit(QLineEdit):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._popup = None
+        # 用户是否已主动用 ↑/↓ 选择候选：只有进入选择态，Enter 才确认候选；
+        # 否则 Enter 始终正常提交，绝不因补全弹窗被劫持（如输入 ba4rll）。
+        self._completion_navigated = False
 
     def _popup_visible(self) -> bool:
         return self._popup is not None and self._popup.isVisible()
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
-        # Enter：弹窗可见时接受高亮候选（此时 token 必为不完整前缀/歧义，如 njq、gl）；
-        # 无弹窗时提交。完整缩写（jsyz/nj/k6/5…）不弹窗，回车直接提交。
+        # Enter：仅当弹窗可见**且用户已用 ↑/↓ 选择**时才确认候选；
+        # 未主动选择 → 直接提交（输入 ba4rll 回车就是提交，不被补全卡住）。
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if self._popup_visible():
+            if self._popup_visible() and self._completion_navigated:
                 self.completion_accept.emit()
                 event.accept()
                 return
@@ -69,7 +72,12 @@ class _InputEdit(QLineEdit):
             self.up_pressed.emit()
             event.accept()
             return
-        if key == Qt.Key.Key_Z and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+        # Ctrl+Z 必须保留 QLineEdit 自己的文字撤销能力；此前这里把它
+        # 劫持成“撤销上一条”，用户整理输入时连续按 Ctrl+Z 会误删多条记录。
+        # 记录级撤销改为不与文本编辑冲突的 Ctrl+Shift+Z。
+        if (key == Qt.Key.Key_Z
+                and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                and event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
             self.undo_pressed.emit()
             event.accept()
             return
@@ -89,10 +97,14 @@ class QuickInputPanel(QWidget):
         self._timer.timeout.connect(self._do_parse)
 
         # 轻量候选弹出框（输入自动补全）—— 先建好再连接信号
+        # 用 ToolTip 而非 Popup：Popup 窗口显示时会抓取鼠标+键盘，导致用户
+        # 无法继续输入 ba4rll、回车也被弹窗吃掉（2026-08-14 实测根因）。
+        # ToolTip 不抢焦点/键盘，输入框始终接收按键。
         self.popup = QListWidget(self)
-        self.popup.setWindowFlags(Qt.WindowType.Popup |
+        self.popup.setWindowFlags(Qt.WindowType.ToolTip |
                                   Qt.WindowType.FramelessWindowHint)
         self.popup.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.popup.setMaximumHeight(220)
         self.popup.itemClicked.connect(lambda *_: self._accept_completion())
         self.popup.hide()
@@ -124,7 +136,7 @@ class QuickInputPanel(QWidget):
         self.feedback_lbl.setStyleSheet("color:#2E7D32; font-weight:bold;")
         self.meta_lbl = QLabel("")
         self.meta_lbl.setStyleSheet("color:#78909C;")
-        hint = ("Enter 写入　Tab 接受历史　Esc 清空　Ctrl+Z 撤销")
+        hint = ("Enter 写入　Tab 接受历史　Esc 清空　Ctrl+Shift+Z 撤销上一条")
         self.hint_lbl = QLabel(hint)
         self.hint_lbl.setStyleSheet("color:#90A4AE; font-size:11px;")
 
@@ -169,7 +181,12 @@ class QuickInputPanel(QWidget):
 
     # ---------- 解析 ----------
     def _schedule_parse(self) -> None:
+        if getattr(self.service, "_closed", False):
+            self._timer.stop()
+            return
         self._refresh_meta()
+        # 用户继续打字 = 离开“选择态”：Enter 恢复为提交，不再确认候选
+        self.input._completion_navigated = False
         # 输入已成完整缩写时立即隐藏补全弹窗，避免回车被残留弹窗劫持
         last = self.input.text().rsplit(" ", 1)[-1].strip().lower()
         if last and self.service.token_is_complete(last):
@@ -178,6 +195,10 @@ class QuickInputPanel(QWidget):
         self._timer.start()
 
     def _do_parse(self) -> None:
+        if getattr(self.service, "_closed", False):
+            self._timer.stop()
+            self.popup.hide()
+            return
         text = self.input.text()
         if not text.strip():
             self._result = None
@@ -222,10 +243,13 @@ class QuickInputPanel(QWidget):
         self.popup.setCurrentRow(0)
         if not self.popup.isVisible():
             self.popup.show()
+        # 弹窗显示后强制输入框保持焦点：继续打字 ba4rll 不会被弹窗拦截
+        self.input.setFocus()
 
     def _popup_down(self) -> None:
         if not self.popup.isVisible():
             return
+        self.input._completion_navigated = True  # 进入选择态：Enter 将确认候选
         r = self.popup.currentRow() + 1
         if r >= self.popup.count():
             r = 0
@@ -234,6 +258,7 @@ class QuickInputPanel(QWidget):
     def _popup_up(self) -> None:
         if not self.popup.isVisible():
             return
+        self.input._completion_navigated = True  # 进入选择态：Enter 将确认候选
         r = self.popup.currentRow() - 1
         if r < 0:
             r = self.popup.count() - 1
@@ -281,6 +306,9 @@ class QuickInputPanel(QWidget):
                 parts.append(f"{f.value} [{source_label(f.source)}]")
             elif f.candidates:
                 parts.append(f"{' / '.join(f.candidates[:2])} [候选]")
+        # P2：明确显示未匹配 token，提示用户无法解析的内容
+        if r.unmatched:
+            parts.append(f"未识别：{' '.join(r.unmatched)}")
         self.detail_lbl.setText("　|　".join(parts))
 
         # 历史建议（P0-4：次数 + 最近 / 常用）
@@ -330,8 +358,11 @@ class QuickInputPanel(QWidget):
             self._result = self.service.parse(text)
             self._render()
         if self._result and self._result.callsign.value:
-            self.submitted.emit(self._result)
+            result = self._result
+            # 先清空并保持焦点，再通知业务层提交。Excel/数据库即使暂时较慢，
+            # 录入框也立即进入“下一位”状态，不让操作员看见旧呼号。
             self._clear()
+            self.submitted.emit(result)
         else:
             self.set_feedback("缺少呼号，无法提交", ok=False)
 

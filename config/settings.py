@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import threading
+from datetime import datetime
 from pathlib import Path
 
 
@@ -27,13 +28,21 @@ DEFAULTS: dict = {
     "global_hotkey": "Ctrl+Space",
     # Excel
     "excel_auto_save": True,
+    # 快速点名：停止输入多久后合并保存一次 Excel（毫秒）
+    "excel_save_delay_ms": 600,
     "excel_template": "",
     "excel_sheet_name": "",
+    # 正常退出后自动恢复上次本地场次；异常退出仍进入崩溃恢复。
+    "clean_shutdown": False,
+    "last_local_session_id": None,
     # 365dt
     "dt365_uid": "ET6RPQCR",
     "dt365_url": "https://api.365dt.net/dianming/user/ranking.asp?uid={uid}",
     # 默认同步规模：首次 100~300 即可，避免一次性抓 1597（任务书第二阶段 #18）
     "dt365_max_fetch": 200,
+    # NRL Nanny（只读监听，绝不自动写库）
+    "nrl_nanny_url": "https://nrlnanny-nanjing.bd4rfg.cn",
+    "nrl_poll_interval": 5.0,
     # 目录
     "data_dir": "data",
     "logs_dir": "logs",
@@ -57,18 +66,33 @@ class Settings:
         self._path = Path(path) if path else CONFIG_PATH
         self._lock = threading.Lock()
         self._data = dict(DEFAULTS)
+        self._corrupt_note = ""  # P2：配置损坏时保留坏文件并记录提示
         self.load()
 
     def load(self) -> None:
         if self._path.exists():
             try:
-                with open(self._path, "r", encoding="utf-8") as f:
+                with open(self._path, encoding="utf-8") as f:
                     loaded = json.load(f)
                 for k, v in loaded.items():
                     self._data[k] = v
-            except (OSError, json.JSONDecodeError):
-                # 配置损坏时回退默认值，不阻塞启动
-                pass
+            except json.JSONDecodeError as e:
+                # P2：损坏配置绝不静默丢弃——改名保留原文件，供用户/支持检查
+                try:
+                    bad = self._path.with_suffix(
+                        self._path.suffix + f".corrupt-{datetime.now():%Y%m%d%H%M%S}")
+                    os.replace(self._path, bad)
+                    self._corrupt_note = (
+                        f"配置文件损坏，已备份为 {bad.name}，本次使用默认设置")
+                except OSError:
+                    self._corrupt_note = "配置文件损坏，且无法备份坏文件，本次使用默认设置"
+            except OSError:
+                self._corrupt_note = "配置文件无法读取，本次使用默认设置"
+
+    @property
+    def corrupt_config_note(self) -> str:
+        """配置损坏提示（空串=正常）。UI 启动时展示。"""
+        return self._corrupt_note
 
     def save(self) -> bool:
         """原子写配置：tmp → flush → fsync → 原子替换（任务书第三阶段 #16）。
@@ -95,19 +119,28 @@ class Settings:
 
     def validate(self) -> list[str]:
         """配置 schema 校验（任务书第三阶段 #17），返回问题列表。"""
+        return self.validate_candidate(dict(self._data))
+
+    def validate_candidate(self, candidate: dict) -> list[str]:
+        """校验一组候选配置值（P1-13：先验后写，不污染当前配置）。
+
+        用于 UI 收集候选 → 校验 → 合法才 atomic save。
+        """
         errors: list[str] = []
+        mid = candidate.get("fuzzy_mid", self.get("fuzzy_mid", 75))
+        high = candidate.get("fuzzy_high", self.get("fuzzy_high", 92))
         try:
-            mid = float(self.get("fuzzy_mid", 75))
-            high = float(self.get("fuzzy_high", 92))
+            if float(mid) >= float(high):
+                errors.append("fuzzy_mid 必须小于 fuzzy_high")
         except (TypeError, ValueError):
             errors.append("fuzzy_mid / fuzzy_high 必须为数字")
-            mid, high = 75, 92
-        if mid >= high:
-            errors.append("fuzzy_mid 必须小于 fuzzy_high")
-        for key in ("dt365_max_fetch", "backup_keep"):
+        for key in ("dt365_max_fetch", "backup_keep", "excel_save_delay_ms"):
+            v = candidate.get(key, self.get(key, 0))
             try:
-                if float(self.get(key, 0)) <= 0:
+                if float(v) <= 0:
                     errors.append(f"{key} 必须为正数")
+                elif key == "excel_save_delay_ms" and not 100 <= float(v) <= 5000:
+                    errors.append("excel_save_delay_ms 必须在 100~5000 毫秒之间")
             except (TypeError, ValueError):
                 errors.append(f"{key} 必须为数字")
         return errors
@@ -142,6 +175,11 @@ class Settings:
     @property
     def db_path(self) -> Path:
         return self.data_dir / "ham_checkin.db"
+
+    @property
+    def path(self) -> Path:
+        """配置文件路径（自动备份元数据需记录 config checksum）。"""
+        return self._path
 
 
 settings = Settings()

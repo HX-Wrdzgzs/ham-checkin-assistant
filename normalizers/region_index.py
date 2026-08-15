@@ -30,6 +30,12 @@ _DETAIL_TAIL = set(
     "0123456789站路街村镇巷桥园山湖洞号室栋单元楼层口坊弄广场大道宿舍花园小区市场"
 )
 
+# 单字行政后缀字符（用于渐进剥离“真正的行政后缀”，绝不删名称本身字符）
+_ADMIN_CHARS = "省市辖区县盟旗"
+
+# 残余允许字符 = 地址细节 + 行政后缀字符（如「青岛市南区」→ 键「青岛市南」+ 残余「区」）
+_ALLOWED_TAIL = _DETAIL_TAIL | set(_ADMIN_CHARS)
+
 
 @dataclass
 class RegionEntry:
@@ -81,8 +87,17 @@ class RegionIndex:
         # 中文名键
         name_full = "".join(strip_admin(p) for p in parts)
         name_keys = {name_full}
-        if is_default:
-            name_keys.add("".join(strip_admin(p) for p in parts[1:]))
+        # 省省略键：所有省份都加（青岛市南 / 济南市中），支持省略省份的区县解析（P1-10）
+        name_short = "".join(strip_admin(p) for p in parts[1:])
+        if name_short and name_short != name_full:
+            name_keys.add(name_short)
+        # 默认省份的区县名在现场经常单独输入（如“江宁”“栖霞”）。
+        # 只加入默认省份，避免跨省同名区县被静默归到当前省；同名条目仍由
+        # resolve_name 返回候选，不在这里强行选择。
+        if is_default and len(parts) >= 3:
+            district_key = strip_admin(parts[-1])
+            if district_key:
+                name_keys.add(district_key)
         entry.name_keys = list(name_keys)
         for k in name_keys:
             self.by_name.setdefault(k, []).append(entry)
@@ -116,18 +131,29 @@ class RegionIndex:
             return []
         if n in self.by_name:
             return list(self.by_name[n])
-        # 去行政后缀字符（省市区县盟旗）再匹配：处理“江苏省南京市栖霞区”这类间隔后缀
-        f = "".join(ch for ch in n if ch not in "省市辖区县盟旗")
+        # 1) 完整行政链：去掉间隔的行政后缀字符再匹配（江苏省南京市栖霞区 → 江苏南京栖霞）
+        f = "".join(ch for ch in n if ch not in _ADMIN_CHARS)
         if f and f != n:
             if f in self.by_name:
                 return list(self.by_name[f])
             hits = self._containment_clean(f)
             if hits:
                 return hits
-        return self._containment_clean(n)
+        # 2) 渐进去掉「末尾真正行政后缀」再匹配（青岛市南区 → 青岛市南；不删名称本身字符）
+        s = n
+        while len(s) > 1 and s[-1] in _ADMIN_CHARS:
+            s = s[:-1]
+            if s in self.by_name:
+                return list(self.by_name[s])
+        # 3) 含区划名 + 残余细节/行政后缀（如 南京市栖霞区6楼）
+        hits = self._containment_clean(n)
+        if hits:
+            return hits
+        return []
 
     def _containment_clean(self, n: str) -> list[RegionEntry]:
-        """取包含在查询串中的最长名称键；残余部分必须是可辨识的地址细节，否则不折叠。"""
+        """取包含在查询串中的最长名称键；残余部分必须是可辨识的地址细节
+        （或「真正的行政后缀」如 区），否则不折叠（防「南京南」被折叠成「南京」）。"""
         best_key, best_entries, best_len = "", [], 0
         for k, entries in self.by_name.items():
             if len(k) < 2:
@@ -139,7 +165,7 @@ class RegionIndex:
         if not best_key:
             return []
         leftover = n.replace(best_key, "", 1)
-        if leftover and not all(ch in _DETAIL_TAIL for ch in leftover):
+        if leftover and not all(ch in _ALLOWED_TAIL for ch in leftover):
             return []  # 残余含非细节字符（如“南京南”的“南”）→ 不静默折叠
         return best_entries
 

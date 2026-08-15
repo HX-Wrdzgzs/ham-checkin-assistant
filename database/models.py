@@ -43,6 +43,8 @@ class Checkin:
     raw_input: str = ""
     source_record_id: str = ""
     source_url: str = ""
+    # 本次输入中未能归入字段的 token；原始输入仍保留在 raw_input。
+    unmatched: str = ""
     is_deleted: int = 0
     deleted_at: str = ""
     created_at: str = ""

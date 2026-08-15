@@ -135,7 +135,7 @@ class TestIncrementalSync(unittest.TestCase):
             self.assertTrue(res["ok"])
             self.assertTrue(res["partial"], "部分失败必须 partial")
             self.assertIn("BA4XXX", res["failed"])
-            state = repo.get_sync_state("365dt")
+            state = repo.get_sync_state("365dt", "UID_A")
             self.assertEqual(state.status, "partial")
             st = repo.get_source_station_state("365dt", "UID_A", "BA4XXX")
             self.assertEqual(st["status"], "failed", "失败呼号保留 retry 状态")

@@ -46,6 +46,26 @@ class TestDatetimeCanonical(unittest.TestCase):
         self.assertEqual(b, c)
         self.assertEqual(c, "2026-08-13T20:00:00")
 
+    def test_invalid_calendar_falls_back(self):
+        """P1-9：非法日历/时间不得进入 canonical DB。
+
+        - 非法日期（2-29 非闰年、月份 13）→ 回退今天
+        - 非法时间（25:00、20:99）但日期有效 → 日期保留、时间回退 00:00:00
+        """
+        from datetime import datetime as dt
+        today = dt.now().strftime("%Y-%m-%d")
+        # 非法日期 → 回退今天
+        for bad in (("2026-02-29", "20:00"),   # 非闰年 2-29
+                    ("2026-13-01", "20:00")):  # 月份 13
+            r = normalize_checkin_time(*bad)
+            self.assertEqual(r, f"{today}T00:00:00",
+                             f"{bad} 应回退而非进入 canonical")
+        # 非法时间但日期有效 → 日期保留、时间 00:00:00（结果仍合法）
+        self.assertEqual(normalize_checkin_time("2026-08-31", "25:00"),
+                         "2026-08-31T00:00:00")
+        self.assertEqual(normalize_checkin_time("2026-08-31", "20:99"),
+                         "2026-08-31T00:00:00")
+
 
 if __name__ == "__main__":
     unittest.main()

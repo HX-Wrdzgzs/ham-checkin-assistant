@@ -28,10 +28,7 @@ except Exception:  # pragma: no cover - 非 Windows 环境
 
 # 连接时必须存在的列（任务书第一阶段 #13：禁止只识别 2 个表头就认为可安全写）
 REQUIRED_FIELDS = ("sequence", "time", "callsign", "qth")
-OPTIONAL_FIELDS = ("device", "antenna", "power", "signal")
-
-# 公式注入前缀：外部字符串不得被 Excel 解释成公式（任务书第三阶段 #24）
-_FORMULA_PREFIX = ("=", "+", "-", "@")
+OPTIONAL_FIELDS = ("device", "antenna", "power", "signal", "unmatched")
 
 
 def _cell_value(cell) -> str:
@@ -44,11 +41,11 @@ def _cell_value(cell) -> str:
     return str(v).strip()
 
 
-def _protect_formula(value):
-    """外部字符串若以公式前缀开头，加单引号强制按文本处理。"""
-    if isinstance(value, str) and value.startswith(_FORMULA_PREFIX):
-        return "'" + value
-    return value
+def _clean(value) -> str:
+    """批量 Range 单元格值清理（P2）。"""
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 class ExcelController:
@@ -149,10 +146,29 @@ class ExcelController:
 
     # ---------- 表头 / 列映射 ----------
     def _read_rows(self, sheet, count: int = 12) -> list[list[str]]:
+        """批量 Range 读取（P2：COM 单次调用取整个区域，避免逐格跨进程）。
+
+        返回 [[str,...], ...]，行数 = min(UsedRange 行数, count)，列数固定 15。
+        """
         rows = []
         try:
             used = sheet.UsedRange
-            max_r = min(used.Row + used.Rows.Count - 1, 12)
+            max_r = min(used.Row + used.Rows.Count - 1, count)
+            if max_r < 1:
+                return rows
+            # 批量取 A1:O{max_r} 的二维数组（一次 COM 调用）
+            try:
+                block = sheet.Range(sheet.Cells(1, 1), sheet.Cells(max_r, 15)).Value
+            except Exception:
+                block = None
+            if isinstance(block, (tuple, list)) and block and isinstance(block[0], (tuple, list)):
+                for r in range(len(block)):
+                    row = [_clean(v) for v in block[r]]
+                    if len(row) < 15:
+                        row += [""] * (15 - len(row))
+                    rows.append(row[:15])
+                return rows
+            # 单行（1×15 或退化情况）或批量失败 → 逐格兜底
             for r in range(1, max_r + 1):
                 row = []
                 for c in range(1, 16):
@@ -161,7 +177,7 @@ class ExcelController:
                     except Exception:
                         row.append("")
                 rows.append(row)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             self.last_error = str(e)
         return rows
 
@@ -192,6 +208,13 @@ class ExcelController:
                 self.last_error = msg
                 return False
             self.mapping = mapping
+            # “未识别”是数据保全列，不应等到第一条异常输入时才临时创建。
+            # 连接阶段就把旧模板补成可承载原文的结构；若前 15 列都被人工使用，
+            # 保持连接成功但让具体写入返回明确错误，绝不覆盖人工列。
+            if "unmatched" not in self.mapping:
+                ensured, ensure_msg = self._ensure_unmatched_column()
+                if not ensured:
+                    logger.warning("Excel has no safe unmatched column: %s", ensure_msg)
             self.next_row = self._find_append_row()
             return True
         except Exception as e:  # noqa: BLE001
@@ -228,7 +251,31 @@ class ExcelController:
 
     # ---------- 写入 ----------
     def _set_cell(self, row: int, col: int, value) -> None:
-        self.sheet.Cells(row, col).Value = _protect_formula(value)
+        # 公式注入防护（P1-12：与 openpyxl 共用 excel_safe_text）
+        self.sheet.Cells(row, col).Value = template.excel_safe_text(value)
+
+    def _ensure_unmatched_column(self) -> tuple[bool, str]:
+        """旧模板没有“未识别”列时，在首个空表头列补上显式列名。
+
+        只使用当前表头区域内的空列，不覆盖已有的备注、公式或其它人工列；
+        如果前 15 列都已有内容则 fail-closed，让调用方保留 Excel 错误状态。
+        """
+        if "unmatched" in self.mapping:
+            return True, ""
+        if self.sheet is None or self.header_row is None:
+            return False, "尚未定位 Excel 表头，无法创建“未识别”列"
+        start = max(self.mapping.values(), default=0) + 1
+        try:
+            for col in range(start, 16):
+                if _cell_value(self.sheet.Cells(self.header_row, col)):
+                    continue
+                self._set_cell(self.header_row, col, "未识别")
+                self.mapping["unmatched"] = col
+                return True, ""
+        except Exception as e:  # noqa: BLE001
+            self.last_error = str(e)
+            return False, f"无法创建“未识别”列表头：{e}"
+        return False, "Excel 前 15 列没有可用空列表头，未覆盖现有列"
 
     def write(self, values: dict[str, str], auto_save: bool = True) -> tuple[bool, str, int | None]:
         """values: {field: value}，按映射写入追加行。返回 (ok, msg, 写入行号)。
@@ -237,8 +284,12 @@ class ExcelController:
         """
         if not self.sheet or not self.mapping:
             return False, "尚未连接 Excel", None
-        row = self.next_row or self._find_append_row()
         try:
+            if str(values.get("unmatched") or "").strip() and "unmatched" not in self.mapping:
+                ok, msg = self._ensure_unmatched_column()
+                if not ok:
+                    return False, msg, None
+            row = self.next_row or self._find_append_row()
             for field, value in values.items():
                 col = self.mapping.get(field)
                 if col is None or value is None:
@@ -350,6 +401,60 @@ class ExcelController:
             self.last_error = str(e)
             logger.exception("Excel save failed")
             return False, f"Excel 保存失败：{e}"
+
+    def snapshot_managed_rows(self) -> dict | None:
+        """快照受管数据列，供整场重写失败时恢复内存内容。
+
+        ``rewrite_all`` 会先清空受管列再重写；如果 Excel.Save 因只读、磁盘
+        或 COM 故障失败，不能把“已清空但未落盘”的状态留在用户工作簿内存中。
+        这里只读取程序管理的列，不触碰备注/公式等人工列。
+        """
+        if not self.sheet or not self.mapping:
+            return None
+        start = (self.header_row or 1) + 1
+        try:
+            used = self.sheet.UsedRange
+            bottom = max(start - 1, used.Row + used.Rows.Count - 1)
+        except Exception:
+            bottom = start - 1
+        values: dict[tuple[int, int], object] = {}
+        for row in range(start, bottom + 1):
+            for col in sorted(set(self.mapping.values())):
+                try:
+                    value = self.sheet.Cells(row, col).Value
+                except Exception:
+                    value = None
+                if value is not None and value != "":
+                    values[(row, col)] = value
+        return {"start": start, "bottom": bottom, "values": values,
+                "next_row": self.next_row}
+
+    def restore_managed_rows(self, snapshot: dict | None) -> bool:
+        """恢复 ``snapshot_managed_rows`` 的数据列；人工列保持不变。"""
+        if not snapshot or not self.sheet or not self.mapping:
+            return False
+        start = int(snapshot.get("start") or ((self.header_row or 1) + 1))
+        try:
+            used = self.sheet.UsedRange
+            current_bottom = used.Row + used.Rows.Count - 1
+        except Exception:
+            current_bottom = start - 1
+        bottom = max(current_bottom, int(snapshot.get("bottom") or start - 1))
+        try:
+            if bottom >= start:
+                for col in sorted(set(self.mapping.values())):
+                    self.sheet.Range(
+                        self.sheet.Cells(start, col),
+                        self.sheet.Cells(bottom, col),
+                    ).ClearContents()
+            for (row, col), value in (snapshot.get("values") or {}).items():
+                self.sheet.Cells(int(row), int(col)).Value = value
+            self.next_row = snapshot.get("next_row")
+            return True
+        except Exception as e:  # noqa: BLE001
+            self.last_error = str(e)
+            logger.exception("Excel managed row restore failed")
+            return False
 
     def rewrite_all(self, checkins, values_fn, auto_save: bool = True) -> tuple[bool, str]:
         """只清理受管列并重写（任务书第一阶段 #7：保留用户列/公式列/备注列）。"""

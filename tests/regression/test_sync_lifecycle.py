@@ -80,23 +80,41 @@ class TestSyncWorker(unittest.TestCase):
         """worker.run 异常时也必须发出 done（UI 永远能恢复）。"""
         from unittest.mock import patch
 
-        from ui.pages import _SyncWorker
+        from tests.helpers import make_settings
+        from ui.worker_manager import SyncWorker
 
-        svc = make_service()
-        try:
-            w = _SyncWorker(svc)
-            emitted = []
+        settings, _tmp = make_settings()
+        w = SyncWorker(settings)
+        emitted = []
 
-            def on_done(result):
-                emitted.append(result)
+        def on_done(result):
+            emitted.append(result)
 
-            w.done.connect(on_done)
-            with patch.object(svc, "sync_365dt", side_effect=RuntimeError("worker boom")):
-                w.run()  # 直接调用 run（同步路径），不依赖 Qt 事件循环
-            self.assertEqual(len(emitted), 1, "异常也必须发出 done")
-            self.assertFalse(emitted[0]["ok"])
-        finally:
-            svc.close()
+        w.done.connect(on_done)
+        with patch("ui.worker_manager.build_standalone_sync",
+                   side_effect=RuntimeError("worker boom")):
+            w.run()  # 直接调用 run（同步路径），不依赖 Qt 事件循环
+        self.assertEqual(len(emitted), 1, "异常也必须发出 done")
+        self.assertFalse(emitted[0]["ok"])
+
+
+class TestWorkerManager(unittest.TestCase):
+    def test_submit_rejects_when_busy(self):
+        """WorkerManager 同一时间只允许一个任务（P1-3）。"""
+        from unittest.mock import MagicMock
+
+        from tests.helpers import make_settings
+        from ui.worker_manager import WorkerManager
+
+        settings, _tmp = make_settings()
+        mgr = WorkerManager(settings)
+        fake = MagicMock()
+        fake.isRunning.return_value = True
+        mgr._current = fake  # 模拟已有任务在跑
+        ok = mgr.submit_sync(lambda r: None)
+        self.assertFalse(ok, "已有任务时必须拒绝")
+        mgr.shutdown()  # 不阻塞（fake 已结束）
+        self.assertFalse(mgr.busy())
 
 
 if __name__ == "__main__":

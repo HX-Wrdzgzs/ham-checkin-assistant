@@ -1,5 +1,39 @@
 # 变更日志
 
+## 0.9.1 (2026-08-14)
+第二轮修复（P0/P1/P2/P3 + NRL Nanny 第四阶段）完成：
+
+### P0（数据完整性）
+- 撤销后重新录入不再撞序号约束：序列唯一索引改为 partial（`WHERE is_deleted=0`）+ 稳定重编号。
+- 迁移禁止直接 DELETE 历史签到：冲突稳定重编号/完整字段确认后才 merge，前后计数写入 `migration_log`。
+- 历史 Excel 跨日期误去重修复：`file_hash` 含文件名，业务指纹含 canonical datetime。
+- 迁移 v10：重建 `checkins`/`sessions` 加外键（session_id→sessions.id）+ CHECK（is_deleted/status）。
+
+### P1
+- Excel 状态机、原子批量状态、resync 逐行校验、信号列同步、自动保存；callsign 修改规范化+校验。
+- 后台 worker 独立 SQLite 连接 + `WorkerManager` 统一生命周期；设置热更新；formula 注入防护。
+- 区划后缀算法、设备词典去伪、`build.py` 原子可回滚部署。
+
+### P2
+- `sync_state` 主键改 `(source, source_uid)`；QTH 模糊不丢歧义地点（跨城歧义强制候选）。
+- 自动场次名取最大编号+1；completion 按标准值频率排序；session stats duplicate 定义明确。
+- `_read_rows` 批量 Range 读取；Excel 大文件导入移 worker；Retry-After 上限。
+- 备份：当天已有文件也 quick_check；config 损坏保留坏文件并提示；设置页补 opacity/置顶 + 备份/恢复 UI。
+- 快速录入补充 `qyt6900`、重复 `yz` 跨字段解析；未识别 token 持久化并自动补建 Excel“未识别”列。
+- 场次选择限定本地数据；正常退出自动恢复上次本地进行中场次，异常终止仍进入恢复流程。
+- 修改本场记录时，Excel 单行写入与 Save 移入独立 COM worker，避免慢保存阻塞主窗口。
+- 输入框 `Ctrl+Z` 恢复为文字撤销，记录级撤销改为 `Ctrl+Shift+Z`；界面撤销不再同步整场 Excel 重排，整场重写 Save 失败会恢复受管列内存数据。
+
+### P3
+- `threading.excepthook` 直接挂载；非 Windows 单实例退出释放；`build.py` 防 `code` 未赋值。
+- ruff 规则收敛（B023/UP015 修复后不再忽略）；依赖锁定 `requirements.txt`；旧投影 API 私有化。
+
+### 第四阶段 NRL Nanny（只读监听）
+- `providers/nrl_nanny.py` + `services/monitor_service.py`：启停/断线重连/状态机
+  （offline/connecting/online/degraded/error）/最近活动/原始内容保留/候选呼号提取。
+- UI「NRL 监听」页：点击候选填入 QuickInput；**绝不自动写库、绝不自动提交**。
+- 网络容错测试：超时、连接重置、非法响应、空活动、请求中停止、应用退出期间停止。
+
 ## 0.9.0 (2026-08-14)
 第一阶段（数据安全 / Excel / 会话 / 核心不变量）全量完成：
 

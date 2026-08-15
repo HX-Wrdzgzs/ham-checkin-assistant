@@ -70,9 +70,17 @@ class ExcelImportProvider(DataProvider):
                 header_idx, mapping = template.find_header_row(head)
                 if header_idx is None or not mapping.get("callsign"):
                     continue
-                # 表头之后的行 = 缓冲中剩余 + 流式剩余（逐行处理，不整体加载）
-                all_data = list(head[header_idx + 1:]) + list(rows_iter)
-                for ri, row_vals in enumerate(all_data, start=header_idx + 2):
+                # 表头之后的行 = 缓冲中剩余 + 流式剩余（真正 streaming，不整体加载）
+                for ri, row_vals in enumerate(head[header_idx + 1:], start=header_idx + 2):
+                    rec = self._row_to_record(mapping, row_vals, fh, sheet_name, ri)
+                    if rec is None:
+                        continue
+                    if not first_date:
+                        first_date = rec.get("date", "")
+                    prepared.append(rec)
+                ri = len(head)
+                for row_vals in rows_iter:
+                    ri += 1
                     rec = self._row_to_record(mapping, row_vals, fh, sheet_name, ri)
                     if rec is None:
                         continue
@@ -87,16 +95,18 @@ class ExcelImportProvider(DataProvider):
             return 0, 0, "未识别到有效数据行"
 
         date = self._guess_date(path, [p["rec"] for p in prepared], first_date)
-        session = self.repo.create_session(name=path.stem, date=date, repeater_name="历史导入")
+        # P0-3：先定有效日期/时间 → 规范化 canonical datetime → 再生成指纹（跨日期不再误去重）
+        self._finalize_records(prepared, date)
         raw_imports = [p["raw"] for p in prepared]
-        checkins = [self._build_checkin(session.id, p["rec"], standardizer) for p in prepared]
+        checkins = [self._build_checkin(0, p["rec"], standardizer) for p in prepared]
         try:
-            imported, skipped = self.repo.import_records_atomic(session.id, raw_imports, checkins)
+            # P1-8：session 创建/结束 + raw_imports + checkins 单事务（失败无 ghost session/半导入）
+            imported, skipped = self.repo.import_file_atomic(
+                "excel_import", path.stem, date, raw_imports, checkins)
         except Exception as e:  # noqa: BLE001
-            # 原子失败：不留 raw_imports/checkins 半导入，也不标记 completed
+            # 原子失败：不留 raw_imports/checkins/active session 半导入，也不标记 completed
             self.repo.mark_import_job("excel_import", fh, "failed", error=str(e))
             return 0, 0, f"导入失败（已回滚）：{e}"
-        self.repo.end_session(session.id)
         # 重建投影（checkins 为唯一事实源）
         self.repo.rebuild_all_stations()
         self.repo.rebuild_all_profiles()
@@ -118,6 +128,26 @@ class ExcelImportProvider(DataProvider):
         return self.import_files(files, standardizer)
 
     # ---------- 内部 ----------
+    def _finalize_records(self, prepared: list[dict], session_date: str) -> None:
+        """确定每行有效日期 → 规范化 canonical datetime → 生成业务指纹（P0-3）。
+
+        指纹 = source + canonical datetime + callsign + qth/device/antenna/power/signal。
+        行有日期列用行日期，否则用文件/推断日期（确保不同日期的同名记录不误判重复）。
+        """
+        from core.datetime_util import normalize_checkin_time
+
+        for p in prepared:
+            rec = p["rec"]
+            effective_date = rec.get("date") or session_date
+            canonical = normalize_checkin_time(effective_date, rec.get("time", ""))
+            rec["date"] = effective_date
+            rec["canonical_datetime"] = canonical
+            rec["record_hash"] = self.repo.record_hash(
+                "excel_import", canonical, (rec.get("callsign") or "").upper(),
+                rec.get("qth", ""), rec.get("device", ""), rec.get("antenna", ""),
+                rec.get("power", ""), rec.get("signal", ""))
+            p["raw"].record_hash = rec["record_hash"]
+
     def _file_imported(self, fh: str) -> bool:
         return self.repo.import_job_completed("excel_import", fh)
 
@@ -134,10 +164,7 @@ class ExcelImportProvider(DataProvider):
         if not callsign:
             return None
         date, time = get("date"), get("time")
-        # 业务指纹：内容相关（跨文件去重，任务书第三阶段 #3）
-        business_hash = self.repo.record_hash(
-            "excel_import", callsign.upper(), date, time,
-            get("qth"), get("device"), get("antenna"), get("power"), get("signal"))
+        # 业务指纹在 _finalize_records 中（先定日期/规范化时间后）生成（P0-3）
         rec = {
             "callsign": callsign,
             "time": time,
@@ -150,11 +177,11 @@ class ExcelImportProvider(DataProvider):
             "raw_json": json.dumps({k: get(k) for k in
                                     ("sequence", "time", "callsign", "qth", "device", "antenna", "power", "signal")},
                                    ensure_ascii=False),
-            "record_hash": business_hash,
+            "record_hash": "",
         }
         raw = RawImport(
             source="excel_import", source_file=fh, sheet_name=sheet,
-            row_number=ri, raw_json=rec["raw_json"], record_hash=business_hash,
+            row_number=ri, raw_json=rec["raw_json"], record_hash="",
         )
         return {"rec": rec, "raw": raw}
 
@@ -172,8 +199,9 @@ class ExcelImportProvider(DataProvider):
 
         c = Checkin(
             session_id=session_id,
-            # 任务书第三阶段 #6：统一 YYYY-MM-DDTHH:MM:SS
-            checkin_time=normalize_checkin_time(rec.get("date", ""), rec.get("time", "")),
+            # 任务书第三阶段 #6 + P0-3：统一 YYYY-MM-DDTHH:MM:SS（含文件/推断日期）
+            checkin_time=rec.get("canonical_datetime")
+            or normalize_checkin_time(rec.get("date", ""), rec.get("time", "")),
             callsign=(rec.get("callsign") or "").upper(),
             qth_raw=rec.get("qth", ""), device_raw=rec.get("device", ""),
             antenna_raw=rec.get("antenna", ""), power_raw=rec.get("power", ""),

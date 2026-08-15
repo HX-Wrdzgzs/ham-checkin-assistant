@@ -1,6 +1,6 @@
 [project]
 name = "ham-checkin-assistant"
-version = "0.9.0"
+version = "0.9.1"
 description = "江苏省中继 HAM 智能点名录入助手（纯本地，无 AI）"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,7 +30,7 @@ ignore = [
     "E501",      # 行宽由格式化处理
     "B008",      # 允许函数调用作默认参数
     "UP035",     # 允许 typing 导入
-    # —— 以下为既有代码库的历史风格（非数据安全问题），新代码不应新增 ——
+    # —— 既有代码库的紧凑写法（非数据安全问题）；新代码不应新增 ——
     "E702",      # 单行多语句（bench/pages/main_window 既有紧凑写法）
     "I001",      # 导入排序（既有写法）
     "B007",      # 未用循环变量
@@ -38,8 +38,6 @@ ignore = [
     "B905",      # zip 无严格参数
     "F541",      # f-string 无占位符
     "E741",      # 单字母变量 l/I/O
-    "B023",      # 循环内闭包捕获
-    "UP015",     # open 编码提示
 ]
 
 [tool.pytest.ini_options]

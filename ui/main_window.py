@@ -3,7 +3,7 @@ from __future__ import annotations
 
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QCloseEvent, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QInputDialog, QLabel,
     QMainWindow, QMenu, QMessageBox, QPushButton, QSystemTrayIcon, QTabWidget,
@@ -13,10 +13,10 @@ from PySide6.QtWidgets import (
 from services.app_service import AppService
 from ui.hotkey import GlobalHotkey
 from ui.pages import (
-    HistoryPage, SessionPage, SettingsPage, StationPage,
+    HistoryPage, MonitorPage, SessionPage, SettingsPage, StationPage,
 )
 from ui.quick_input import QuickInputPanel
-from ui.pages import _SyncWorker
+from ui.worker_manager import WorkerManager
 
 
 def _app_icon() -> QIcon:
@@ -79,6 +79,14 @@ class MainWindow(QMainWindow):
     def __init__(self, service: AppService) -> None:
         super().__init__()
         self.service = service
+        # 快速点名：SQLite 立即提交，Excel 在输入空闲后合并 Save。
+        # dirty 只表示本进程有“已写入 Excel 内存但尚未 Save”的记录。
+        self._excel_flush_dirty = False
+        self._excel_flush_failed = False
+        self._undo_in_progress = False
+        self._excel_flush_timer = QTimer(self)
+        self._excel_flush_timer.setSingleShot(True)
+        self._excel_flush_timer.timeout.connect(self._flush_excel_pending)
         self.setWindowTitle("江苏省中继点名助手")
         self.setWindowIcon(_app_icon())
         self.resize(860, 640)
@@ -105,15 +113,24 @@ class MainWindow(QMainWindow):
         self.quick_panel.submitted.connect(self._on_submitted)
         self.quick_panel.undo_requested.connect(self._on_undo)
         self.session_page = SessionPage(service)
+        self.session_page.excel_update_requested.connect(self._submit_excel_update)
         self.station_page = StationPage(service)
-        self.history_page = HistoryPage(service)
+        # 统一后台任务管理器（P1-3）：单一任务 + 有序退出
+        self._workers = WorkerManager(service.settings, self)
+        self.history_page = HistoryPage(service, workers=self._workers)
         self.settings_page = SettingsPage(service)
+        # NRL Nanny 只读监听（第四阶段）：点击候选填入快速录入框，绝不自动提交
+        self.monitor_page = MonitorPage(
+            service,
+            fill_candidate=lambda cs: self._fill_quick_input(cs))
+        self.quick_panel.input.textChanged.connect(self._on_input_activity)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.quick_panel, "快速点名")
         self.tabs.addTab(self.session_page, "本场记录")
         self.tabs.addTab(self.station_page, "呼号库")
         self.tabs.addTab(self.history_page, "历史数据")
+        self.tabs.addTab(self.monitor_page, "NRL 监听")
         self.tabs.addTab(self.settings_page, "设置")
 
         central = QWidget()
@@ -128,9 +145,15 @@ class MainWindow(QMainWindow):
         self.floating = FloatingQuickWindow(service)
         self.floating.panel.submitted.connect(self._on_submitted)
         self.floating.panel.undo_requested.connect(self._on_undo)
+        self.floating.panel.input.textChanged.connect(self._on_input_activity)
+        self._save_excel_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        self._save_excel_shortcut.activated.connect(
+            lambda: self._flush_excel_pending(manual=True))
         self.hotkey = GlobalHotkey(str(service.settings.get("global_hotkey", "Ctrl+Space")), self)
         self.hotkey.activated.connect(self._toggle_floating)
         self.hotkey.start()
+        # P1-14：设置保存后热更新全局快捷键 / 悬浮窗外观
+        self.settings_page._on_settings_applied = self._apply_settings_callback
 
         self._tray = QSystemTrayIcon(_app_icon(), self)
         menu = QMenu()
@@ -178,6 +201,8 @@ class MainWindow(QMainWindow):
 
     # ---------- 场次 ----------
     def _new_session(self) -> None:
+        if self._excel_flush_dirty and not self._flush_excel_pending(manual=True):
+            return
         self.service.create_session()
         self._refresh_all()
 
@@ -191,6 +216,11 @@ class MainWindow(QMainWindow):
         if ok:
             idx = items.index(choice)
             target = sessions[idx]
+            if (self.service.current_session() is not None
+                    and target.id != self.service.current_session().id
+                    and self._excel_flush_dirty
+                    and not self._flush_excel_pending(manual=True)):
+                return
             if not self.service.set_current_session(target.id):
                 # ended 场次默认只读，需显式重新打开（任务书第一阶段 #4）
                 again = QMessageBox.question(
@@ -232,8 +262,68 @@ class MainWindow(QMainWindow):
         self.quick_panel.set_feedback(text, ok)
         self.floating.panel.set_feedback(text, ok)
 
+    def _excel_save_delay_ms(self) -> int:
+        try:
+            value = int(self.service.settings.get("excel_save_delay_ms", 600))
+        except (TypeError, ValueError):
+            value = 600
+        return max(100, min(value, 5000))
+
+    def _schedule_excel_flush(self) -> None:
+        if (not self._excel_flush_dirty
+                or not bool(self.service.settings.get("excel_auto_save", True))
+                or self._excel_flush_failed):
+            return
+        self._excel_flush_timer.start(self._excel_save_delay_ms())
+
+    def _on_input_activity(self, text: str) -> None:
+        """输入中持续重置 Excel 保存计时器，只在真正空闲后 Save。"""
+        if text.strip():
+            self._schedule_excel_flush()
+
+    def _flush_excel_pending(self, manual: bool = False) -> bool:
+        """空闲/手动保存 Excel；返回 False 表示本次保存失败。"""
+        self._excel_flush_timer.stop()
+        if not manual and not self._excel_flush_dirty:
+            return True
+        ok, msg = self.service.flush_excel_pending()
+        if ok:
+            self._excel_flush_dirty = False
+            self._excel_flush_failed = False
+            if msg != "没有缺失记录":
+                self.statusBar().showMessage(f"Excel：{msg}", 5000)
+                self.session_page.refresh()
+            return True
+        self._excel_flush_failed = True
+        self.statusBar().showMessage(f"Excel：{msg}", 8000)
+        self._feedback(f"Excel：{msg}", ok=False)
+        return False
+
+    def _submit_excel_update(self, task: dict) -> None:
+        """把修改后的单行 Excel 同步交给独立 worker，主窗口不等待 COM Save。"""
+        if self._workers.submit_excel_update(task, self._excel_update_done):
+            self.statusBar().showMessage("Excel 正在后台保存修改…", 6000)
+            return
+        # 同步/导入任务占用 worker 时不强行抢占；SQLite 已更新，记录保持 pending，
+        # 用户可稍后点击“保存/补同步”重试，避免为了 Excel 再次阻塞主线程。
+        self.statusBar().showMessage(
+            "Excel 后台任务忙，修改已保存在 SQLite，稍后点击“保存/补同步”重试", 8000)
+        self._feedback("Excel 后台任务忙，修改已保存在 SQLite，稍后补同步", ok=False)
+
+    def _excel_update_done(self, result: dict) -> None:
+        """后台 Excel 更新完成后回到 UI 线程写入同步状态并刷新表格。"""
+        ok, msg = self.service.finish_deferred_excel_update(result)
+        if ok:
+            self.statusBar().showMessage(f"Excel：{msg}", 6000)
+        else:
+            self.statusBar().showMessage(f"Excel：{msg}", 8000)
+            self._feedback(f"Excel：{msg}", ok=False)
+        self.session_page.refresh()
+
     def _on_submitted(self, result) -> None:
-        res = self.service.commit(result)
+        # 先把记录写入 SQLite/Excel 内存，Save 留给空闲计时器合并处理；
+        # 这样下一位呼号可以立即开始输入，不会被 Excel COM Save 卡住。
+        res = self.service.commit(result, save_excel=False)
         if not res.get("ok"):
             msg = res.get("message", "提交失败")
             self.statusBar().showMessage(msg, 5000)
@@ -245,6 +335,13 @@ class MainWindow(QMainWindow):
             msg += "（本场重复）"
         if not res.get("excel_ok"):
             msg += f"　Excel: {res.get('excel_msg')}"
+        elif res.get("excel_state") == "written":
+            self._excel_flush_dirty = True
+            self._excel_flush_failed = False
+            msg += "　Excel：待保存"
+            self._schedule_excel_flush()
+        elif not res.get("excel_persisted", False):
+            msg += f"　Excel: {res.get('excel_msg')}"
         self.statusBar().showMessage(msg, 5000)
         self._feedback(msg)
         self.session_page.refresh()
@@ -252,18 +349,40 @@ class MainWindow(QMainWindow):
         self.floating.panel._refresh_meta()
 
     def _on_undo(self) -> None:
-        res = self.service.undo_last()
-        if res.get("ok"):
-            msg = f"已撤销 #{res['checkin'].sequence_no} {res['checkin'].callsign}"
-            self.statusBar().showMessage(msg, 5000)
-            self._feedback(msg)
-        else:
-            msg = res.get("message", "撤销失败")
-            self.statusBar().showMessage(msg, 5000)
-            self._feedback(msg, ok=False)
-        self.session_page.refresh()
-        self.quick_panel._refresh_meta()
-        self.floating.panel._refresh_meta()
+        if self._undo_in_progress:
+            return
+        self._undo_in_progress = True
+        self._excel_flush_timer.stop()
+        self._excel_flush_dirty = False
+        self._excel_flush_failed = False
+        try:
+            # 记录级撤销不能触发同步 COM 重排；否则 Excel 卡顿会冻结窗口并
+            # 让用户后续的 Ctrl+Z 连续变成多次业务撤销。
+            res = self.service.undo_last(sync_excel=False)
+            if res.get("ok"):
+                msg = (f"已撤销 #{res['checkin'].sequence_no} {res['checkin'].callsign}"
+                       f"　Excel：{res.get('excel_msg', '')}")
+                self.statusBar().showMessage(msg, 8000)
+                self._feedback(msg)
+            else:
+                msg = res.get("message", "撤销失败")
+                self.statusBar().showMessage(msg, 5000)
+                self._feedback(msg, ok=False)
+            self.session_page.refresh()
+            self.quick_panel._refresh_meta()
+            self.floating.panel._refresh_meta()
+        finally:
+            self._undo_in_progress = False
+
+    def _fill_quick_input(self, callsign: str) -> None:
+        """NRL Nanny 候选点击 → 填入快速录入框（绝不自动提交）。"""
+        cs = (callsign or "").strip().upper()
+        if not cs:
+            return
+        text = self.quick_panel.input.text().strip()
+        self.quick_panel.input.setText(f"{text + ' ' if text else ''}{cs} ")
+        self.quick_panel._schedule_parse()
+        self.quick_panel.input.setFocus()
 
     # ---------- 悬浮窗 ----------
     def _toggle_floating(self) -> None:
@@ -283,10 +402,28 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     # ---------- 365dt 启动一次 ----------
+    def _apply_settings_callback(self, candidate: dict) -> None:
+        """P1-14：设置保存后立即应用 UI 层运行时（全局快捷键 / 悬浮窗外观）。"""
+        new_hk = str(candidate.get("global_hotkey") or "Ctrl+Space")
+        if new_hk != getattr(self.hotkey, "sequence", ""):
+            try:
+                self.hotkey.stop()
+                self.hotkey = GlobalHotkey(new_hk, self)
+                self.hotkey.activated.connect(self._toggle_floating)
+                self.hotkey.start()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            opacity = float(candidate.get("window_opacity", 0.95))
+            on_top = bool(candidate.get("window_on_top", True))
+            self.floating.setWindowOpacity(max(0.2, min(1.0, opacity)))
+            self.floating.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, on_top)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _startup_sync(self) -> None:
-        self._sync_worker = _SyncWorker(self.service)
-        self._sync_worker.done.connect(self._sync_done)
-        self._sync_worker.start()
+        # P1-3：统一 WorkerManager 提交；已有任务则跳过
+        self._workers.submit_sync(self._sync_done, message_cb=self.history_page._log)
 
     def _sync_done(self, result: dict) -> None:
         if result.get("ok"):
@@ -312,12 +449,20 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("已最小化到托盘（右键托盘图标退出）", 5000)
 
     def _quit(self) -> None:
+        # 退出前最后一次冲刷快速录入留下的 written 行；失败也不丢 SQLite，
+        # 数据库状态会保留为未同步，下一次可从“补同步缺失”继续。
+        self._flush_excel_pending(manual=True)
         self.floating.save_position()
         self.hotkey.stop()
-        # 任务书第二阶段 #25：停止/等待后台 worker，不能 close DB 时 worker 还在跑
-        w = getattr(self, "_sync_worker", None)
-        if w is not None and w.isRunning():
-            w.wait(3000)
+        # 第四阶段：应用退出时先安全停止 NRL 监听线程
+        try:
+            self.monitor_page.monitor.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        # P1-3：统一停止后台任务（stop accepting → cancel → wait → worker 关自己 DB）
+        self._workers.shutdown(timeout_ms=8000)
+        # 正常退出不应在下次启动被误判为崩溃；只记录本地场次，外部历史场次不进入恢复。
+        self.service.mark_clean_shutdown()
         self.service.close()
         self._tray.hide()
         QApplication.quit()

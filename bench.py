@@ -120,7 +120,7 @@ def main():
     OUT.append("| 场景 | 最快 | 中位 | 吞吐(次/s) |")
     for label, txt in scenes.items():
         try:
-            tmin, tmed, _, thr = bench(lambda: svc.parse(txt), n=100)
+            tmin, tmed, _, thr = bench(lambda txt=txt: svc.parse(txt), n=100)
             row(label, tmin, tmed, f"{thr:.0f}")
         except Exception as e:
             row(label, -1, -1, f"ERR {type(e).__name__}")
@@ -167,6 +167,84 @@ def main():
         except Exception as e:
             row(label, -1, -1, f"ERR {type(e).__name__}")
     print("\n".join(OUT)); OUT.clear()
+
+    # ============ 轮4b：人体输入节奏模拟 ============
+    print("\n===== 轮4b 人手点名节奏模拟（Qt offscreen，12 条） =====")
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+    from ui.quick_input import QuickInputPanel
+
+    def human_simulation(label: str, with_excel: bool = False) -> None:
+        sim_settings = Settings(path=tmp / f"{label}.json")
+        sim_settings.set_many(
+            data_dir=str(tmp / f"{label}_data"),
+            logs_dir=str(tmp / f"{label}_logs"),
+            backup_dir=str(tmp / f"{label}_backup"),
+        )
+        sim_svc = _AS(sim_settings)
+        sim_svc.create_session(name=label, date="2026-08-14")
+        wb = None
+        if with_excel:
+            from tests.helpers.mock_excel import MockApp, install_mock_app, make_workbook
+
+            wb = make_workbook(f"C:/tmp/{label}.xlsx")
+            install_mock_app(sim_svc.excel, MockApp([wb], wb))
+            ok, msg = sim_svc.excel_connect(str(wb.FullName), wb.Sheets("点名表").Name)
+            if not ok:
+                raise RuntimeError(msg)
+            real_save = sim_svc.excel.save
+
+            def delayed_save():
+                time.sleep(0.12)  # 模拟 Excel COM Save 延迟
+                return real_save()
+
+            sim_svc.excel.save = delayed_save
+
+        app_qt = QApplication.instance() or QApplication([])
+        panel = QuickInputPanel(sim_svc)
+        panel.show()
+        panel.input.setFocus()
+        submitted = []
+
+        def on_submitted(result):
+            # 与 MainWindow 快速路径一致：先落库/写 Excel 内存，不在每条上 Save。
+            submitted.append(sim_svc.commit(result, save_excel=False))
+
+        panel.submitted.connect(on_submitted)
+        enter_ms = []
+        t0 = time.perf_counter()
+        for i in range(12):
+            panel.input.setFocus()
+            text = f"bg{i:02d}tki njqx k6 y 5"
+            QTest.keyClicks(panel.input, text, delay=20)  # 快速但可实现的人手键速
+            enter_t0 = time.perf_counter()
+            QTest.keyClick(panel.input, Qt.Key.Key_Return)
+            app_qt.processEvents()
+            enter_ms.append((time.perf_counter() - enter_t0) * 1000)
+            time.sleep(0.15)  # 条目间短暂停顿
+        elapsed = time.perf_counter() - t0
+        flush_ms = 0.0
+        flush_ok = True
+        flush_msg = ""
+        if with_excel:
+            flush_t0 = time.perf_counter()
+            flush_ok, flush_msg = sim_svc.flush_excel_pending()
+            flush_ms = (time.perf_counter() - flush_t0) * 1000
+        app_qt.processEvents()
+        print(
+            f"| {label} | 条数 {len(submitted)}/12 | Enter 后中位 {statistics.median(enter_ms):.1f}ms "
+            f"| 最大 {max(enter_ms):.1f}ms | 总耗时 {elapsed:.2f}s "
+            f"| {len(submitted) / elapsed * 60:.1f} 条/分钟 "
+            f"| Save {getattr(wb, 'save_count', 0)} 次 "
+            f"| flush {flush_ms:.1f}ms {'PASS' if flush_ok else flush_msg} |"
+        )
+        panel.deleteLater()
+        sim_svc.close()
+        app_qt.processEvents()
+
+    human_simulation("human_no_excel")
+    human_simulation("human_mock_excel_deferred", with_excel=True)
 
     # ============ 轮5：模糊匹配 ============
     print("\n===== 轮5 模糊匹配（RapidFuzz） =====")

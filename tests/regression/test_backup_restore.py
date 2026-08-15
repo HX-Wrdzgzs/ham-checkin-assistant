@@ -81,10 +81,8 @@ class TestBackupRestore(unittest.TestCase):
         bak_dir = self.tmp / "backup"
         b = backup_daily(db, bak_dir, keep=5)
         self.assertIsNotNone(b)
-        # 破坏备份文件
-        raw = bytearray(b.read_bytes())
-        raw[len(raw) // 2:len(raw) // 2 + 16] = b"\x00" * 16
-        b.write_bytes(bytes(raw))
+        # 破坏备份文件（截断为一半，必然损坏且 quick_check 必失败）
+        b.write_bytes(b.read_bytes()[: len(b.read_bytes()) // 2])
         dest = self.tmp / "restored.db"
         ok, msg = restore_backup(b, dest)
         self.assertFalse(ok, "损坏备份必须拒绝")
@@ -112,6 +110,24 @@ class TestBackupRestore(unittest.TestCase):
         backups = list_backups(bak_dir)
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].suffix, ".db")
+
+    def test_same_day_corrupt_backup_is_redone(self):
+        """P2：当天已有备份损坏 → backup_daily 检测到并重建，不沿用坏文件。"""
+        db = self.tmp / "data" / "ham.db"
+        _make_db(db, 5)
+        bak_dir = self.tmp / "backup"
+        b = backup_daily(db, bak_dir, keep=5)
+        self.assertIsNotNone(b)
+        # 破坏当天备份
+        b.write_bytes(b.read_bytes()[: len(b.read_bytes()) // 2])
+        b2 = backup_daily(db, bak_dir, keep=5)
+        self.assertIsNotNone(b2)
+        conn = sqlite3.connect(str(b2))
+        try:
+            self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
+            self.assertEqual(conn.execute("SELECT COUNT(*) c FROM checkins").fetchone()[0], 5)
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

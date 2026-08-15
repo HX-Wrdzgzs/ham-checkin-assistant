@@ -47,6 +47,7 @@ class GlobalHotkey(QObject):
 
     def __init__(self, text: str = "Ctrl+Space", parent=None) -> None:
         super().__init__(parent)
+        self.sequence = text  # 原始配置串（P1-14 热更新比较用）
         self._mods, self._vk = parse_hotkey(text)
         self._thread: threading.Thread | None = None
 
