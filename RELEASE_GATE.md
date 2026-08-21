@@ -1,6 +1,6 @@
 # Release Gate 报告（第二轮完成）
 
-日期：2026-08-21　版本：0.9.2　分支：`codex/ham-checkin-release`
+日期：2026-08-21　版本：0.9.3（自动更新测试版）　分支：`codex/ham-checkin-release`
 
 ```
 STATUS: PRODUCTION_READY
