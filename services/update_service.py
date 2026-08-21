@@ -90,7 +90,10 @@ def _read_url(
 
 def _asset_url(assets: list[dict], name: str) -> str | None:
     for asset in assets:
-        if str(asset.get("name") or "") == name:
+        # GitHub 对非 ASCII 上传文件名可能把 API name 归一化为 HAM.exe，
+        # 但会保留 Release 页面上的 label；两者都属于同一个受信任资产。
+        if (str(asset.get("name") or "") == name
+                or str(asset.get("label") or "") == name):
             url = str(asset.get("browser_download_url") or "")
             return url if _allowed_release_url(url) else None
     return None

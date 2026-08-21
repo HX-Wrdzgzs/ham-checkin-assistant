@@ -56,7 +56,8 @@ def _release_payload(version: str, checksum: str | None) -> tuple[dict, dict[str
         "tag_name": f"v{version}",
         "html_url": f"https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/v{version}",
         "assets": [
-            {"name": UPDATE_ASSET_NAME, "browser_download_url": exe_url},
+            {"name": "HAM.exe", "label": UPDATE_ASSET_NAME,
+             "browser_download_url": exe_url},
             {"name": CHECKSUM_ASSET_NAME, "browser_download_url": checksum_url},
         ],
     }
