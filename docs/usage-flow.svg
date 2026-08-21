@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">HAM 点名助手使用流程</title>
+  <desc id="desc">从生成数据画像、连接 Excel、快速点名到保存和自动更新的四步流程图。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f6f9ff"/>
+      <stop offset="1" stop-color="#eef7f3"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#17324d" flood-opacity=".14"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#377d9a"/>
+    </marker>
+    <style>
+      .cn { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; fill: #17324d; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #557083; }
+      .step { font-size: 18px; font-weight: 700; fill: #fff; }
+      .box-title { font-size: 18px; font-weight: 700; }
+      .body { font-size: 14px; fill: #40586b; }
+      .small { font-size: 13px; fill: #557083; }
+      .pill { font-size: 13px; font-weight: 700; fill: #276b78; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="760" rx="24" fill="url(#bg)"/>
+  <text x="60" y="68" class="cn title">HAM 点名助手｜推荐使用流程</text>
+  <text x="60" y="98" class="cn subtitle">先用历史数据生成画像，再连接本场 Excel；录入后保留未识别内容，退出和更新都不覆盖本地数据。</text>
+
+  <!-- row 1 -->
+  <rect x="60" y="140" width="250" height="190" rx="18" fill="#3978c6" filter="url(#shadow)"/>
+  <circle cx="92" cy="174" r="20" fill="#fff" opacity=".2"/>
+  <text x="92" y="181" text-anchor="middle" class="cn step">1</text>
+  <text x="125" y="180" class="cn step">生成数据画像</text>
+  <text x="86" y="220" class="cn body" fill="#fff">历史数据 → 导入 Excel</text>
+  <text x="86" y="246" class="cn body" fill="#fff">或立即检查 365dt</text>
+  <text x="86" y="272" class="cn body" fill="#fff">→ 重新计算画像</text>
+  <rect x="86" y="290" width="166" height="24" rx="12" fill="#fff" opacity=".86"/>
+  <text x="169" y="307" text-anchor="middle" class="cn pill">呼号库查看常用值</text>
+
+  <line x1="320" y1="235" x2="370" y2="235" stroke="#377d9a" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <rect x="380" y="140" width="250" height="190" rx="18" fill="#398b84" filter="url(#shadow)"/>
+  <circle cx="412" cy="174" r="20" fill="#fff" opacity=".2"/>
+  <text x="412" y="181" text-anchor="middle" class="cn step">2</text>
+  <text x="445" y="180" class="cn step">准备本场</text>
+  <text x="406" y="220" class="cn body" fill="#fff">新建或选择本地场次</text>
+  <text x="406" y="246" class="cn body" fill="#fff">本场记录 → 连接 Excel</text>
+  <text x="406" y="272" class="cn body" fill="#fff">确认工作簿与工作表</text>
+  <rect x="406" y="290" width="166" height="24" rx="12" fill="#fff" opacity=".86"/>
+  <text x="489" y="307" text-anchor="middle" class="cn pill">看到“已连接”再录入</text>
+
+  <line x1="640" y1="235" x2="690" y2="235" stroke="#377d9a" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <rect x="700" y="140" width="250" height="190" rx="18" fill="#e18b3c" filter="url(#shadow)"/>
+  <circle cx="732" cy="174" r="20" fill="#fff" opacity=".2"/>
+  <text x="732" y="181" text-anchor="middle" class="cn step">3</text>
+  <text x="765" y="180" class="cn step">快速点名</text>
+  <text x="726" y="220" class="cn body" fill="#fff">输入缩写并按 Enter</text>
+  <text x="726" y="246" class="cn body" fill="#fff">例如：qyt6900 5w yz yz</text>
+  <text x="726" y="272" class="cn body" fill="#fff">SQLite 先落库，Excel 空闲保存</text>
+  <rect x="726" y="290" width="166" height="24" rx="12" fill="#fff" opacity=".86"/>
+  <text x="809" y="307" text-anchor="middle" class="cn pill">未识别内容也会保留</text>
+
+  <line x1="960" y1="235" x2="1010" y2="235" stroke="#377d9a" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <rect x="1020" y="140" width="120" height="190" rx="18" fill="#7659a8" filter="url(#shadow)"/>
+  <circle cx="1052" cy="174" r="20" fill="#fff" opacity=".2"/>
+  <text x="1052" y="181" text-anchor="middle" class="cn step">4</text>
+  <text x="1080" y="180" text-anchor="middle" class="cn step">收尾</text>
+  <text x="1080" y="226" text-anchor="middle" class="cn body" fill="#fff">保存/补同步</text>
+  <text x="1080" y="252" text-anchor="middle" class="cn body" fill="#fff">一致性检查</text>
+  <text x="1080" y="278" text-anchor="middle" class="cn body" fill="#fff">托盘退出</text>
+  <text x="1080" y="304" text-anchor="middle" class="cn body" fill="#fff">启动自动检查更新</text>
+
+  <!-- detail cards -->
+  <rect x="60" y="380" width="1080" height="285" rx="20" fill="#fff" opacity=".92" filter="url(#shadow)"/>
+  <text x="90" y="425" class="cn box-title">录入时的三个关键规则</text>
+
+  <circle cx="105" cy="477" r="16" fill="#3978c6"/>
+  <text x="105" y="483" text-anchor="middle" class="cn step" font-size="14">A</text>
+  <text x="135" y="482" class="cn box-title">先画像，后录入</text>
+  <text x="135" y="510" class="cn body">历史记录越完整，呼号库给出的 QTH、设备、天线和功率建议越可靠。</text>
+  <text x="135" y="534" class="cn small">画像是建议来源，不会把历史值强行覆盖本次显式输入。</text>
+
+  <circle cx="105" cy="579" r="16" fill="#e18b3c"/>
+  <text x="105" y="585" text-anchor="middle" class="cn step" font-size="14">B</text>
+  <text x="135" y="584" class="cn box-title">不认识的词不要删</text>
+  <text x="135" y="612" class="cn body">解析不确定时，原 token 进入“未识别”；在本场记录确认后再补充词典或人工修改。</text>
+
+  <circle cx="690" cy="477" r="16" fill="#398b84"/>
+  <text x="690" y="483" text-anchor="middle" class="cn step" font-size="14">C</text>
+  <text x="720" y="482" class="cn box-title">数据安全优先</text>
+  <text x="720" y="510" class="cn body">SQLite 先提交；Excel 慢时不会卡住输入。更新只替换 EXE，保留 data、backup 和 config。</text>
+  <text x="720" y="534" class="cn small">网络不可用时跳过更新，点名功能仍可继续使用。</text>
+
+  <rect x="720" y="575" width="370" height="50" rx="12" fill="#edf6f5"/>
+  <text x="905" y="596" text-anchor="middle" class="cn small">推荐示例</text>
+  <text x="905" y="616" text-anchor="middle" class="cn pill">ba4rll qyt6900 5w yz yz</text>
+</svg>

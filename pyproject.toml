@@ -1,6 +1,6 @@
 [project]
 name = "ham-checkin-assistant"
-version = "0.9.1"
+version = "0.9.2"
 description = "江苏省中继 HAM 智能点名录入助手（纯本地，无 AI）"
 readme = "README.md"
 requires-python = ">=3.11"

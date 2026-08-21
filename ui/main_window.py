@@ -1,6 +1,7 @@
 """主窗口：选项卡 + 托盘 + 悬浮快速录入窗 + 全局快捷键 + 崩溃恢复 + 启动同步。"""
 from __future__ import annotations
 
+import sys
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
@@ -17,6 +18,7 @@ from ui.pages import (
 )
 from ui.quick_input import QuickInputPanel
 from ui.worker_manager import WorkerManager
+from version import __version__
 
 
 def _app_icon() -> QIcon:
@@ -117,6 +119,8 @@ class MainWindow(QMainWindow):
         self.station_page = StationPage(service)
         # 统一后台任务管理器（P1-3）：单一任务 + 有序退出
         self._workers = WorkerManager(service.settings, self)
+        self._update_worker = None
+        self._update_manual = False
         self.history_page = HistoryPage(service, workers=self._workers)
         self.settings_page = SettingsPage(service)
         # NRL Nanny 只读监听（第四阶段）：点击候选填入快速录入框，绝不自动提交
@@ -159,8 +163,11 @@ class MainWindow(QMainWindow):
         menu = QMenu()
         act_show = QAction("显示/隐藏悬浮窗", self); act_show.triggered.connect(self._toggle_floating)
         act_main = QAction("打开主窗口", self); act_main.triggered.connect(self._show_main)
+        act_update = QAction("检查更新", self); act_update.triggered.connect(
+            lambda: self._start_update_check(manual=True))
         act_quit = QAction("退出", self); act_quit.triggered.connect(self._quit)
-        menu.addAction(act_show); menu.addAction(act_main); menu.addSeparator(); menu.addAction(act_quit)
+        menu.addAction(act_show); menu.addAction(act_main); menu.addAction(act_update)
+        menu.addSeparator(); menu.addAction(act_quit)
         self._tray.setContextMenu(menu)
         self._tray.setToolTip("江苏省中继点名助手")
         self._tray.activated.connect(lambda reason: self._show_main() if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
@@ -176,6 +183,8 @@ class MainWindow(QMainWindow):
         self._refresh_session()
         self._refresh_all()
         self._startup_sync()
+        # 自动检查更新放到事件循环后，网络异常或 GitHub 较慢都不能阻塞窗口出现。
+        QTimer.singleShot(1500, self._start_update_check)
 
     def _startup_after_recovery(self) -> None:
         self._crash_recovery()
@@ -425,6 +434,131 @@ class MainWindow(QMainWindow):
         # P1-3：统一 WorkerManager 提交；已有任务则跳过
         self._workers.submit_sync(self._sync_done, message_cb=self.history_page._log)
 
+    # ---------- GitHub Release 自动更新 ----------
+    def _start_update_check(self, manual: bool = False) -> None:
+        from services.update_service import UpdateWorker
+
+        # 自动更新只在发布版 EXE 中运行；源码开发/测试环境不应在冒烟测试中
+        # 访问 GitHub。源码运行仍可通过托盘“检查更新”手动打开发布页。
+        if not manual and not getattr(sys, "frozen", False):
+            return
+        if self._update_worker is not None and self._update_worker.isRunning():
+            if manual:
+                self.statusBar().showMessage("正在检查更新，请稍候", 4000)
+            return
+        self._update_manual = manual
+        worker = UpdateWorker("check", parent=self)
+        worker.result.connect(self._update_worker_done)
+        worker.finished.connect(lambda: self._update_worker_finished(worker))
+        self._update_worker = worker
+        if manual:
+            self.statusBar().showMessage("正在检查 GitHub Release…", 4000)
+        worker.start()
+
+    def _update_worker_finished(self, worker) -> None:
+        if self._update_worker is worker:
+            self._update_worker = None
+
+    def _update_worker_done(self, result: dict) -> None:
+        action = result.get("action")
+        if action == "check":
+            if result.get("error"):
+                if self._update_manual:
+                    QMessageBox.warning(
+                        self, "检查更新", f"暂时无法检查更新：\n{result['error']}\n\n本地功能不受影响。")
+                return
+            release = result.get("release")
+            if release is None:
+                if self._update_manual:
+                    QMessageBox.information(
+                        self, "检查更新", f"当前已是最新版本（{__version__}）。")
+                return
+            # QThread 发出 result 时 run() 还未完全返回，排到下一轮事件循环，
+            # 确保检查 worker 先 finished，再启动下载 worker。
+            QTimer.singleShot(0, lambda: self._prompt_update(release))
+            return
+
+        if action == "download":
+            if result.get("error"):
+                QMessageBox.warning(
+                    self, "自动更新", f"更新下载或校验失败：\n{result['error']}\n\n当前软件未修改。")
+                return
+            downloaded = result.get("downloaded")
+            if downloaded is None:
+                QMessageBox.warning(self, "自动更新", "没有得到有效的更新文件，当前软件未修改。")
+                return
+            from services.update_service import UpdateError, schedule_self_update
+            try:
+                schedule_self_update(downloaded)
+            except UpdateError as exc:
+                QMessageBox.warning(self, "自动更新", f"无法安排安装：\n{exc}")
+                return
+            QMessageBox.information(
+                self,
+                "更新已下载",
+                "更新文件已通过 SHA256 校验。点击“确定”后程序将退出，\n"
+                "自动替换并重新启动；本地数据、备份和配置会保留。",
+            )
+            self._quit()
+
+    def _prompt_update(self, release) -> None:
+        from services.update_service import can_self_update
+
+        if not release.expected_sha256:
+            answer = QMessageBox.question(
+                self,
+                "发现新版本",
+                f"发现新版本 {release.version}，但该 Release 没有 SHA256 校验文件。\n"
+                "为保护本地程序，自动安装已停用，是否打开发布页手动查看？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                import webbrowser
+                webbrowser.open(release.html_url)
+            return
+
+        if not can_self_update():
+            answer = QMessageBox.question(
+                self,
+                "发现新版本",
+                f"发现新版本 {release.version}。当前为源码运行，不能自动替换 EXE，\n"
+                "是否打开 GitHub 发布页？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                import webbrowser
+                webbrowser.open(release.html_url)
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "发现新版本",
+            f"当前版本：{__version__}\n"
+            f"最新版本：{release.version}\n\n"
+            "是否下载并自动安装？安装时不会覆盖本地数据库、备份和配置。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self.statusBar().showMessage("已跳过本次更新，可在托盘菜单重新检查", 5000)
+            return
+        self._start_update_download(release)
+
+    def _start_update_download(self, release) -> None:
+        from services.update_service import UpdateWorker
+
+        if self._update_worker is not None and self._update_worker.isRunning():
+            self.statusBar().showMessage("更新检查仍在结束，请稍候再试", 4000)
+            return
+        worker = UpdateWorker("download", release=release, parent=self)
+        worker.result.connect(self._update_worker_done)
+        worker.finished.connect(lambda: self._update_worker_finished(worker))
+        self._update_worker = worker
+        self.statusBar().showMessage("正在下载并校验更新，请稍候…", 0)
+        worker.start()
+
     def _sync_done(self, result: dict) -> None:
         if result.get("ok"):
             failed = result.get("failed") or []
@@ -454,6 +588,13 @@ class MainWindow(QMainWindow):
         self._flush_excel_pending(manual=True)
         self.floating.save_position()
         self.hotkey.stop()
+        # 更新下载也使用独立线程；退出前请求取消，避免销毁 QThread 时留下线程。
+        update_worker = self._update_worker
+        if update_worker is not None and update_worker.isRunning():
+            update_worker.requestInterruption()
+            if not update_worker.wait(7000):
+                self.statusBar().showMessage("更新任务仍在进行，暂不退出，请稍候", 6000)
+                return
         # 第四阶段：应用退出时先安全停止 NRL 监听线程
         try:
             self.monitor_page.monitor.stop()

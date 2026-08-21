@@ -10,22 +10,27 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from build import backup_runtime, deploy_program, restore_runtime
+from build import (
+    backup_runtime,
+    deploy_program,
+    migrate_legacy_runtime,
+    remove_legacy_program,
+    restore_runtime,
+)
 
 DB_BYTES = b"db-bytes"
 BACKUP_BYTES = b"backup-bytes"
 CONFIG_TEXT = '{"default_province": "江苏"}'
 
 
-def _make_dist(base: Path) -> Path:
-    d = base / "dist"
+def _make_runtime(root: Path) -> Path:
+    d = root
     (d / "data").mkdir(parents=True)
     (d / "backup").mkdir(parents=True)
     (d / "logs").mkdir(parents=True)
     (d / "data" / "ham_checkin.db").write_bytes(DB_BYTES)
     (d / "backup" / "ham_checkin_2026-08-01.db").write_bytes(BACKUP_BYTES)
     (d / "config.json").write_text(CONFIG_TEXT, encoding="utf-8")
-    (d / "app.exe").write_bytes(b"exe-bytes")
     return d
 
 
@@ -37,7 +42,7 @@ class TestBuildProtection(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_build_preserves_database(self):
-        dist = _make_dist(self.tmp)
+        dist = _make_runtime(self.tmp / "dist")
         bak = self.tmp / "bak"
         new_dist = self.tmp / "new_dist"
         backup_runtime(dist, bak)
@@ -49,7 +54,7 @@ class TestBuildProtection(unittest.TestCase):
         self.assertEqual(db.read_bytes(), DB_BYTES)
 
     def test_build_preserves_backup(self):
-        dist = _make_dist(self.tmp)
+        dist = _make_runtime(self.tmp / "dist")
         bak = self.tmp / "bak"
         new_dist = self.tmp / "new_dist"
         backup_runtime(dist, bak)
@@ -60,7 +65,7 @@ class TestBuildProtection(unittest.TestCase):
         self.assertEqual(b.read_bytes(), BACKUP_BYTES)
 
     def test_build_preserves_config(self):
-        dist = _make_dist(self.tmp)
+        dist = _make_runtime(self.tmp / "dist")
         bak = self.tmp / "bak"
         new_dist = self.tmp / "new_dist"
         backup_runtime(dist, bak)
@@ -72,7 +77,7 @@ class TestBuildProtection(unittest.TestCase):
 
     def test_failed_build_restores_runtime(self):
         """build 失败（dist 被弄坏）后 finally 里的 restore 仍要恢复 runtime。"""
-        dist = _make_dist(self.tmp)
+        dist = _make_runtime(self.tmp / "dist")
         bak = self.tmp / "bak"
         backup_runtime(dist, bak)
         # 模拟 build 失败把 dist 内容清掉
@@ -94,77 +99,106 @@ class TestDeployProtection(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_deploy_preserves_existing_runtime(self):
-        """部署到已有目标目录：新程序文件 + 既有 DB/backup/config 全保留。"""
-        target = _make_dist(self.tmp / "target")
-        src = self.tmp / "src"
-        src.mkdir()
-        (src / "HAM点名助手.exe").write_bytes(b"new-exe")
+        """部署到已有目标：新 EXE + 既有 DB/backup/config 全保留。"""
+        target_root = _make_runtime(self.tmp / "target")
+        target = target_root / "HAM点名助手.exe"
+        target.write_bytes(b"old-exe")
+        src = self.tmp / "src" / "HAM点名助手.exe"
+        src.parent.mkdir()
+        src.write_bytes(b"new-exe")
         ok = deploy_program(src, target, self.tmp / "dep_bak")
         self.assertTrue(ok)
-        self.assertTrue((target / "HAM点名助手.exe").exists(), "新程序文件应部署")
-        self.assertEqual((target / "data" / "ham_checkin.db").read_bytes(), DB_BYTES,
+        self.assertEqual(target.read_bytes(), b"new-exe", "新 EXE 应部署")
+        self.assertEqual((target_root / "data" / "ham_checkin.db").read_bytes(), DB_BYTES,
                          "部署不得覆盖已有 DB")
-        self.assertEqual((target / "backup" / "ham_checkin_2026-08-01.db").read_bytes(),
+        self.assertEqual((target_root / "backup" / "ham_checkin_2026-08-01.db").read_bytes(),
                          BACKUP_BYTES, "部署不得删除 backup")
-        self.assertEqual((target / "config.json").read_text(encoding="utf-8"), CONFIG_TEXT,
+        self.assertEqual((target_root / "config.json").read_text(encoding="utf-8"), CONFIG_TEXT,
                          "部署不得覆盖用户 config")
 
     def test_deploy_into_empty_target(self):
         """目标不存在 → 直接部署程序文件。"""
-        src = self.tmp / "src"
-        src.mkdir()
-        (src / "HAM点名助手.exe").write_bytes(b"new-exe")
-        target = self.tmp / "target"
+        src = self.tmp / "src" / "HAM点名助手.exe"
+        src.parent.mkdir()
+        src.write_bytes(b"new-exe")
+        target = self.tmp / "target" / "HAM点名助手.exe"
         ok = deploy_program(src, target, self.tmp / "dep_bak")
         self.assertTrue(ok)
-        self.assertTrue((target / "HAM点名助手.exe").exists())
+        self.assertTrue(target.exists())
 
     def test_deploy_new_target_excludes_source_runtime(self):
         """首次部署到 Downloads 时不得把 src_dist 的运行数据带入发布包。"""
-        src = _make_dist(self.tmp / "src")
-        (src / "HAM点名助手.exe").write_bytes(b"new-exe")
-        target = self.tmp / "target"
+        src_root = _make_runtime(self.tmp / "src")
+        src = src_root / "HAM点名助手.exe"
+        src.write_bytes(b"new-exe")
+        target = self.tmp / "target" / "HAM点名助手.exe"
         ok = deploy_program(src, target, self.tmp / "dep_bak")
         self.assertTrue(ok)
-        self.assertTrue((target / "app.exe").exists())
-        self.assertFalse((target / "data").exists())
-        self.assertFalse((target / "backup").exists())
-        self.assertFalse((target / "logs").exists())
-        self.assertFalse((target / "config.json").exists())
+        self.assertTrue(target.exists())
+        self.assertFalse((target.parent / "data").exists())
+        self.assertFalse((target.parent / "backup").exists())
+        self.assertFalse((target.parent / "logs").exists())
+        self.assertFalse((target.parent / "config.json").exists())
 
     def test_deploy_uses_atomic_rename_no_half_target(self):
         """P1-15：部署走 target.new → 原子切换，不留半成品 target.new/old。
 
         规范：不允许 build 覆盖已有 DB → 旧 runtime（含 DB）必须恢复。
         """
-        src = self.tmp / "src"
-        src.mkdir()
-        (src / "HAM点名助手.exe").write_bytes(b"new-exe")
-        (src / "data").mkdir()
-        (src / "data" / "ham_checkin.db").write_bytes(b"fresh-db")
-        target = _make_dist(self.tmp / "target")  # 已有 runtime（db-bytes）
+        src_root = _make_runtime(self.tmp / "src")
+        src = src_root / "HAM点名助手.exe"
+        src.write_bytes(b"new-exe")
+        (src_root / "data" / "ham_checkin.db").write_bytes(b"fresh-db")
+        target_root = _make_runtime(self.tmp / "target")  # 已有 runtime（db-bytes）
+        target = target_root / "HAM点名助手.exe"
+        target.write_bytes(b"old-exe")
         ok = deploy_program(src, target, self.tmp / "dep_bak")
         self.assertTrue(ok)
         # 没有残留 .new / .old
-        self.assertFalse((self.tmp / "target.new").exists())
-        self.assertFalse((self.tmp / "target.old").exists())
+        self.assertFalse((target_root / "HAM点名助手.new.exe").exists())
+        self.assertFalse((target_root / "HAM点名助手.old.exe").exists())
         # 既有 DB 必须保留（不得被新 build 的 runtime 覆盖）
-        self.assertEqual((target / "data" / "ham_checkin.db").read_bytes(), DB_BYTES,
+        self.assertEqual((target_root / "data" / "ham_checkin.db").read_bytes(), DB_BYTES,
                          "既有 DB 必须保留")
-        self.assertEqual((target / "config.json").read_text(encoding="utf-8"), CONFIG_TEXT,
+        self.assertEqual((target_root / "config.json").read_text(encoding="utf-8"), CONFIG_TEXT,
                          "旧 config 应恢复")
 
     def test_deploy_artifact_verify_fails(self):
         """P1-15：产物缺少 EXE → 拒绝部署（smoke verify）。"""
-        src = self.tmp / "src"
-        src.mkdir()
-        (src / "data").mkdir()  # 无 exe
-        target = self.tmp / "target"
-        target.mkdir()
+        src = self.tmp / "src" / "not-an-exe"
+        src.parent.mkdir()
+        src.write_bytes(b"not-an-exe")
+        target_root = self.tmp / "target"
+        target_root.mkdir()
+        target = target_root / "HAM点名助手.exe"
         ok = deploy_program(src, target, self.tmp / "dep_bak")
         self.assertFalse(ok)
-        self.assertFalse((self.tmp / "target.new").exists(), "失败不得留 target.new")
-        self.assertTrue(target.exists(), "失败不得破坏原 target")
+        self.assertFalse((target_root / "HAM点名助手.new.exe").exists(), "失败不得留 target.new")
+        self.assertTrue(target_root.exists(), "失败不得破坏原 target")
+
+    def test_migrate_legacy_runtime_does_not_overwrite_target(self):
+        """旧文件夹版数据只补迁移，不覆盖单文件版已有数据。"""
+        legacy = _make_runtime(self.tmp / "legacy")
+        target = self.tmp / "downloads"
+        target.mkdir()
+        (target / "data").mkdir()
+        (target / "data" / "ham_checkin.db").write_bytes(b"newer-db")
+        self.assertTrue(migrate_legacy_runtime(legacy, target))
+        self.assertEqual((target / "data" / "ham_checkin.db").read_bytes(), b"newer-db")
+        self.assertEqual((target / "backup" / "ham_checkin_2026-08-01.db").read_bytes(),
+                         BACKUP_BYTES)
+
+    def test_remove_legacy_program_only_when_no_runtime(self):
+        """无运行数据的旧文件夹版可以清理；有数据时必须保留。"""
+        empty_legacy = self.tmp / "empty-legacy"
+        empty_legacy.mkdir()
+        (empty_legacy / "HAM点名助手.exe").write_bytes(b"old-exe")
+        self.assertTrue(remove_legacy_program(empty_legacy))
+        self.assertFalse(empty_legacy.exists())
+
+        data_legacy = _make_runtime(self.tmp / "data-legacy")
+        self.assertFalse(remove_legacy_program(data_legacy))
+        self.assertTrue(data_legacy.exists())
 
 
 if __name__ == "__main__":

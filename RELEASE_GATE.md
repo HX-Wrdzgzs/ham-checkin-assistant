@@ -1,6 +1,6 @@
 # Release Gate 报告（第二轮完成）
 
-日期：2026-08-14　版本：0.9.1　分支：`main`
+日期：2026-08-21　版本：0.9.2　分支：`codex/ham-checkin-release`
 
 ```
 STATUS: PRODUCTION_READY
@@ -17,6 +17,7 @@ STATUS: PRODUCTION_READY
 - P1 = 0（P1-1 ~ P1-15 已修复）
 - P2 / P3 审计项：已逐项处理（详见 CHANGELOG 0.9.1）
 - NRL Nanny：已实现（第四阶段）
+- GitHub Release 自动更新：启动后台检查、EXE + SHA256 校验、退出后原子替换。
 
 ## 1. 自动化 Gate（全部在本机执行并通过）
 
@@ -24,7 +25,7 @@ STATUS: PRODUCTION_READY
 |---|---|---|
 | ruff PASS | `python -m ruff check .` | All checks passed! |
 | compile PASS | `python -m compileall -q app.py build.py ... version.py` | 无输出（0） |
-| unit PASS | `python -m unittest discover -s tests` | 197 tests OK |
+| unit PASS | `python -m unittest discover -s tests` | 230 tests OK |
 | regression PASS | 同上（含 regression 包） | OK |
 | migration PASS | `tests.regression.test_migrations`（v1→latest / v2→latest / latest→latest / v10 FK+CHECK / 非破坏性 / 报告留痕） | 16 OK |
 
@@ -53,7 +54,7 @@ STATUS: PRODUCTION_READY
 | Gate | 说明 |
 |---|---|
 | real Excel COM PASS | 需本机安装 Excel + pywin32。`excel/controller.py` 的 COM 路径已由 Mock COM 覆盖逻辑；真机验收步骤：连接 Excel → 录入 → Save → 读回校验 → 补同步。 |
-| build EXE PASS | 需 pyinstaller。命令：`python build.py`（含数据保护与回滚部署）。 |
+| build EXE PASS | 需 pyinstaller。命令：`python build.py`（生成单文件 EXE，含数据保护与回滚部署）。 |
 | NRL Nanny 真站 | 默认地址 `https://nrlnanny-nanjing.bd4rfg.cn`；离线容错已由 mock 测试覆盖。 |
 
 ## 4. 已知边界（诚实记录，非阻塞）
@@ -66,7 +67,7 @@ STATUS: PRODUCTION_READY
 
 ## 5. 结论
 
-所有可自动化 Gate 均有通过证据（197 tests + ruff + compile）；两项真机 Gate（real Excel COM、build EXE）需在有 Excel/PyInstaller 的环境执行，其逻辑路径已由 Mock/保护测试覆盖。
+所有可自动化 Gate 均有通过证据（230 tests + ruff + compile）；build EXE 已在本机用 PyInstaller 6.22.0 生成并静态校验，real Excel COM 仍需在有 Excel 的环境执行，其逻辑路径已由 Mock/保护测试覆盖。
 
 ```
 STATUS: PRODUCTION_READY
