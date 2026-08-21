@@ -14,6 +14,7 @@ import secrets
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -33,6 +34,8 @@ FALLBACK_MANIFEST_URL = (
 UPDATE_ASSET_NAME = "HAM点名助手.exe"
 CHECKSUM_ASSET_NAME = "SHA256SUMS.txt"
 MAX_UPDATE_BYTES = 250 * 1024 * 1024
+DOWNLOAD_ATTEMPTS = 3
+DOWNLOAD_RETRY_DELAY = 0.5
 _VERSION_RE = re.compile(r"(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)")
 
 
@@ -233,53 +236,85 @@ def download_update(
     opener=None,
     should_cancel=None,
 ) -> Path:
-    """下载并校验 Release EXE，返回临时文件路径。"""
+    """下载并校验 Release EXE，返回临时文件路径。
+
+    GitHub Release 资产在刚发布或 CDN 切换时可能短暂返回不完整内容；
+    校验失败会清理本次临时文件，并使用缓存绕过参数重新下载，最多尝试三次。
+    """
     if not release.expected_sha256:
         raise UpdateError("Release 缺少 HAM点名助手.exe 的 SHA256 校验值，已停止自动更新")
     if not _allowed_release_url(release.download_url):
         raise UpdateError("更新下载地址不是受信任的 GitHub Release 地址")
 
-    target = Path(tempfile.gettempdir()) / (
-        f"ham-checkin-update-{os.getpid()}-{secrets.token_hex(6)}.exe"
-    )
-    request = urllib.request.Request(
-        release.download_url,
-        headers={
-            "Accept": "application/octet-stream",
-            "User-Agent": f"ham-checkin-assistant/{__version__}",
-        },
-    )
+    expected = release.expected_sha256.lower()
     open_url = opener or urllib.request.urlopen
-    try:
-        with open_url(request, timeout=timeout) as response, target.open("wb") as out:
-            content_length = response.headers.get("Content-Length")
-            if content_length and int(content_length) > MAX_UPDATE_BYTES:
-                raise UpdateError("更新文件超过安全大小限制")
-            total = 0
-            while True:
-                if should_cancel is not None and should_cancel():
-                    raise UpdateError("更新下载已取消")
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > MAX_UPDATE_BYTES:
+    last_failure = "下载到的更新文件为空"
+
+    for attempt in range(DOWNLOAD_ATTEMPTS):
+        if should_cancel is not None and should_cancel():
+            raise UpdateError("更新下载已取消")
+
+        target = Path(tempfile.gettempdir()) / (
+            f"ham-checkin-update-{os.getpid()}-{secrets.token_hex(6)}.exe"
+        )
+        download_url = release.download_url
+        if attempt:
+            # 避免刚发布的 GitHub 资产被边缘缓存成上一次不完整响应。
+            separator = "&" if "?" in download_url else "?"
+            download_url = (
+                f"{download_url}{separator}ham_update_retry="
+                f"{attempt}-{secrets.token_hex(4)}"
+            )
+        request = urllib.request.Request(
+            download_url,
+            headers={
+                "Accept": "application/octet-stream",
+                "User-Agent": f"ham-checkin-assistant/{__version__}",
+            },
+        )
+
+        try:
+            with open_url(request, timeout=timeout) as response, target.open("wb") as out:
+                content_length = response.headers.get("Content-Length")
+                if content_length and int(content_length) > MAX_UPDATE_BYTES:
                     raise UpdateError("更新文件超过安全大小限制")
-                out.write(chunk)
-        if target.stat().st_size == 0:
-            raise UpdateError("下载到的更新文件为空")
-        digest = hashlib.sha256(target.read_bytes()).hexdigest()
-        if digest.lower() != release.expected_sha256.lower():
-            raise UpdateError("更新文件 SHA256 校验失败，原程序未修改")
-        return target
-    except (OSError, ValueError, urllib.error.URLError, TimeoutError) as exc:
-        target.unlink(missing_ok=True)
-        if isinstance(exc, UpdateError):
-            raise
-        raise UpdateError(f"下载更新失败：{exc}") from exc
-    except UpdateError:
-        target.unlink(missing_ok=True)
-        raise
+                total = 0
+                while True:
+                    if should_cancel is not None and should_cancel():
+                        raise UpdateError("更新下载已取消")
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_UPDATE_BYTES:
+                        raise UpdateError("更新文件超过安全大小限制")
+                    out.write(chunk)
+            if target.stat().st_size == 0:
+                raise UpdateError("下载到的更新文件为空")
+            digest = hashlib.sha256(target.read_bytes()).hexdigest().lower()
+        except UpdateError as exc:
+            target.unlink(missing_ok=True)
+            if str(exc) == "更新下载已取消":
+                raise
+            last_failure = str(exc)
+        except (OSError, ValueError, urllib.error.URLError, TimeoutError) as exc:
+            target.unlink(missing_ok=True)
+            last_failure = f"下载更新失败：{exc}"
+        else:
+            if digest == expected:
+                return target
+            target.unlink(missing_ok=True)
+            last_failure = (
+                "更新文件 SHA256 校验失败"
+                f"（期望 {expected}，实际 {digest}）"
+            )
+
+        if attempt + 1 < DOWNLOAD_ATTEMPTS:
+            time.sleep(DOWNLOAD_RETRY_DELAY)
+
+    raise UpdateError(
+        f"{last_failure}；已重试 {DOWNLOAD_ATTEMPTS} 次，原程序未修改"
+    )
 
 
 def can_self_update() -> bool:

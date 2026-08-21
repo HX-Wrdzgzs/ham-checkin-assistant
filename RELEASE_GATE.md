@@ -17,7 +17,7 @@ STATUS: PRODUCTION_READY
 - P1 = 0（P1-1 ~ P1-15 已修复）
 - P2 / P3 审计项：已逐项处理（详见 CHANGELOG 0.9.1）
 - NRL Nanny：已实现（第四阶段）
-- GitHub Release 自动更新：启动后台检查、EXE + SHA256 校验、退出后原子替换。
+- GitHub Release 自动更新：启动后台检查、EXE + SHA256 校验、瞬态校验失败自动重试、退出后原子替换。
 
 ## 1. 自动化 Gate（全部在本机执行并通过）
 

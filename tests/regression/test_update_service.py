@@ -38,10 +38,24 @@ class _Response:
 class _Opener:
     def __init__(self, values: dict[str, bytes]) -> None:
         self.values = values
+        self.urls: list[str] = []
 
     def __call__(self, request, timeout: float):
         del timeout
-        return _Response(self.values[request.full_url])
+        self.urls.append(request.full_url)
+        base_url = request.full_url.split("?", 1)[0]
+        return _Response(self.values[base_url])
+
+
+class _SequenceOpener:
+    def __init__(self, payloads: list[bytes]) -> None:
+        self.payloads = list(payloads)
+        self.urls: list[str] = []
+
+    def __call__(self, request, timeout: float):
+        del timeout
+        self.urls.append(request.full_url)
+        return _Response(self.payloads.pop(0))
 
 
 def _release_payload(version: str, checksum: str | None) -> tuple[dict, dict[str, bytes]]:
@@ -114,6 +128,21 @@ class TestUpdateService(unittest.TestCase):
         values[release.download_url] = exe
         with self.assertRaisesRegex(UpdateError, "SHA256"):
             download_update(release, opener=_Opener(values))
+
+    def test_download_update_retries_transient_checksum_mismatch(self):
+        good_exe = b"eventually-verified-exe"
+        digest = hashlib.sha256(good_exe).hexdigest()
+        _payload, values = _release_payload("0.9.2", digest)
+        release = check_latest_release("0.9.1", opener=_Opener(values))
+        assert release is not None
+        opener = _SequenceOpener([b"partial-response", good_exe])
+        downloaded = download_update(release, opener=opener)
+        try:
+            self.assertEqual(downloaded.read_bytes(), good_exe)
+            self.assertEqual(len(opener.urls), 2)
+            self.assertIn("ham_update_retry=1-", opener.urls[1])
+        finally:
+            downloaded.unlink(missing_ok=True)
 
     def test_download_update_requires_checksum(self):
         _payload, values = _release_payload("0.9.2", None)
