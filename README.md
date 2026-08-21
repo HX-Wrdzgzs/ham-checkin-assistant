@@ -90,7 +90,7 @@ ba4rll qyt6900 5w yz yz
 - 发布版 EXE 启动约 1.5 秒后在后台检查最新稳定 Release，网络请求不会阻塞快速录入窗口。
 - 发现新版本后会先询问；确认后下载 `HAM点名助手.exe`，并用 Release 中的 `SHA256SUMS.txt` 校验，校验失败不会修改当前软件。
 - 下载完成后，更新程序等待当前 EXE 正常退出，再替换并重新启动；`data/`、`logs/`、`backup/` 和 `config.json` 位于 EXE 同级，不会被更新包覆盖。
-- GitHub 暂时不可用时只跳过本次检查，本地点名、Excel 和 SQLite 不受影响。也可以从托盘菜单点击“检查更新”。
+- GitHub API 暂时限流时会读取仓库的公开更新清单；两条路径都不可用时只跳过本次检查，本地点名、Excel 和 SQLite 不受影响。也可以从托盘菜单点击“检查更新”。
 - 用 `python app.py` 源码运行时不自动替换 Python 源码；托盘中的“检查更新”仍可打开 Release 页面。
 
 如果 Windows SmartScreen 第一次提示未知发布者，请先确认文件来自上面的 Release 页面，并核对发布页的 SHA256 校验文件；不要从其他链接下载同名 EXE。

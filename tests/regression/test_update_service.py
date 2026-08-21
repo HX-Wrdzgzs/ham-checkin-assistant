@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unittest
+from unittest import mock
 
 from services.update_service import (
     CHECKSUM_ASSET_NAME,
@@ -121,6 +122,23 @@ class TestUpdateService(unittest.TestCase):
         values[release.download_url] = b"unverified"
         with self.assertRaisesRegex(UpdateError, "SHA256"):
             download_update(release, opener=_Opener(values))
+
+    def test_check_latest_release_falls_back_to_public_manifest(self):
+        manifest = {
+            "version": "0.9.2",
+            "tag_name": "v0.9.2",
+            "html_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/v0.9.2",
+            "download_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v0.9.2/HAM.exe",
+            "sha256": "a" * 64,
+        }
+        with mock.patch(
+            "services.update_service._read_url",
+            side_effect=[UpdateError("HTTP 403"), json.dumps(manifest).encode()],
+        ):
+            release = check_latest_release("0.9.1")
+        self.assertIsNotNone(release)
+        self.assertEqual(release.download_url.rsplit("/", 1)[-1], "HAM.exe")
+        self.assertEqual(release.expected_sha256, "a" * 64)
 
 
 if __name__ == "__main__":

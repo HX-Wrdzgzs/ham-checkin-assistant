@@ -25,7 +25,7 @@ STATUS: PRODUCTION_READY
 |---|---|---|
 | ruff PASS | `python -m ruff check .` | All checks passed! |
 | compile PASS | `python -m compileall -q app.py build.py ... version.py` | 无输出（0） |
-| unit PASS | `python -m unittest discover -s tests` | 230 tests OK |
+| unit PASS | `python -m unittest discover -s tests` | 231 tests OK |
 | regression PASS | 同上（含 regression 包） | OK |
 | migration PASS | `tests.regression.test_migrations`（v1→latest / v2→latest / latest→latest / v10 FK+CHECK / 非破坏性 / 报告留痕） | 16 OK |
 
@@ -67,7 +67,7 @@ STATUS: PRODUCTION_READY
 
 ## 5. 结论
 
-所有可自动化 Gate 均有通过证据（230 tests + ruff + compile）；build EXE 已在本机用 PyInstaller 6.22.0 生成并静态校验，real Excel COM 仍需在有 Excel 的环境执行，其逻辑路径已由 Mock/保护测试覆盖。
+所有可自动化 Gate 均有通过证据（231 tests + ruff + compile）；build EXE 已在本机用 PyInstaller 6.22.0 生成并静态校验，real Excel COM 仍需在有 Excel 的环境执行，其逻辑路径已由 Mock/保护测试覆盖。
 
 ```
 STATUS: PRODUCTION_READY

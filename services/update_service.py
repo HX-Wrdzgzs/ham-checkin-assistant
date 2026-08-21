@@ -26,6 +26,10 @@ from version import __version__
 
 REPOSITORY = "HX-Wrdzgzs/ham-checkin-assistant"
 LATEST_API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+FALLBACK_MANIFEST_URL = (
+    "https://raw.githubusercontent.com/"
+    f"{REPOSITORY}/codex/ham-checkin-release/updates/latest.json"
+)
 UPDATE_ASSET_NAME = "HAM点名助手.exe"
 CHECKSUM_ASSET_NAME = "SHA256SUMS.txt"
 MAX_UPDATE_BYTES = 250 * 1024 * 1024
@@ -119,12 +123,39 @@ def check_latest_release(
     opener=None,
 ) -> ReleaseInfo | None:
     """查询最新稳定 Release；没有更新时返回 None。"""
-    raw = _read_url(
-        LATEST_API_URL,
-        timeout=timeout,
-        accept="application/vnd.github+json",
-        opener=opener,
-    )
+    try:
+        raw = _read_url(
+            LATEST_API_URL,
+            timeout=timeout,
+            accept="application/vnd.github+json",
+            opener=opener,
+        )
+        return _release_from_api_payload(raw, current_version, timeout=timeout, opener=opener)
+    except UpdateError as api_error:
+        # GitHub 未认证 API 有公共限流；公开 raw 清单不依赖 API 配额，且下载仍
+        # 只允许指向 GitHub Release 资产。两条路径都失败才报告检查失败。
+        try:
+            manifest_raw = _read_url(
+                FALLBACK_MANIFEST_URL,
+                timeout=timeout,
+                accept="application/json",
+                opener=opener,
+            )
+            return _release_from_manifest(manifest_raw, current_version)
+        except UpdateError as manifest_error:
+            raise UpdateError(
+                f"更新 API 失败：{api_error}；备用清单失败：{manifest_error}"
+            ) from api_error
+
+
+def _release_from_api_payload(
+    raw: bytes,
+    current_version: str,
+    *,
+    timeout: float,
+    opener=None,
+) -> ReleaseInfo | None:
+    """解析 GitHub API 的 latest release 响应。"""
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -160,6 +191,36 @@ def check_latest_release(
         version=f"{latest_version[0]}.{latest_version[1]}.{latest_version[2]}",
         tag_name=tag_name,
         html_url=str(payload.get("html_url") or ""),
+        download_url=download_url,
+        expected_sha256=expected_sha256,
+    )
+
+
+def _release_from_manifest(raw: bytes, current_version: str) -> ReleaseInfo | None:
+    """解析仓库公开备用清单，下载地址仍必须是 GitHub Release。"""
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise UpdateError("备用更新清单不是有效 JSON") from exc
+    if not isinstance(payload, dict):
+        raise UpdateError("备用更新清单格式异常")
+
+    version = str(payload.get("version") or payload.get("tag_name") or "")
+    latest_version = version_key(version)
+    if latest_version <= version_key(current_version):
+        return None
+    download_url = str(payload.get("download_url") or "")
+    if not _allowed_release_url(download_url):
+        raise UpdateError("备用清单下载地址不是受信任的 GitHub Release 地址")
+    expected_sha256 = str(payload.get("sha256") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise UpdateError("备用清单缺少有效 SHA256")
+    tag_name = str(payload.get("tag_name") or f"v{latest_version[0]}.{latest_version[1]}.{latest_version[2]}")
+    html_url = str(payload.get("html_url") or f"https://github.com/{REPOSITORY}/releases/tag/{tag_name}")
+    return ReleaseInfo(
+        version=f"{latest_version[0]}.{latest_version[1]}.{latest_version[2]}",
+        tag_name=tag_name,
+        html_url=html_url,
         download_url=download_url,
         expected_sha256=expected_sha256,
     )
