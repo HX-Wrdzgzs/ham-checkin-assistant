@@ -4,14 +4,15 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QStandardPaths, Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QDialog, QDoubleSpinBox,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
     QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
     QLineEdit, QListWidget, QMessageBox, QPushButton, QSpinBox, QTabWidget,
     QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from config.settings import QUICK_SUBMIT_KEY_OPTIONS, normalize_quick_submit_key
 from excel.exporter import hhmm, export_template
 from services.app_service import AppService
 from services.monitor_service import MonitorService
@@ -23,6 +24,13 @@ def _button(text: str, on_click=None, icon_text: str = "") -> QPushButton:
     if on_click:
         b.clicked.connect(on_click)
     return b
+
+
+def _documents_dir() -> Path:
+    """用户导出文件的默认位置，不随软件启动目录变化。"""
+    raw = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.DocumentsLocation)
+    return Path(raw) if raw else Path.home() / "Documents"
 
 
 def _fill_table(table: QTableWidget, headers: list[str], rows: list[list], stretch_col: int = -1):
@@ -160,7 +168,7 @@ class SessionPage(QWidget):
         session = self.service.current_session()
         if not session:
             return
-        default = str(Path.cwd() / f"{session.name or '点名'}_{session.date or ''}.xlsx")
+        default = str(_documents_dir() / f"{session.name or '点名'}_{session.date or ''}.xlsx")
         path, _ = QFileDialog.getSaveFileName(self, "导出本场", default, "Excel (*.xlsx)")
         if path:
             self.service.export_session(session.id, path)
@@ -415,11 +423,29 @@ class SettingsPage(QWidget):
         self.ed_default_repeater = QLineEdit(str(self.s.get("default_repeater_name")))
         self.ed_default_operator = QLineEdit(str(self.s.get("default_operator_callsign")))
         self.ed_hotkey = QLineEdit(str(self.s.get("global_hotkey")))
+        self.cb_submit_key = QComboBox()
+        submit_labels = {
+            "Enter": "Enter（默认）",
+            "Space": "Space / 空格（单呼号快速提交）",
+            "Ctrl+Enter": "Ctrl+Enter",
+            "Shift+Enter": "Shift+Enter",
+            "Alt+Enter": "Alt+Enter",
+        }
+        for key in QUICK_SUBMIT_KEY_OPTIONS:
+            self.cb_submit_key.addItem(submit_labels.get(key, key), key)
+        current_submit = normalize_quick_submit_key(
+            self.s.get("quick_submit_key", "Enter"))
+        idx = self.cb_submit_key.findData(current_submit)
+        self.cb_submit_key.setCurrentIndex(max(0, idx))
+        self.cb_submit_key.setToolTip(
+            "选择 Space 后，单独输入有效呼号时按空格即可写入并进入下一位；"
+            "如需继续录入 QTH/设备，请用 Shift+Space 输入第一个分隔空格，完整字段可用 Ctrl+Enter 提交。")
         self.sp_backup = QSpinBox(); self.sp_backup.setRange(1, 90); self.sp_backup.setValue(int(self.s.get("backup_keep", 30)))
         f.addRow("默认省份", self.ed_default_province)
         f.addRow("默认中继名称", self.ed_default_repeater)
         f.addRow("默认主控呼号", self.ed_default_operator)
         f.addRow("全局快捷键", self.ed_hotkey)
+        f.addRow("快速点名写入键", self.cb_submit_key)
         f.addRow("备份保留份数", self.sp_backup)
         # P2：悬浮窗透明度 / 置顶控件
         self.sp_opacity = QDoubleSpinBox(); self.sp_opacity.setRange(0.3, 1.0)
@@ -497,7 +523,8 @@ class SettingsPage(QWidget):
         QMessageBox.information(self, "Excel", msg)
 
     def _make_template(self):
-        path, _ = QFileDialog.getSaveFileName(self, "保存模板", "点名模板.xlsx", "Excel (*.xlsx)")
+        default = str(_documents_dir() / "点名模板.xlsx")
+        path, _ = QFileDialog.getSaveFileName(self, "保存模板", default, "Excel (*.xlsx)")
         if path:
             export_template(path)
             QMessageBox.information(self, "模板", f"已生成：{path}")
@@ -606,6 +633,7 @@ class SettingsPage(QWidget):
             "default_repeater_name": self.ed_default_repeater.text().strip(),
             "default_operator_callsign": self.ed_default_operator.text().strip(),
             "global_hotkey": self.ed_hotkey.text().strip() or "Ctrl+Space",
+            "quick_submit_key": str(self.cb_submit_key.currentData() or "Enter"),
             "backup_keep": self.sp_backup.value(),
             "window_opacity": float(self.sp_opacity.value()),
             "window_on_top": self.cb_ontop.isChecked(),

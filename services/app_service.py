@@ -19,7 +19,7 @@ from database.repository import Repository
 from database.seed import seed_default_aliases
 from excel.controller import ExcelController
 from excel.exporter import export_session as exporter_export, hhmm
-from normalizers.dictionaries import AliasStore
+from normalizers.dictionaries import AliasStore, norm_key
 from normalizers.region_index import RegionIndex
 from normalizers.regions import REGIONS
 from providers.dt365 import Dt365Provider
@@ -36,6 +36,27 @@ _BRANDS = ("yaesu", "icom", "kenwood", "anytone", "motorola", "quansheng",
 
 def _norm(v) -> str:
     return str(v or "").strip()
+
+
+def _remove_unmatched_value(unmatched: str, value: str) -> str:
+    """从未识别 token 中消费一次已被人工归类的值。
+
+    未识别内容由解析 token 以空格拼接保存，因此既要支持单 token，
+    也要支持用户输入 ``海能达 pdc580`` 后形成的连续多 token 片段。
+    只移除一次，重复出现的同名内容仍然保留，避免误删用户备注。
+    """
+    parts = str(unmatched or "").split()
+    target = norm_key(value)
+    if not parts or not target:
+        return str(unmatched or "").strip()
+    # 从长片段到短片段匹配，优先消费完整的中文品牌+型号组合。
+    for width in range(len(parts), 0, -1):
+        for start in range(0, len(parts) - width + 1):
+            if norm_key("".join(parts[start:start + width])) != target:
+                continue
+            remaining = parts[:start] + parts[start + width:]
+            return " ".join(remaining)
+    return " ".join(parts)
 
 
 def build_consistency_report(sqlite_checkins: list, excel_rows: list[dict]) -> tuple[bool, str]:
@@ -118,6 +139,8 @@ class AppService:
                 f"{settings.db_path}\n请先恢复原数据库/备份，或在配置中选择可靠的本地 data 目录。"
             )
         setup_logging(settings.logs_dir)
+        if settings.migration_note:
+            app_log.info("runtime migration: %s", settings.migration_note)
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         backup_daily(settings.db_path, settings.backup_dir,
                      int(settings.get("backup_keep", 30)), config_path=settings.path)
@@ -834,7 +857,9 @@ class AppService:
                     "antenna_standard": "antenna", "power_standard": "power"}
 
     def _build_deferred_excel_task(self, c: Checkin, field: str,
-                                   new_value: str) -> dict | None:
+                                   new_value: str,
+                                   *, extra_updates: dict[str, str] | None = None
+                                   ) -> dict | None:
         """为 UI 修改构造独立 COM worker 所需的快照，不携带主线程 COM proxy。"""
         if self.excel.sheet is None:
             return None
@@ -856,6 +881,9 @@ class AppService:
         excel_path = self.excel.excel_path or self.excel.binding_id
         if not excel_path:
             return None
+        updates = {excel_field: new_value}
+        if extra_updates:
+            updates.update(extra_updates)
         return {
             "checkin_id": c.id,
             "binding_id": self.excel.binding_id,
@@ -867,6 +895,8 @@ class AppService:
             "callsign": c.callsign,
             "excel_field": excel_field,
             "new_value": new_value,
+            # 兼容旧任务字段，同时允许一次后台 Save 更新多个相关列。
+            "updates": updates,
         }
 
     def update_checkin(self, checkin_id: int, field: str, new_value: str,
@@ -899,13 +929,27 @@ class AppService:
                         "message": f"呼号不合法：{'；'.join(issues) or '格式错误'}"}
             new_value = norm
         old_callsign = c.callsign
-        self.repo.update_checkin(checkin_id, **{target: new_value})
+        old_unmatched = _norm(c.unmatched)
+        new_unmatched = old_unmatched
+        # 设备/天线/QTH 手工归类时，若旧的“未识别”列中正好有这个值，
+        # 同时消费一次。这样人工修正不会在标准列和未识别列各留一份。
+        if col:
+            new_unmatched = _remove_unmatched_value(old_unmatched, new_value)
+        updates = {target: new_value}
+        if new_unmatched != old_unmatched:
+            updates["unmatched"] = new_unmatched
+        self.repo.update_checkin(checkin_id, **updates)
         self.repo.add_audit(checkin_id, field, old, new_value)
+        if new_unmatched != old_unmatched:
+            self.repo.add_audit(checkin_id, "unmatched", old_unmatched, new_unmatched)
 
         excel_task = None
         excel_msg = "未连接 Excel"
         if defer_excel:
-            excel_task = self._build_deferred_excel_task(c, field, new_value)
+            extra_excel_updates = ({"unmatched": new_unmatched}
+                                    if new_unmatched != old_unmatched else None)
+            excel_task = self._build_deferred_excel_task(
+                c, field, new_value, extra_updates=extra_excel_updates)
             if excel_task is not None:
                 self.repo.set_excel_state(
                     c.id, "pending", row=excel_task.get("row"), error="",
@@ -918,7 +962,10 @@ class AppService:
             # P1-4：信号修改必须同步 Excel signal 列（行身份校验一致）
             excel_msg = self._update_field_excel(c, "signal", new_value)
         elif col:
-            excel_msg = self._update_field_excel(c, self._EXCEL_FIELD[col], new_value)
+            excel_updates = {self._EXCEL_FIELD[col]: new_value}
+            if new_unmatched != old_unmatched:
+                excel_updates["unmatched"] = new_unmatched
+            excel_msg = self._update_fields_excel(c, excel_updates)
 
         # 投影重建（checkins 为唯一事实源，绝不 count+1）
         if field == "callsign":
@@ -957,6 +1004,9 @@ class AppService:
         return False, msg
 
     def _update_field_excel(self, c: Checkin, excel_field: str, new_value: str) -> str:
+        return self._update_fields_excel(c, {excel_field: new_value})
+
+    def _update_fields_excel(self, c: Checkin, updates: dict[str, str]) -> str:
         """就地更新 Excel 行：先验证 row.sequence==sequence_no 且 row.callsign==callsign。
 
         不匹配 → 搜索唯一匹配 → 唯一才更新；否则标记 conflict 绝不乱写（任务书第一阶段 #8/#9）。
@@ -967,7 +1017,7 @@ class AppService:
         now = datetime.now().isoformat(timespec="seconds")
         row = c.excel_row
         if row and self.excel.verify_row_identity(row, c.sequence_no, c.callsign):
-            ok, msg = self.excel.update_row(row, {excel_field: new_value}, auto_save=True)
+            ok, msg = self.excel.update_row(row, updates, auto_save=True)
             if ok:
                 self.repo.set_excel_state(c.id, "persisted", row=row, synced_at=now,
                                           binding_id=self.excel.binding_id)
@@ -982,7 +1032,7 @@ class AppService:
                                       error="行身份不匹配且无唯一匹配",
                                       binding_id=self.excel.binding_id)
             return "Excel 行身份冲突，已标记，未修改"
-        ok, msg = self.excel.update_row(found, {excel_field: new_value}, auto_save=True)
+        ok, msg = self.excel.update_row(found, updates, auto_save=True)
         if ok:
             self.repo.set_excel_state(c.id, "persisted", row=found, synced_at=now,
                                       binding_id=self.excel.binding_id)

@@ -194,6 +194,68 @@ class TestUiSmoke(unittest.TestCase):
             svc.close()
             panel.deleteLater()
 
+    def test_space_submit_key_disables_plain_enter_and_advances_single_callsign(self):
+        """Space 模式：误按 Enter 不推进；有效单呼号按空格写入下一位。"""
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+        from tests.helpers import make_service
+        from ui.quick_input import QuickInputPanel
+
+        app = QApplication.instance() or QApplication([])
+        svc = make_service()
+        self.assertTrue(svc.settings.set("quick_submit_key", "Space"))
+        panel = QuickInputPanel(svc)
+        panel.show()
+        observed = []
+        panel.submitted.connect(lambda result: observed.append(result.callsign.value))
+        try:
+            panel.input.setFocus()
+            QTest.keyClicks(panel.input, "bg4tki")
+            QTest.keyClick(panel.input, Qt.Key.Key_Return)
+            app.processEvents()
+            self.assertEqual(observed, [])
+            self.assertEqual(panel.input.text(), "bg4tki")
+
+            QTest.keyClick(panel.input, Qt.Key.Key_Space)
+            app.processEvents()
+            self.assertEqual(observed, ["BG4TKI"])
+            self.assertEqual(panel.input.text(), "")
+        finally:
+            svc.close()
+            panel.deleteLater()
+
+    def test_space_submit_key_keeps_full_record_path(self):
+        """Space 模式仍可用 Shift+Space 补字段，并以 Ctrl+Enter 完整提交。"""
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+        from tests.helpers import make_service
+        from ui.quick_input import QuickInputPanel
+
+        app = QApplication.instance() or QApplication([])
+        svc = make_service()
+        self.assertTrue(svc.settings.set("quick_submit_key", "Space"))
+        panel = QuickInputPanel(svc)
+        panel.show()
+        observed = []
+        panel.submitted.connect(lambda result: observed.append(result.callsign.value))
+        try:
+            panel.input.setFocus()
+            QTest.keyClicks(panel.input, "bg4tki")
+            QTest.keyClick(panel.input, Qt.Key.Key_Space,
+                           Qt.KeyboardModifier.ShiftModifier)
+            QTest.keyClicks(panel.input, "njqx k6 y 5")
+            self.assertIn(" ", panel.input.text())
+            QTest.keyClick(panel.input, Qt.Key.Key_Return,
+                           Qt.KeyboardModifier.ControlModifier)
+            app.processEvents()
+            self.assertEqual(observed, ["BG4TKI"])
+            self.assertEqual(panel.input.text(), "")
+        finally:
+            svc.close()
+            panel.deleteLater()
+
     def test_typing_not_blocked_by_popup_and_enter_confirms(self):
         """P2：弹窗显示后仍能继续打字（ba→4→rll 不被抢焦点）；↑↓+Enter 确认候选。"""
         from PySide6.QtCore import Qt

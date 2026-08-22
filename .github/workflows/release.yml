@@ -1,0 +1,92 @@
+name: Build and publish release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Verify tag matches version.py
+        shell: pwsh
+        run: |
+          python -c "from version import __version__; import sys; expected='v'+__version__; actual='${{ github.ref_name }}'; print(f'version={__version__}, tag={actual}'); sys.exit(0 if actual == expected else 1)"
+
+      - name: Run full regression suite
+        run: python -m unittest discover -s tests -p "test*.py"
+
+      - name: Build one-file EXE
+        run: python -c "import build; raise SystemExit(build.build_exe())"
+
+      - name: Prepare release metadata
+        run: python release.py --tag "${{ github.ref_name }}" --manifest updates/latest.json
+
+      - name: Create or refresh GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag release/HAM.exe release/SHA256SUMS.txt --clobber
+          } else {
+            gh release create $tag release/HAM.exe release/SHA256SUMS.txt --title $tag --generate-notes
+          }
+
+      - name: Publish stable update manifest to main
+        shell: pwsh
+        run: |
+          Copy-Item updates/latest.json "$env:RUNNER_TEMP/latest.json"
+          git fetch origin main
+          git checkout -B main origin/main
+          New-Item -ItemType Directory -Force updates | Out-Null
+          Copy-Item "$env:RUNNER_TEMP/latest.json" updates/latest.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updates/latest.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "chore: update release manifest ${{ github.ref_name }}"
+            git push origin HEAD:main
+          }
+
+      - name: Publish compatibility manifest for older clients
+        shell: pwsh
+        run: |
+          # 0.9.2/0.9.3 客户端的备用 URL 指向这个过渡分支。至少在它们升级到
+          # 新版（改读 main）之前，每次正式 Release 都同步同一份真实 SHA256 清单。
+          git fetch origin codex/ham-checkin-release
+          git checkout -B codex/ham-checkin-release origin/codex/ham-checkin-release
+          New-Item -ItemType Directory -Force updates | Out-Null
+          Copy-Item "$env:RUNNER_TEMP/latest.json" updates/latest.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updates/latest.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "chore: update legacy release manifest ${{ github.ref_name }}"
+            git push origin HEAD:codex/ham-checkin-release
+          }

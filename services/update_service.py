@@ -2,7 +2,8 @@
 
 更新检查只读取公开 GitHub Release 元数据，不参与点名、Excel 或 SQLite
 任务；下载完成后先做 SHA-256 校验，再由独立 cmd 进程等待当前 EXE 退出并
-替换文件。运行数据始终位于 EXE 同级目录，不会随更新包覆盖。
+替换文件。运行数据位于用户 LocalAppData，不会随更新包覆盖，也不依赖
+EXE 所在目录或快捷方式的工作目录。
 """
 from __future__ import annotations
 
@@ -29,9 +30,14 @@ REPOSITORY = "HX-Wrdzgzs/ham-checkin-assistant"
 LATEST_API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 FALLBACK_MANIFEST_URL = (
     "https://raw.githubusercontent.com/"
+    f"{REPOSITORY}/main/updates/latest.json"
+)
+LEGACY_FALLBACK_MANIFEST_URL = (
+    "https://raw.githubusercontent.com/"
     f"{REPOSITORY}/codex/ham-checkin-release/updates/latest.json"
 )
-UPDATE_ASSET_NAME = "HAM点名助手.exe"
+UPDATE_ASSET_NAME = "HAM.exe"
+UPDATE_ASSET_ALIASES = (UPDATE_ASSET_NAME, "HAM点名助手.exe")
 CHECKSUM_ASSET_NAME = "SHA256SUMS.txt"
 MAX_UPDATE_BYTES = 250 * 1024 * 1024
 DOWNLOAD_ATTEMPTS = 3
@@ -95,25 +101,26 @@ def _read_url(
         raise UpdateError(f"访问更新服务失败：{exc}") from exc
 
 
-def _asset_url(assets: list[dict], name: str) -> str | None:
+def _asset_url(assets: list[dict], names: str | tuple[str, ...]) -> str | None:
+    accepted = {names} if isinstance(names, str) else set(names)
     for asset in assets:
-        # GitHub 对非 ASCII 上传文件名可能把 API name 归一化为 HAM.exe，
-        # 但会保留 Release 页面上的 label；两者都属于同一个受信任资产。
-        if (str(asset.get("name") or "") == name
-                or str(asset.get("label") or "") == name):
+        # 兼容旧 Release：GitHub 曾把中文文件名归一化为 HAM.exe，并把中文名放在 label。
+        if (str(asset.get("name") or "") in accepted
+                or str(asset.get("label") or "") in accepted):
             url = str(asset.get("browser_download_url") or "")
             return url if _allowed_release_url(url) else None
     return None
 
 
-def _checksum_for(text: str, asset_name: str) -> str | None:
+def _checksum_for(text: str, asset_names: str | tuple[str, ...]) -> str | None:
     """解析 sha256sum 常见格式：<hash>  <filename> / <hash> *<filename>。"""
+    accepted = {asset_names} if isinstance(asset_names, str) else set(asset_names)
     for line in text.splitlines():
         parts = line.strip().split(None, 1)
         if len(parts) != 2:
             continue
         digest, filename = parts
-        if (filename.lstrip("*").strip() == asset_name
+        if (filename.lstrip("*").strip() in accepted
                 and re.fullmatch(r"[0-9a-fA-F]{64}", digest)):
             return digest.lower()
     return None
@@ -135,20 +142,23 @@ def check_latest_release(
         )
         return _release_from_api_payload(raw, current_version, timeout=timeout, opener=opener)
     except UpdateError as api_error:
-        # GitHub 未认证 API 有公共限流；公开 raw 清单不依赖 API 配额，且下载仍
-        # 只允许指向 GitHub Release 资产。两条路径都失败才报告检查失败。
-        try:
-            manifest_raw = _read_url(
-                FALLBACK_MANIFEST_URL,
-                timeout=timeout,
-                accept="application/json",
-                opener=opener,
-            )
-            return _release_from_manifest(manifest_raw, current_version)
-        except UpdateError as manifest_error:
-            raise UpdateError(
-                f"更新 API 失败：{api_error}；备用清单失败：{manifest_error}"
-            ) from api_error
+        # GitHub 未认证 API 有公共限流；稳定清单固定在 main。旧开发分支地址仅为
+        # 兼容已经发布出去的过渡版本，main 可用后不会依赖开发分支。
+        manifest_errors = []
+        for manifest_url in (FALLBACK_MANIFEST_URL, LEGACY_FALLBACK_MANIFEST_URL):
+            try:
+                manifest_raw = _read_url(
+                    manifest_url,
+                    timeout=timeout,
+                    accept="application/json",
+                    opener=opener,
+                )
+                return _release_from_manifest(manifest_raw, current_version)
+            except UpdateError as manifest_error:
+                manifest_errors.append(str(manifest_error))
+        raise UpdateError(
+            f"更新 API 失败：{api_error}；备用清单失败：{'；'.join(manifest_errors)}"
+        ) from api_error
 
 
 def _release_from_api_payload(
@@ -174,9 +184,9 @@ def _release_from_api_payload(
     assets = payload.get("assets")
     if not isinstance(assets, list):
         raise UpdateError("Release 没有有效的附件列表")
-    download_url = _asset_url(assets, UPDATE_ASSET_NAME)
+    download_url = _asset_url(assets, UPDATE_ASSET_ALIASES)
     if not download_url:
-        raise UpdateError(f"Release 缺少受信任的 {UPDATE_ASSET_NAME} 附件")
+        raise UpdateError("Release 缺少受信任的 HAM.exe / HAM点名助手.exe 附件")
 
     expected_sha256 = None
     checksum_url = _asset_url(assets, CHECKSUM_ASSET_NAME)
@@ -188,7 +198,7 @@ def _release_from_api_payload(
             opener=opener,
         )
         expected_sha256 = _checksum_for(
-            checksum_raw.decode("utf-8", errors="replace"), UPDATE_ASSET_NAME)
+            checksum_raw.decode("utf-8", errors="replace"), UPDATE_ASSET_ALIASES)
 
     return ReleaseInfo(
         version=f"{latest_version[0]}.{latest_version[1]}.{latest_version[2]}",
@@ -242,7 +252,7 @@ def download_update(
     校验失败会清理本次临时文件，并使用缓存绕过参数重新下载，最多尝试三次。
     """
     if not release.expected_sha256:
-        raise UpdateError("Release 缺少 HAM点名助手.exe 的 SHA256 校验值，已停止自动更新")
+        raise UpdateError("Release 缺少更新 EXE 的 SHA256 校验值，已停止自动更新")
     if not _allowed_release_url(release.download_url):
         raise UpdateError("更新下载地址不是受信任的 GitHub Release 地址")
 

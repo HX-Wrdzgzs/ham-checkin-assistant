@@ -107,6 +107,33 @@ class TestParser(unittest.TestCase):
                 self.assertEqual(r.power.value, power)
                 self.assertEqual(r.unmatched, unmatched)
 
+    def test_observed_chinese_device_and_antenna_models(self):
+        """截图中的中文设备/天线写法必须进入对应列，而不是 QTH/未识别。"""
+        cases = [
+            ("ba4tmj 南京市江宁区牛首山 wpks2200 八木 25w",
+             "南京市江宁区牛首山", "wpks2200", "八木", "25W"),
+            ("ba4szj 丰台南路 八重洲150R 770s 25w",
+             "丰台南路", "八重洲150R", "770s", "25W"),
+            ("bh4rht 南京秦淮 海能达pdc580 原 5w",
+             "南京秦淮", "海能达pdc580", "原", "5W"),
+            ("bd4wxv 凤台路 300d 老鹰507 25w",
+             "凤台路", "300d", "老鹰507", "25W"),
+            ("bd4xio 无锡江阴周庄 1907r x520 中",
+             "无锡江阴周庄", "1907r", "x520", "中"),
+            ("ba4rmg 南京高淳 好易通800 2.4米玻璃钢 25w",
+             "南京高淳", "好易通800", "2.4米玻璃钢", "25W"),
+            ("bg4ilm 山东青岛 海能达pdc690",
+             "山东青岛", "海能达pdc690", "", ""),
+        ]
+        for text, qth, device, antenna, power in cases:
+            with self.subTest(text=text):
+                r = self.parser.parse(text)
+                self.assertEqual(r.qth.value, qth)
+                self.assertEqual(r.device.value, device)
+                self.assertEqual(r.antenna.value, antenna)
+                self.assertEqual(r.power.value, power)
+                self.assertEqual(r.unmatched, [])
+
     def test_single_yz_with_explicit_chinese_qth_is_antenna(self):
         """“yz 湖北”中湖北是现场 QTH，yz 不应抢成扬州。"""
         r = self.parser.parse("bg6xhb vr-n76 yz ht 湖北")

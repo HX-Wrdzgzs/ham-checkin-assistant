@@ -283,6 +283,25 @@ class TestV2Features(unittest.TestCase):
         finally:
             svc.close()
 
+    def test_manual_field_edit_consumes_matching_unmatched_value(self):
+        """人工把未识别项归类后，标准列与未识别列不能重复保留。"""
+        svc = make_service()
+        try:
+            svc.create_session("t", "2026-08-08")
+            res = svc.commit(svc.parse("bg4tki njqx k6 y 5 mysterytoken"))
+            cid = res["checkin"].id
+            out = svc.update_checkin(cid, "device", "mysterytoken")
+            self.assertTrue(out["ok"])
+            c = svc.repo.get_checkin(cid)
+            self.assertEqual(c.device_standard, "mysterytoken")
+            self.assertEqual(c.unmatched, "")
+            audits = svc.repo.list_audit(cid)
+            self.assertTrue(any(a.field_name == "unmatched"
+                                and a.old_value == "mysterytoken"
+                                and a.new_value == "" for a in audits))
+        finally:
+            svc.close()
+
     def test_update_callsign_normalizes_and_validates(self):
         """P2：呼号修改先规范化+校验；非法值拒绝写入。"""
         svc = make_service()

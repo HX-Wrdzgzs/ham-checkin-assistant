@@ -92,7 +92,7 @@
   <circle cx="690" cy="477" r="16" fill="#398b84"/>
   <text x="690" y="483" text-anchor="middle" class="cn step" font-size="14">C</text>
   <text x="720" y="482" class="cn box-title">数据安全优先</text>
-  <text x="720" y="510" class="cn body">SQLite 先提交；Excel 慢时不会卡住输入。更新只替换 EXE，保留 data、backup 和 config。</text>
+  <text x="720" y="510" class="cn body">SQLite 先提交；Excel 慢时不会卡住输入。更新只替换 EXE，用户数据独立保留。</text>
   <text x="720" y="534" class="cn small">网络不可用时跳过更新，点名功能仍可继续使用。</text>
 
   <rect x="720" y="575" width="370" height="50" rx="12" fill="#edf6f5"/>

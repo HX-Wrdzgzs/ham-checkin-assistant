@@ -94,6 +94,36 @@ class TestUpdateService(unittest.TestCase):
         with self.assertRaises(UpdateError):
             version_key("latest")
 
+    def test_check_latest_release_accepts_ascii_asset_without_label(self):
+        """正式发布固定使用 HAM.exe，不依赖 GitHub 的中文 label 行为。"""
+        exe = b"ascii-release-exe"
+        digest = hashlib.sha256(exe).hexdigest()
+        exe_url = (
+            "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/"
+            "releases/download/v0.9.4/HAM.exe"
+        )
+        checksum_url = (
+            "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/"
+            f"releases/download/v0.9.4/{CHECKSUM_ASSET_NAME}"
+        )
+        payload = {
+            "tag_name": "v0.9.4",
+            "html_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/v0.9.4",
+            "assets": [
+                {"name": "HAM.exe", "browser_download_url": exe_url},
+                {"name": CHECKSUM_ASSET_NAME, "browser_download_url": checksum_url},
+            ],
+        }
+        values = {
+            "https://api.github.com/repos/HX-Wrdzgzs/ham-checkin-assistant/releases/latest":
+                json.dumps(payload).encode("utf-8"),
+            checksum_url: f"{digest}  HAM.exe\n".encode(),
+        }
+        release = check_latest_release("0.9.3", opener=_Opener(values))
+        self.assertIsNotNone(release)
+        self.assertEqual(release.download_url, exe_url)
+        self.assertEqual(release.expected_sha256, digest)
+
     def test_check_latest_release_reads_checksum(self):
         exe = b"test-exe"
         digest = hashlib.sha256(exe).hexdigest()
@@ -151,6 +181,28 @@ class TestUpdateService(unittest.TestCase):
         values[release.download_url] = b"unverified"
         with self.assertRaisesRegex(UpdateError, "SHA256"):
             download_update(release, opener=_Opener(values))
+
+    def test_check_latest_release_falls_back_to_legacy_manifest(self):
+        """main 清单暂不可用时，兼容旧版客户端使用的过渡分支清单。"""
+        manifest = {
+            "version": "0.9.4",
+            "tag_name": "v0.9.4",
+            "html_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/v0.9.4",
+            "download_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v0.9.4/HAM.exe",
+            "sha256": "b" * 64,
+        }
+        with mock.patch(
+            "services.update_service._read_url",
+            side_effect=[
+                UpdateError("HTTP 403"),
+                UpdateError("main manifest 404"),
+                json.dumps(manifest).encode(),
+            ],
+        ):
+            release = check_latest_release("0.9.3")
+        self.assertIsNotNone(release)
+        self.assertEqual(release.version, "0.9.4")
+        self.assertEqual(release.expected_sha256, "b" * 64)
 
     def test_check_latest_release_falls_back_to_public_manifest(self):
         manifest = {

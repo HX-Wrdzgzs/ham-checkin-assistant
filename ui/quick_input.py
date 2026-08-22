@@ -13,12 +13,14 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QListWidget, QVBoxLayout, QWidget,
 )
 
+from config.settings import normalize_quick_submit_key
 from database.models import ParseResult
 from services.app_service import AppService
 from ui.source_labels import source_label
 
 
 class _InputEdit(QLineEdit):
+    submit_pressed = Signal()
     tab_pressed = Signal()
     esc_pressed = Signal()
     undo_pressed = Signal()
@@ -33,20 +35,73 @@ class _InputEdit(QLineEdit):
         # 用户是否已主动用 ↑/↓ 选择候选：只有进入选择态，Enter 才确认候选；
         # 否则 Enter 始终正常提交，绝不因补全弹窗被劫持（如输入 ba4rll）。
         self._completion_navigated = False
+        self._submit_key = "Enter"
+        self._space_submit_allowed = None
+
+    def set_submit_key(self, value: str) -> None:
+        self._submit_key = normalize_quick_submit_key(value)
+
+    @staticmethod
+    def _event_modifiers(event):
+        mask = (Qt.KeyboardModifier.ControlModifier |
+                Qt.KeyboardModifier.ShiftModifier |
+                Qt.KeyboardModifier.AltModifier |
+                Qt.KeyboardModifier.MetaModifier)
+        return event.modifiers() & mask
+
+    def _matches_submit_key(self, event) -> bool:
+        key = event.key()
+        mods = self._event_modifiers(event)
+        wanted = self._submit_key
+        if wanted == "Enter":
+            return key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not mods
+        if wanted == "Ctrl+Enter":
+            return (key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                    and mods == Qt.KeyboardModifier.ControlModifier)
+        if wanted == "Shift+Enter":
+            return (key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                    and mods == Qt.KeyboardModifier.ShiftModifier)
+        if wanted == "Alt+Enter":
+            return (key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                    and mods == Qt.KeyboardModifier.AltModifier)
+        if wanted == "Space":
+            return key == Qt.Key.Key_Space and not mods
+        if wanted.startswith("F") and wanted[1:].isdigit() and not mods:
+            return key == getattr(Qt.Key, f"Key_{wanted}")
+        return False
 
     def _popup_visible(self) -> bool:
         return self._popup is not None and self._popup.isVisible()
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
-        # Enter：仅当弹窗可见**且用户已用 ↑/↓ 选择**时才确认候选；
-        # 未主动选择 → 直接提交（输入 ba4rll 回车就是提交，不被补全卡住）。
+        # Enter 在补全“选择态”下仍用于确认候选；否则只在配置命中时提交。
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             if self._popup_visible() and self._completion_navigated:
                 self.completion_accept.emit()
                 event.accept()
                 return
-            super().keyPressEvent(event)  # 触发 returnPressed → 提交
+            # Space 模式保留 Ctrl+Enter 作为完整字段的安全提交方式。
+            if (self._submit_key == "Space"
+                    and self._event_modifiers(event) == Qt.KeyboardModifier.ControlModifier):
+                self.submit_pressed.emit()
+                event.accept()
+                return
+            if self._matches_submit_key(event):
+                self.submit_pressed.emit()
+                event.accept()
+                return
+            # 未配置为提交键的 Enter 不再推进下一位。
+            event.accept()
+            return
+        if key == Qt.Key.Key_Space and self._matches_submit_key(event):
+            allowed = self._space_submit_allowed
+            if allowed is None or allowed():
+                self.submit_pressed.emit()
+                event.accept()
+                return
+            # 当前不是“单呼号快速提交”状态时，空格仍作为正常字段分隔符。
+            super().keyPressEvent(event)
             return
         if key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
             if self._popup_visible():
@@ -79,6 +134,10 @@ class _InputEdit(QLineEdit):
                 and event.modifiers() & Qt.KeyboardModifier.ControlModifier
                 and event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
             self.undo_pressed.emit()
+            event.accept()
+            return
+        if self._matches_submit_key(event):
+            self.submit_pressed.emit()
             event.accept()
             return
         super().keyPressEvent(event)
@@ -114,8 +173,10 @@ class QuickInputPanel(QWidget):
         self.input = _InputEdit()
         self.input.setPlaceholderText("输入：呼号 QTH 设备 天线 功率（可乱序）")
         self.input._popup = self.popup
+        self.input.set_submit_key(str(service.settings.get("quick_submit_key", "Enter")))
+        self.input._space_submit_allowed = self._space_submit_allowed
         self.input.textChanged.connect(self._schedule_parse)
-        self.input.returnPressed.connect(self._submit)
+        self.input.submit_pressed.connect(self._submit)
         self.input.tab_pressed.connect(self._accept_history)
         self.input.esc_pressed.connect(self._clear)
         self.input.undo_pressed.connect(self._undo)
@@ -136,8 +197,8 @@ class QuickInputPanel(QWidget):
         self.feedback_lbl.setStyleSheet("color:#2E7D32; font-weight:bold;")
         self.meta_lbl = QLabel("")
         self.meta_lbl.setStyleSheet("color:#78909C;")
-        hint = ("Enter 写入　Tab 接受历史　Esc 清空　Ctrl+Shift+Z 撤销上一条")
-        self.hint_lbl = QLabel(hint)
+        self.hint_lbl = QLabel("")
+        self._refresh_hint()
         self.hint_lbl.setStyleSheet("color:#90A4AE; font-size:11px;")
 
         lay = QVBoxLayout(self)
@@ -166,6 +227,29 @@ class QuickInputPanel(QWidget):
 
     def clear(self) -> None:
         self.input.clear()
+
+    def apply_submit_key(self, value: str) -> None:
+        """热更新快速点名写入 / 下一位按键。"""
+        self.input.set_submit_key(value)
+        self._refresh_hint()
+
+    def _refresh_hint(self) -> None:
+        key = self.input._submit_key
+        if key == "Space":
+            submit_text = "Space 单呼号写入/下一位（Shift+Space 继续补字段，Ctrl+Enter 完整提交）"
+        else:
+            submit_text = f"{key} 写入/下一位"
+        self.hint_lbl.setText(
+            f"{submit_text}　Tab 接受历史　Esc 清空　Ctrl+Shift+Z 撤销上一条")
+
+    def _space_submit_allowed(self) -> bool:
+        text = self.input.text().strip()
+        if not text or any(ch.isspace() for ch in text):
+            return False
+        result = self._result
+        if result is None or result.raw_text != text:
+            result = self.service.parse(text)
+        return bool(result.callsign.value)
 
     def set_feedback(self, text: str, ok: bool = True) -> None:
         self.feedback_lbl.setText(text)

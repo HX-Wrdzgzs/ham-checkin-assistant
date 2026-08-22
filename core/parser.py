@@ -24,6 +24,7 @@ _UNIT_POWER = re.compile(r"^\d+(?:\.\d+)?(w|瓦)$", re.I)
 _UNKNOWN_ANTENNA_METERS = re.compile(
     r"^\d+(?:\.\d+)?米(?:玻璃钢|天线|gp)?$", re.I)
 _UNKNOWN_DEVICE = re.compile(r"^(?=.*[a-z])(?=.*\d)[a-z0-9._-]{3,}$", re.I)
+_CHINESE_DEVICE_PREFIXES = ("八重洲", "海能达", "好易通")
 
 _POWER_WORDS = {
     "低功": "低",
@@ -68,12 +69,26 @@ def _looks_like_antenna(token: str) -> bool:
         return True
     if key.startswith(("az", "srh")) and any(ch.isdigit() for ch in key):
         return True
-    return key in {"鹅颈", "鹅颈天线", "1.8米gp", "1.8米"}
+    if key in {"鹅颈", "鹅颈天线", "1.8米gp", "1.8米", "八木"}:
+        return True
+    # “老鹰507”这类现场天线简称没有统一品牌词典，但其前缀+型号
+    # 组合足够明确；保留原文到天线列，避免最后被 QTH 兜底吞掉。
+    if key.startswith("老鹰") and any(ch.isdigit() for ch in key):
+        return True
+    return False
 
 
 def _looks_like_device(token: str) -> bool:
     """判断未收录的字母+数字机型，保留其原文而不是当成 QTH。"""
-    return bool(_UNKNOWN_DEVICE.fullmatch((token or "").strip()))
+    text = (token or "").strip()
+    if _UNKNOWN_DEVICE.fullmatch(text):
+        return True
+    key = norm_key(text)
+    # 中文品牌+数字型号（例如 海能达pdc580、好易通800、八重洲150R）
+    # 是设备描述，不应被当作未知地点。只对白名单品牌启用，避免把
+    # 任意“地点+年份/楼号”误判为设备。
+    return (any(key.startswith(prefix) for prefix in _CHINESE_DEVICE_PREFIXES)
+            and any(ch.isdigit() for ch in key))
 
 
 def _looks_like_power_word(token: str) -> bool:

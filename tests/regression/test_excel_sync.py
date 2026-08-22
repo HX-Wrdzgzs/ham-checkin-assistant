@@ -190,6 +190,24 @@ class TestDeferredExcelSave(unittest.TestCase):
         finally:
             svc.close()
 
+    def test_deferred_edit_updates_unmatched_column_together(self):
+        """后台 Excel 修改任务应一次更新标准列和被消费的未识别列。"""
+        svc, wb = make_svc_with_excel()
+        try:
+            res = svc.commit(svc.parse("bg4tki njqx k6 y 5 mysterytoken"))
+            cid = res["checkin"].id
+            out = svc.update_checkin(cid, "device", "mysterytoken", defer_excel=True)
+            self.assertTrue(out["ok"])
+            self.assertEqual(svc.repo.get_checkin(cid).unmatched, "")
+            self.assertEqual(out["excel_task"]["updates"], {
+                "device": "mysterytoken",
+                "unmatched": "",
+            })
+            # 兼容字段仍保留，旧 worker 快照/调用方不会失效。
+            self.assertEqual(out["excel_task"]["excel_field"], "device")
+        finally:
+            svc.close()
+
     def test_deferred_commit_flushes_once(self):
         svc, wb = make_svc_with_excel()
         try:

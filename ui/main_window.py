@@ -412,7 +412,10 @@ class MainWindow(QMainWindow):
 
     # ---------- 365dt 启动一次 ----------
     def _apply_settings_callback(self, candidate: dict) -> None:
-        """P1-14：设置保存后立即应用 UI 层运行时（全局快捷键 / 悬浮窗外观）。"""
+        """P1-14：设置保存后立即应用 UI 层运行时（快捷键 / 悬浮窗外观）。"""
+        submit_key = str(candidate.get("quick_submit_key") or "Enter")
+        self.quick_panel.apply_submit_key(submit_key)
+        self.floating.panel.apply_submit_key(submit_key)
         new_hk = str(candidate.get("global_hotkey") or "Ctrl+Space")
         if new_hk != getattr(self.hotkey, "sequence", ""):
             try:

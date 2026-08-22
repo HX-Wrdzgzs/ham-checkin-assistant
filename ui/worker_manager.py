@@ -151,11 +151,13 @@ class ExcelUpdateWorker(QThread):
                 self.done.emit(result)
                 return
 
-            ok, msg = controller.update_row(
-                int(row),
-                {str(self.task.get("excel_field")): self.task.get("new_value", "")},
-                auto_save=True,
-            )
+            updates = self.task.get("updates")
+            if not isinstance(updates, dict) or not updates:
+                # 兼容旧版本/旧任务快照，仍支持单字段任务。
+                updates = {
+                    str(self.task.get("excel_field")): self.task.get("new_value", "")
+                }
+            ok, msg = controller.update_row(int(row), updates, auto_save=True)
             result.update(
                 ok=ok,
                 state="persisted" if ok else "error",

@@ -5,6 +5,8 @@ Windows 本地点名辅助程序：通过**缩写 + 规则解析 + SQLite 历史
 
 **纯本地，无任何 AI / LLM / Token / 语音识别依赖，断网可用。**
 
+当前版本：**0.9.4**（识别率、数据安全与安装体验更新）。
+
 ## 功能
 
 - 快速输入：`bg4tki njqx k6 y 5` → `BG4TKI | 南京栖霞 | 泉盛 UV-K6 | 原 | 5W`
@@ -56,7 +58,7 @@ Windows 本地点名辅助程序：通过**缩写 + 规则解析 + SQLite 历史
 
 ### 3. 快速点名
 
-在“快速点名”或悬浮窗输入一行缩写，按 Enter 提交。例如：
+在“快速点名”或悬浮窗输入一行缩写，默认按 Enter 提交。例如：
 
 ```text
 ba4rll qyt6900 5w yz yz
@@ -72,7 +74,9 @@ ba4rll qyt6900 5w yz yz
 | 第二个 `yz` | 天线 `原` |
 | `5w` | 功率 `5W` |
 
-字段可以乱序输入，常用输入还可以写成 `bg4tki njqx k6 y 5`。`Enter` 会先清空输入框并进入下一位录入；`Tab` 只接受历史建议，不会代替 Enter 自动提交。
+字段可以乱序输入，常用输入还可以写成 `bg4tki njqx k6 y 5`。默认 `Enter` 会先清空输入框并进入下一位录入；`Tab` 只接受历史建议，不会代替提交键自动提交。可以在“设置 → 常规 → 快速点名写入键”改为 Space、Ctrl+Enter、Shift+Enter、Alt+Enter 或 F2～F12。
+
+Space 模式专门照顾只录呼号的高频点名：输入一个有效呼号后按空格即可写入并进入下一位，普通 Enter 不会推进。因为完整记录本身需要空格分隔字段，Space 模式下如需继续填写 QTH/设备等，请用 `Shift+Space` 输入第一个分隔空格，最后用 `Ctrl+Enter` 提交完整记录。
 
 如果程序暂时无法确认某个 token，原始内容会进入“未识别”字段，并同步到 Excel 的“未识别”列；不要因为没有识别就把现场信息删掉。确认后可以在“本场记录”双击修改，或在“设置 → 词典”补充稳定别名。
 
@@ -85,13 +89,14 @@ ba4rll qyt6900 5w yz yz
 
 ## 自动更新与 Release
 
-最新版发布在 [GitHub Releases](https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/latest)。下载 Release 中的单文件 `HAM点名助手.exe`，不需要 `_internal` 文件夹。
+最新版发布在 [GitHub Releases](https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/latest)。Release 附件统一为单文件 `HAM.exe`，不需要 `_internal` 文件夹；自动更新安装后仍会替换用户当前正在使用的程序文件，不要求用户改变快捷方式。
 
 - 发布版 EXE 启动约 1.5 秒后在后台检查最新稳定 Release，网络请求不会阻塞快速录入窗口。
-- 发现新版本后会先询问；确认后下载 `HAM点名助手.exe`，并用 Release 中的 `SHA256SUMS.txt` 校验，校验失败不会修改当前软件。
+- 发现新版本后会先询问；确认后下载 `HAM.exe`（同时兼容旧 Release 的 `HAM点名助手.exe`），并用 Release 中的 `SHA256SUMS.txt` 校验，校验失败不会修改当前软件。
 - 如果下载内容遇到 CDN 瞬态异常导致校验不一致，会清理临时文件并绕过缓存重试，最多尝试 3 次；连续失败才提示错误。
-- 下载完成后，更新程序等待当前 EXE 正常退出，再替换并重新启动；`data/`、`logs/`、`backup/` 和 `config.json` 位于 EXE 同级，不会被更新包覆盖。
-- GitHub API 暂时限流时会读取仓库的公开更新清单；两条路径都不可用时只跳过本次检查，本地点名、Excel 和 SQLite 不受影响。也可以从托盘菜单点击“检查更新”。
+- 下载完成后，更新程序等待当前 EXE 正常退出，再替换并重新启动；运行数据位于 `%LOCALAPPDATA%\HAM点名助手\`，不依赖 EXE 所在目录，也不会被更新包覆盖。
+- GitHub API 暂时限流时会读取 `main/updates/latest.json` 稳定更新清单；0.9.2/0.9.3 使用过的 `codex/ham-checkin-release` 清单会在正式 Release 时同步刷新，帮助旧客户端完成一次跨版本升级。两条路径都不可用时只跳过本次检查，本地点名、Excel 和 SQLite 不受影响。也可以从托盘菜单点击“检查更新”。
+- 发布流程由 `.github/workflows/release.yml` 自动执行：推送与 `version.py` 一致的 `vX.Y.Z` Tag 后，会先跑完整测试，再构建单文件 EXE、生成真实 SHA256、创建/刷新 GitHub Release，并自动把最新清单写回 `main/updates/latest.json`。无需手工填写 SHA256。
 - 用 `python app.py` 源码运行时不自动替换 Python 源码；托盘中的“检查更新”仍可打开 Release 页面。
 
 如果 Windows SmartScreen 第一次提示未知发布者，请先确认文件来自上面的 Release 页面，并核对发布页的 SHA256 校验文件；不要从其他链接下载同名 EXE。
@@ -103,21 +108,25 @@ pip install -r requirements.txt
 python app.py
 ```
 
-首次运行会在项目目录生成 `data/`（SQLite）、`logs/`、`backup/` 与 `config.json`。
+首次运行会在 `%LOCALAPPDATA%\HAM点名助手\` 生成 `data/`（SQLite）、`logs/`、`backup/` 与 `config.json`，不会在软件目录或快捷方式当前目录生成运行文件。
+
+如果从旧版升级，程序首次启动会把旧 EXE 同目录中的运行数据复制到上述用户目录；复制采用不覆盖策略，旧目录暂时保留，便于确认数据完整后再人工处理。配置中由用户明确填写的绝对路径不会被强行搬动。
 
 ## 快捷键
 
 | 按键 | 功能 |
 | ---- | ---- |
 | Ctrl+Space | 唤出/隐藏悬浮窗 |
-| Enter | 确认录入（仅提交本次显式输入 / 已接受的历史） |
+| Enter | 默认确认录入；若写入键改成 Space，则普通 Enter 不推进 |
+| Space | 可在设置中改为“单呼号写入/下一位”键 |
+| Ctrl+Enter | Space 模式下提交包含 QTH/设备等字段的完整记录 |
 | Tab | 接受历史建议 |
 | Esc | 清空当前输入 |
 | Ctrl+Z | 撤销输入框文字 |
 | Ctrl+Shift+Z | 撤销上一条记录（软删除，Excel 不在界面线程整场重排） |
 | Ctrl+S | 立即保存当前场次待保存的 Excel 记录 |
 
-快速点名时，按 Enter 会先清空输入框并立即进入下一位录入；SQLite 先落库，
+快速点名时，触发当前配置的“写入/下一位”键后会先清空输入框并立即进入下一位录入；SQLite 先落库，
 Excel 记录先写入当前工作簿内存，在停止输入达到“空闲保存延迟”后合并 Save。
 默认延迟为 600 ms，可在“设置 → Excel”调整。若 Excel 保存失败，记录会保留为
 未同步状态，可用“保存/补同步”继续处理。
@@ -148,7 +157,7 @@ Excel 记录先写入当前工作簿内存，在停止输入达到“空闲保�
 
 ## 备份 / 恢复
 
-- 每天首次启动自动备份到 `backup/`（temp → SQLite backup → `PRAGMA quick_check` → 原子改名），
+- 每天首次启动自动备份到 `%LOCALAPPDATA%\HAM点名助手\backup\`（temp → SQLite backup → `PRAGMA quick_check` → 原子改名），
   并生成 `metadata.json`（版本 / schema / checksum）。
 - 恢复：`restore_backup(备份文件, 目标库)` 先验证备份、写临时副本校验后原子替换目标。
 - 损坏备份会拒绝恢复。
@@ -169,8 +178,8 @@ python build.py
 ```
 
 `build.py` 生成单文件 `HAM点名助手.exe` 并部署到 Downloads，不需要携带 `_internal` 文件夹。
-运行时产生的 `data/ logs/ backup/ config.json` 会放在 EXE 同级目录；重新打包或更新时会先备份/恢复，
-绝不覆盖已有 DB/backup/config。若检测到旧文件夹版含运行数据，会保留旧目录作为恢复来源。
+运行时产生的 `data/ logs/ backup/ config.json` 会放在 `%LOCALAPPDATA%\HAM点名助手\`，与 EXE 和快捷方式位置无关；
+重新打包或更新不会覆盖用户数据。首次升级会复制旧版 EXE 同目录的运行数据，旧目录会暂时保留作为恢复来源。
 
 ## 目录
 
@@ -183,7 +192,7 @@ normalizers/          呼号/QTH/设备/天线/功率 + 行政区划库
 providers/            365dt / Excel 导入 / NRL Nanny 只读源
 services/             应用服务（UI 唯一入口）/ 同步服务 / NRL 监听服务
 ui/                   PySide6 界面（含 NRL 监听页）
-data/ logs/ backup/   运行时数据
+%LOCALAPPDATA%\HAM点名助手\   用户运行时数据（config/data/logs/backup）
 tests/                单元 + 回归 + Mock COM 测试
 version.py            版本号
 CHANGELOG.md          变更日志

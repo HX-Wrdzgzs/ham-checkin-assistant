@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from build import (
     backup_runtime,
@@ -162,6 +163,55 @@ class TestDeployProtection(unittest.TestCase):
                          "既有 DB 必须保留")
         self.assertEqual((target_root / "config.json").read_text(encoding="utf-8"), CONFIG_TEXT,
                          "旧 config 应恢复")
+
+    def test_deploy_succeeds_when_old_exe_is_temporarily_locked(self):
+        """旧版进程锁住 .old.exe 时，新 EXE 已切换也应报告部署成功。"""
+        target_root = _make_runtime(self.tmp / "target")
+        target = target_root / "HAM点名助手.exe"
+        target.write_bytes(b"old-exe")
+        src = self.tmp / "src" / "HAM点名助手.exe"
+        src.parent.mkdir()
+        src.write_bytes(b"new-exe")
+        target_old = target_root / "HAM点名助手.old.exe"
+
+        real_unlink = Path.unlink
+
+        def lock_old(path, missing_ok=False):
+            if path == target_old:
+                raise PermissionError("simulated running old process")
+            return real_unlink(path, missing_ok=missing_ok)
+
+        with patch.object(Path, "unlink", autospec=True, side_effect=lock_old):
+            ok = deploy_program(src, target, self.tmp / "dep_bak")
+
+        self.assertTrue(ok, "旧备份暂时不能删除不应否定已完成的新 EXE 切换")
+        self.assertEqual(target.read_bytes(), b"new-exe")
+        self.assertTrue(target_old.exists(), "被占用的旧版备份应保留到下次清理")
+
+    def test_deploy_uses_numbered_backup_when_old_backup_is_locked(self):
+        """已有固定名旧备份被占用时，部署应改用编号备份继续切换。"""
+        target_root = _make_runtime(self.tmp / "target")
+        target = target_root / "HAM点名助手.exe"
+        target.write_bytes(b"old-exe")
+        target_old = target_root / "HAM点名助手.old.exe"
+        target_old.write_bytes(b"locked-backup")
+        src = self.tmp / "src" / "HAM点名助手.exe"
+        src.parent.mkdir()
+        src.write_bytes(b"new-exe")
+
+        real_unlink = Path.unlink
+
+        def lock_old(path, missing_ok=False):
+            if path == target_old:
+                raise PermissionError("simulated running old backup")
+            return real_unlink(path, missing_ok=missing_ok)
+
+        with patch.object(Path, "unlink", autospec=True, side_effect=lock_old):
+            ok = deploy_program(src, target, self.tmp / "dep_bak")
+
+        self.assertTrue(ok)
+        self.assertEqual(target.read_bytes(), b"new-exe")
+        self.assertEqual(target_old.read_bytes(), b"locked-backup")
 
     def test_deploy_artifact_verify_fails(self):
         """P1-15：产物缺少 EXE → 拒绝部署（smoke verify）。"""

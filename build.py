@@ -6,9 +6,9 @@
 产物在 dist/HAM点名助手.exe，最终部署到 Downloads/HAM点名助手.exe。
 
 数据保护（任务书第一阶段 #2）：
-- 构建前完整备份旧版 runtime（data/、logs/、backup/、config.json）。
-- build 失败后也必须恢复 runtime（try/finally）。
-- 部署到 Downloads 前保留既有 runtime，绝不直接丢用户数据。
+- 构建前完整备份旧版构建目录中的 runtime（仅用于兼容旧文件夹版）。
+- build 失败后也必须恢复 legacy runtime（try/finally）。
+- 部署到 Downloads 前保留既有 runtime，首次启动由程序迁移到 LocalAppData。
 - 部署顺序：build → 校验单文件产物 → 保留既有 runtime → 原子替换 EXE → 恢复 runtime。
 """
 from __future__ import annotations
@@ -68,10 +68,10 @@ def _runtime_present(root: Path) -> bool:
 
 
 def migrate_legacy_runtime(legacy_root: Path, target_root: Path) -> bool:
-    """把旧文件夹版的运行数据补迁移到单文件 EXE 同级目录。
+    """把旧文件夹版的运行数据补迁移到目标目录，供旧版本兼容。
 
     只补齐目标中不存在的项目，绝不覆盖用户已经在单文件版旁边产生的
-    数据；旧目录本身也不在这里删除，便于失败时人工恢复。
+    数据；新的运行时默认会在 LocalAppData 使用自己的用户数据目录。
     """
     if not legacy_root.exists():
         return True
@@ -128,10 +128,27 @@ def deploy_program(src_exe: Path, target_exe: Path, runtime_bak: Path) -> bool:
             target_new.unlink(missing_ok=True)
             return False
 
-        # 运行数据位于 EXE 同级目录，而不是打包进单文件内部。
+        # 兼容旧版同目录 runtime；新版运行时会在首次启动时迁移到 LocalAppData。
         backup_runtime(parent, runtime_bak)
         if target_old.exists():
-            target_old.unlink()
+            try:
+                target_old.unlink()
+            except OSError:
+                # 已运行的旧版本可能锁住固定名称的备份。不要覆盖它，改用编号备份，
+                # 这样用户关闭旧进程前仍可继续构建和切换新版本。
+                for backup_no in range(1, 101):
+                    candidate = parent / (
+                        f"{target_exe.stem}.old-{backup_no}{target_exe.suffix}"
+                    )
+                    if not candidate.exists():
+                        target_old = candidate
+                        break
+                    try:
+                        candidate.unlink()
+                    except OSError:
+                        continue
+                else:
+                    raise OSError("no available EXE backup path")
         if target_exe.exists():
             os.replace(target_exe, target_old)
             moved_old = True
@@ -155,12 +172,15 @@ def deploy_program(src_exe: Path, target_exe: Path, runtime_bak: Path) -> bool:
                 pass
         return False
 
-    # 新 EXE 和运行数据都已就位，才清理旧 EXE 备份。
+    # 新 EXE 和兼容 runtime 都已就位，才清理旧 EXE 备份。
     if target_old.exists():
         try:
             target_old.unlink()
         except OSError:
-            return False
+            # 旧版进程仍在运行时，Windows 可能暂时不允许删除备份文件。
+            # 新 EXE 已经完成原子切换，保留 .old.exe 比把一次成功部署误报成失败更安全；
+            # 下一次构建或用户退出旧进程后再清理即可。
+            print("旧版 EXE 仍被使用，暂时保留备份:", target_old)
     return True
 
 
@@ -174,8 +194,8 @@ def build_exe() -> int:
         "--name", NAME,
         "--icon", str(ROOT / "assets" / "icon.ico"),
         "--add-data", f"{ROOT / 'assets'};assets",
-        # data/、logs/、backup/、config.json 均为运行时在 exe 旁自动创建，
-        # 不打包进内部，避免写入临时解压目录导致数据丢失。
+        # data/、logs/、backup/、config.json 均由新版在 LocalAppData 创建，
+        # 不打包进内部，避免写入临时解压目录或安装目录导致数据丢失。
         "app.py",
     ]
     print("Running:", " ".join(cmd))

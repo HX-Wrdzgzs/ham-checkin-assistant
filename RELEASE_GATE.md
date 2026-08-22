@@ -1,6 +1,6 @@
-# Release Gate 报告（第二轮完成）
+# Release Gate 报告（0.9.4）
 
-日期：2026-08-21　版本：0.9.3（自动更新测试版）　分支：`codex/ham-checkin-release`
+日期：2026-08-22　版本：0.9.4（识别/数据目录稳定性更新）　分支：`codex/ham-checkin-release`
 
 ```
 STATUS: PRODUCTION_READY
@@ -17,7 +17,7 @@ STATUS: PRODUCTION_READY
 - P1 = 0（P1-1 ~ P1-15 已修复）
 - P2 / P3 审计项：已逐项处理（详见 CHANGELOG 0.9.1）
 - NRL Nanny：已实现（第四阶段）
-- GitHub Release 自动更新：启动后台检查、EXE + SHA256 校验、瞬态校验失败自动重试、退出后原子替换。
+- GitHub Release 自动更新：启动后台检查、EXE + SHA256 校验、瞬态校验失败自动重试、退出后原子替换；新增 Tag 驱动的自动构建/发布/清单回写。当前线上最新 Release 仍为 v0.9.3；本机已真实构建并准备 v0.9.4 产物，只有推送 `v0.9.4` Tag 后工作流才会正式发布并更新线上清单。
 
 ## 1. 自动化 Gate（全部在本机执行并通过）
 
@@ -25,7 +25,7 @@ STATUS: PRODUCTION_READY
 |---|---|---|
 | ruff PASS | `python -m ruff check .` | All checks passed! |
 | compile PASS | `python -m compileall -q app.py build.py ... version.py` | 无输出（0） |
-| unit PASS | `python -m unittest discover -s tests` | 231 tests OK |
+| unit PASS | 测试加载器确认 247 项；按文件分 4 批执行 | 47 + 67 + 42 + 91 = 247 tests OK |
 | regression PASS | 同上（含 regression 包） | OK |
 | migration PASS | `tests.regression.test_migrations`（v1→latest / v2→latest / latest→latest / v10 FK+CHECK / 非破坏性 / 报告留痕） | 16 OK |
 
@@ -44,17 +44,19 @@ STATUS: PRODUCTION_READY
 | backup/restore | `test_backup_restore`（100→backup→120→restore→精确 100 + quick_check；损坏拒绝；同日坏备份重建；metadata） | 5 OK |
 | UI smoke | `test_ui_smoke`（offscreen 实例化 MainWindow，6 个选项卡齐全，退出路径安全） | OK |
 | NRL monitor | `test_nrl_monitor`（超时/连接重置/非法响应/空活动/请求中停止/退出期间停止/只读不变量） | 10 OK |
+| parser / unmatched retention | `tests.test_parser` + `tests.test_services` + `tests.regression.test_excel_sync`（中文设备/天线、qyt6900、重复 yz、未识别消费和 Excel 同步） | OK |
+| user data path migration | `tests.regression.test_user_data_paths`（相对路径、迁移不覆盖、冻结版默认目录） | 3 OK |
 | DB invariant | `test_db_constraints` + `test_migrations`（序号唯一、source_record 去重、FK、CHECK、迁移计数不变） | OK |
 | realistic 150-record net-control simulation | `TestPerformance.test_150_commits`（连续 150 条录入，序号连续、性能阈值内） | OK |
 
-汇总：Gate 关键测试合集 `python -m unittest tests.test_services.TestCommitUndo ... ` → **102 tests OK**。
+汇总：测试加载器确认当前仓库共 **247** 项；因单次长任务经 Codex 桥接器会返回 502，按测试文件拆成 4 批执行（47 + 67 + 42 + 91），**247 tests 全部 OK**。
 
 ## 3. 需要真机/人工的 Gate（非 CI 可自动化）
 
 | Gate | 说明 |
 |---|---|
 | real Excel COM PASS | 需本机安装 Excel + pywin32。`excel/controller.py` 的 COM 路径已由 Mock COM 覆盖逻辑；真机验收步骤：连接 Excel → 录入 → Save → 读回校验 → 补同步。 |
-| build EXE PASS | 需 pyinstaller。命令：`python build.py`（生成单文件 EXE，含数据保护与回滚部署）。 |
+| build EXE PASS | 已在本机用 PyInstaller 6.22.0 对当前源码真构建单文件 EXE；随后 `release.py --tag v0.9.4` 生成 `HAM.exe` / `SHA256SUMS.txt` / manifest，SHA256=`413419b1afc806c867e5caa4513991e7e858ec79d1164237133db306ddb5a2f7`。 |
 | NRL Nanny 真站 | 默认地址 `https://nrlnanny-nanjing.bd4rfg.cn`；离线容错已由 mock 测试覆盖。 |
 
 ## 4. 已知边界（诚实记录，非阻塞）
@@ -67,7 +69,7 @@ STATUS: PRODUCTION_READY
 
 ## 5. 结论
 
-所有可自动化 Gate 均有通过证据（231 tests + ruff + compile）；build EXE 已在本机用 PyInstaller 6.22.0 生成并静态校验，real Excel COM 仍需在有 Excel 的环境执行，其逻辑路径已由 Mock/保护测试覆盖。
+所有可自动化 Gate 均有通过证据（247 tests + ruff + compile）；当前源码已在本机用 PyInstaller 6.22.0 真构建，并由 `release.py` 从实际 EXE 生成可发布 SHA256 元数据。real Excel COM 仍需在有 Excel 的环境执行，其逻辑路径已由 Mock/保护测试覆盖。
 
 ```
 STATUS: PRODUCTION_READY
