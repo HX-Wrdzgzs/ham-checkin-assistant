@@ -1,8 +1,8 @@
 {
-  "version": "0.9.3",
-  "tag_name": "v0.9.3",
-  "html_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/v0.9.3",
-  "download_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v0.9.3/HAM.exe",
-  "asset_name": "HAM点名助手.exe",
-  "sha256": "0EC71277E5589188D80C2B5394877FC640B3EAD30ED5E2B551008E3ED85B54EE"
+  "version": "0.9.4",
+  "tag_name": "v0.9.4",
+  "html_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/v0.9.4",
+  "download_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v0.9.4/HAM.exe",
+  "asset_name": "HAM.exe",
+  "sha256": "3fded59437d1fb7ac221b7ca553cdd326d99ab83c925ede25c37fce66c6306dc"
 }
