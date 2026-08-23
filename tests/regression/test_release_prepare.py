@@ -8,7 +8,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from release import CHECKSUM_ASSET_NAME, RELEASE_ASSET_NAME, prepare_release
+from release import (
+    CHECKSUM_ASSET_NAME,
+    GITHUB_LEGACY_UPLOAD_ASSET_NAME,
+    LEGACY_RELEASE_ASSET_NAME,
+    RELEASE_ASSET_NAME,
+    prepare_release,
+)
 
 
 class TestReleasePrepare(unittest.TestCase):
@@ -35,8 +41,13 @@ class TestReleasePrepare(unittest.TestCase):
         digest = hashlib.sha256(exe.read_bytes()).hexdigest()
         self.assertEqual((release_dir / RELEASE_ASSET_NAME).read_bytes(), exe.read_bytes())
         self.assertEqual(
+            (release_dir / LEGACY_RELEASE_ASSET_NAME).read_bytes(), exe.read_bytes())
+        self.assertEqual(
+            (release_dir / GITHUB_LEGACY_UPLOAD_ASSET_NAME).read_bytes(), exe.read_bytes())
+        self.assertEqual(
             (release_dir / CHECKSUM_ASSET_NAME).read_text(encoding="utf-8"),
-            f"{digest}  {RELEASE_ASSET_NAME}\n",
+            f"{digest}  {RELEASE_ASSET_NAME}\n"
+            f"{digest}  {LEGACY_RELEASE_ASSET_NAME}\n",
         )
         saved = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(saved, manifest)
@@ -62,6 +73,10 @@ class TestReleasePrepare(unittest.TestCase):
         )
 
         self.assertEqual(release_exe.read_bytes(), b"new-build")
+        self.assertEqual(
+            (release_dir / LEGACY_RELEASE_ASSET_NAME).read_bytes(), b"new-build")
+        self.assertEqual(
+            (release_dir / GITHUB_LEGACY_UPLOAD_ASSET_NAME).read_bytes(), b"new-build")
 
     def test_prepare_release_rejects_tag_version_mismatch(self):
         exe = self.tmp / "HAM点名助手.exe"

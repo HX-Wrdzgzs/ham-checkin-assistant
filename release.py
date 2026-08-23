@@ -1,8 +1,10 @@
 """准备 GitHub Release 自动更新产物。
 
-输入必须是一次真实 PyInstaller 构建出的 EXE。脚本会生成稳定 ASCII 文件名的
-``release/HAM.exe``、``release/SHA256SUMS.txt``，并原子刷新
-``updates/latest.json``。清单中的 SHA256 永远从实际 EXE 计算，禁止手填。
+输入必须是一次真实 PyInstaller 构建出的 EXE。脚本会生成稳定 ASCII 主资产
+``release/HAM.exe``、旧客户端兼容副本 ``release/HAM点名助手.exe``、GitHub
+上传用的 ASCII 兼容副本 ``release/HAM-legacy.exe``、
+``release/SHA256SUMS.txt``，并原子刷新 ``updates/latest.json``。
+三个 EXE 必须是完全相同的二进制内容；清单中的 SHA256 永远从实际 EXE 计算，禁止手填。
 """
 from __future__ import annotations
 
@@ -24,6 +26,10 @@ DEFAULT_RELEASE_DIR = ROOT / "release"
 # CI 在 Release 附件上传前显式传入 updates/latest.json，随后上传成功后才推送 main。
 DEFAULT_MANIFEST = DEFAULT_RELEASE_DIR / "latest.json"
 RELEASE_ASSET_NAME = "HAM.exe"
+LEGACY_RELEASE_ASSET_NAME = "HAM点名助手.exe"
+# GitHub Release API 会把非 ASCII 上传文件名归一化为 HAM.exe。使用独立的
+# ASCII 物理名并设置中文 label，才能同时保留主资产和旧客户端可匹配的中文 label。
+GITHUB_LEGACY_UPLOAD_ASSET_NAME = "HAM-legacy.exe"
 CHECKSUM_ASSET_NAME = "SHA256SUMS.txt"
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -80,8 +86,23 @@ def prepare_release(
         shutil.copy2(exe_path, release_exe)
     digest = sha256_file(release_exe)
 
+    # v0.9.2/v0.9.3 的 updater 只接受中文 name/label 和中文 checksum 行。
+    # GitHub API 会把非 ASCII 上传名归一化为 HAM.exe，因此本地同时保留中文
+    # 兼容副本和一个 ASCII 物理上传副本；工作流会给后者设置中文 label。
+    legacy_release_exe = release_dir / LEGACY_RELEASE_ASSET_NAME
+    shutil.copy2(release_exe, legacy_release_exe)
+    github_legacy_release_exe = release_dir / GITHUB_LEGACY_UPLOAD_ASSET_NAME
+    shutil.copy2(release_exe, github_legacy_release_exe)
+    for compatibility_exe in (legacy_release_exe, github_legacy_release_exe):
+        if sha256_file(compatibility_exe) != digest:
+            raise RuntimeError("主资产和旧客户端兼容资产的 SHA256 不一致")
+
     checksum_path = release_dir / CHECKSUM_ASSET_NAME
-    _atomic_write_text(checksum_path, f"{digest}  {RELEASE_ASSET_NAME}\n")
+    _atomic_write_text(
+        checksum_path,
+        f"{digest}  {RELEASE_ASSET_NAME}\n"
+        f"{digest}  {LEGACY_RELEASE_ASSET_NAME}\n",
+    )
 
     release_base = f"https://github.com/{REPOSITORY}/releases"
     manifest = {

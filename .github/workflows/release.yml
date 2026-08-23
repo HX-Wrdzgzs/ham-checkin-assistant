@@ -53,11 +53,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ github.ref_name }}"
+          # GitHub API 会把非 ASCII 文件名归一化为 HAM.exe；ASCII 物理名
+          # + 中文 label 仍能被 v0.9.2/v0.9.3 的 name/label 解析器识别。
+          $legacyAsset = "release/HAM-legacy.exe#HAM点名助手.exe"
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag release/HAM.exe release/SHA256SUMS.txt --clobber
+            gh release upload $tag release/HAM.exe $legacyAsset release/SHA256SUMS.txt --clobber
           } else {
-            gh release create $tag release/HAM.exe release/SHA256SUMS.txt --title $tag --generate-notes
+            gh release create $tag release/HAM.exe $legacyAsset release/SHA256SUMS.txt --title $tag --generate-notes
           }
 
       - name: Publish stable update manifest to main

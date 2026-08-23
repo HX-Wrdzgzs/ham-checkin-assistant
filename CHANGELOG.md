@@ -50,9 +50,9 @@
 
 ### 自动更新与发布
 
-- 正式 Release 附件统一使用 `HAM.exe`，客户端同时兼容旧版 `HAM点名助手.exe` / 中文 label。
+- 正式 Release 保留 `HAM.exe` 主资产，并额外上传与其 byte-for-byte 相同的兼容资产；由于 GitHub 会归一化非 ASCII 物理文件名，兼容资产使用 `HAM-legacy.exe` 作为物理名、`HAM点名助手.exe` 作为显示 label，旧客户端仍可按中文 label 识别。
 - 稳定备用清单迁移到 `main/updates/latest.json`，并继续读取旧 `codex/ham-checkin-release` 清单作为过渡兼容。
-- 新增 `release.py`：从真实 PyInstaller EXE 计算 SHA256，生成 `HAM.exe`、`SHA256SUMS.txt` 和更新清单，禁止手填散列值。
+- 新增 `release.py`：从真实 PyInstaller EXE 计算 SHA256，生成 `HAM.exe`、中文兼容副本、ASCII 兼容上传副本、双条目 `SHA256SUMS.txt` 和更新清单，禁止手填散列值。
 - 新增 GitHub Actions Tag 发布流程：完整测试 → 构建 EXE → 生成真实 SHA256 → 创建/刷新 Release → 回写 main 清单，并同步旧分支清单帮助 0.9.2/0.9.3 客户端跨版本升级。
 
 ### 稳定性与验证

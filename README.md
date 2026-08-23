@@ -89,14 +89,14 @@ Space 模式专门照顾只录呼号的高频点名：输入一个有效呼号�
 
 ## 自动更新与 Release
 
-最新版发布在 [GitHub Releases](https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/latest)。Release 附件统一为单文件 `HAM.exe`，不需要 `_internal` 文件夹；自动更新安装后仍会替换用户当前正在使用的程序文件，不要求用户改变快捷方式。
+最新版发布在 [GitHub Releases](https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/latest)。Release 的主附件是单文件 `HAM.exe`，同时发布完全相同的旧版兼容附件；GitHub 的物理下载名为 `HAM-legacy.exe`、显示 label 为 `HAM点名助手.exe`（GitHub 会将非 ASCII 上传文件名归一化），不需要 `_internal` 文件夹；自动更新安装后仍会替换用户当前正在使用的程序文件，不要求用户改变快捷方式。
 
 - 发布版 EXE 启动约 1.5 秒后在后台检查最新稳定 Release，网络请求不会阻塞快速录入窗口。
-- 发现新版本后会先询问；确认后下载 `HAM.exe`（同时兼容旧 Release 的 `HAM点名助手.exe`），并用 Release 中的 `SHA256SUMS.txt` 校验，校验失败不会修改当前软件。
+- 发现新版本后会先询问；确认后下载 `HAM.exe`（同时兼容旧 Release 的中文 label/`HAM点名助手.exe`），并用 Release 中同时列出两个文件名的 `SHA256SUMS.txt` 校验，校验失败不会修改当前软件。
 - 如果下载内容遇到 CDN 瞬态异常导致校验不一致，会清理临时文件并绕过缓存重试，最多尝试 3 次；连续失败才提示错误。
 - 下载完成后，更新程序等待当前 EXE 正常退出，再替换并重新启动；运行数据位于 `%LOCALAPPDATA%\HAM点名助手\`，不依赖 EXE 所在目录，也不会被更新包覆盖。
 - GitHub API 暂时限流时会读取 `main/updates/latest.json` 稳定更新清单；0.9.2/0.9.3 使用过的 `codex/ham-checkin-release` 清单会在正式 Release 时同步刷新，帮助旧客户端完成一次跨版本升级。两条路径都不可用时只跳过本次检查，本地点名、Excel 和 SQLite 不受影响。也可以从托盘菜单点击“检查更新”。
-- 发布流程由 `.github/workflows/release.yml` 自动执行：推送与 `version.py` 一致的 `vX.Y.Z` Tag 后，会先跑完整测试，再构建单文件 EXE、生成真实 SHA256、创建/刷新 GitHub Release，并自动把最新清单写回 `main/updates/latest.json`。无需手工填写 SHA256。
+- 发布流程由 `.github/workflows/release.yml` 自动执行：推送与 `version.py` 一致的 `vX.Y.Z` Tag 后，会先跑完整测试，再构建单文件 EXE、生成主/兼容完全相同的附件（兼容附件使用 ASCII 物理名 + 中文 label）、生成双条目真实 SHA256、创建/刷新 GitHub Release，并自动把最新清单写回 `main/updates/latest.json`。无需手工填写 SHA256。
 - 用 `python app.py` 源码运行时不自动替换 Python 源码；托盘中的“检查更新”仍可打开 Release 页面。
 
 如果 Windows SmartScreen 第一次提示未知发布者，请先确认文件来自上面的 Release 页面，并核对发布页的 SHA256 校验文件；不要从其他链接下载同名 EXE。
