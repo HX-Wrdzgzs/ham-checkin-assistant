@@ -19,6 +19,16 @@ from services.monitor_service import (
 RAW_OK = "20:00 BG4TKI 南京栖霞 K6 | 20:01 BA4XXX 徐州鼓楼 | noise"
 
 
+def _wait_until(predicate, timeout=5.0, interval=0.02):
+    """按条件等待后台线程，避免用固定 sleep 猜测 CI 调度时序。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return bool(predicate())
+
+
 class _Resp:
     def __init__(self, text="", status=200, headers=None):
         self.text = text
@@ -85,7 +95,13 @@ class TestMonitorService(unittest.TestCase):
         svc.on_candidates = lambda c: cands.append(c)
         try:
             svc.start()
-            time.sleep(0.5)
+            self.assertTrue(
+                _wait_until(
+                    lambda: ONLINE in states and any("BG4TKI" in c for c in cands),
+                    timeout=3.0,
+                ),
+                "监听线程应进入 online 并回调候选呼号",
+            )
         finally:
             svc.stop()
         self.assertEqual(svc.state, OFFLINE, "stop 后必须回到 offline")
@@ -103,7 +119,10 @@ class TestMonitorService(unittest.TestCase):
         svc.on_state = lambda s, m: states.append(s)
         try:
             svc.start()
-            time.sleep(1.6)  # degraded(~0s) → 等 1s → error(~1.1s)
+            self.assertTrue(
+                _wait_until(lambda: ERROR in states, timeout=4.0),
+                "重试耗尽后应进入 error",
+            )
         finally:
             svc.stop()
         self.assertIn(DEGRADED, states, "超时应先 degraded（重试阈值内）")
@@ -116,7 +135,10 @@ class TestMonitorService(unittest.TestCase):
         svc.on_state = lambda s, m: states.append(s)
         try:
             svc.start()
-            time.sleep(0.6)
+            self.assertTrue(
+                _wait_until(lambda: any(s in (DEGRADED, ERROR) for s in states), timeout=3.0),
+                "连接重置必须进入 degraded/error",
+            )
         finally:
             svc.stop()
         self.assertTrue(any(s in (DEGRADED, ERROR) for s in states),
@@ -151,7 +173,7 @@ class TestMonitorService(unittest.TestCase):
         svc = self._svc({"ok": True, "raw": "BG4TKI", "candidates": ["BG4TKI"],
                          "error": ""})
         svc.start()
-        time.sleep(0.3)
+        self.assertTrue(_wait_until(lambda: svc.state == ONLINE, timeout=3.0))
         svc.stop()  # 模拟 app.aboutToQuit → release → service.close 路径
         self.assertEqual(svc.state, OFFLINE)
 

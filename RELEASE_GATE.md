@@ -25,7 +25,7 @@ STATUS: PRODUCTION_READY
 |---|---|---|
 | ruff PASS | `python -m ruff check .` | All checks passed! |
 | compile PASS | `python -m compileall -q app.py build.py ... version.py` | 无输出（0） |
-| unit PASS | 测试加载器确认 247 项；按文件分 4 批执行 | 47 + 67 + 42 + 91 = 247 tests OK |
+| unit PASS | Python 3.13 / 3.14 单进程完整测试 | 248 tests OK |
 | regression PASS | 同上（含 regression 包） | OK |
 | migration PASS | `tests.regression.test_migrations`（v1→latest / v2→latest / latest→latest / v10 FK+CHECK / 非破坏性 / 报告留痕） | 16 OK |
 
@@ -49,7 +49,7 @@ STATUS: PRODUCTION_READY
 | DB invariant | `test_db_constraints` + `test_migrations`（序号唯一、source_record 去重、FK、CHECK、迁移计数不变） | OK |
 | realistic 150-record net-control simulation | `TestPerformance.test_150_commits`（连续 150 条录入，序号连续、性能阈值内） | OK |
 
-汇总：测试加载器确认当前仓库共 **247** 项；因单次长任务经 Codex 桥接器会返回 502，按测试文件拆成 4 批执行（47 + 67 + 42 + 91），**247 tests 全部 OK**。
+汇总：当前仓库共 **248** 项测试；已分别在 Python 3.13 与 3.14 下用 CI 同款单进程 `unittest discover` 完整执行，**248 tests 全部 OK**。
 
 ## 3. 需要真机/人工的 Gate（非 CI 可自动化）
 
@@ -69,7 +69,7 @@ STATUS: PRODUCTION_READY
 
 ## 5. 结论
 
-所有可自动化 Gate 均有通过证据（247 tests + ruff + compile）；当前源码已在本机用 PyInstaller 6.22.0 真构建，并由 `release.py` 从实际 EXE 生成可发布 SHA256 元数据。real Excel COM 仍需在有 Excel 的环境执行，其逻辑路径已由 Mock/保护测试覆盖。
+所有可自动化 Gate 均有通过证据（248 tests + ruff + compile）；当前源码已在本机用 PyInstaller 6.22.0 真构建，并由 `release.py` 从实际 EXE 生成可发布 SHA256 元数据。real Excel COM 仍需在有 Excel 的环境执行，其逻辑路径已由 Mock/保护测试覆盖。
 
 ```
 STATUS: PRODUCTION_READY
