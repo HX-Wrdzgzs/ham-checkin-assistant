@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import io
 import shutil
 import tempfile
 import unittest
@@ -181,7 +182,11 @@ class TestDeployProtection(unittest.TestCase):
                 raise PermissionError("simulated running old process")
             return real_unlink(path, missing_ok=missing_ok)
 
-        with patch.object(Path, "unlink", autospec=True, side_effect=lock_old):
+        cp1252_stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+        with (
+            patch.object(Path, "unlink", autospec=True, side_effect=lock_old),
+            patch("sys.stdout", cp1252_stdout),
+        ):
             ok = deploy_program(src, target, self.tmp / "dep_bak")
 
         self.assertTrue(ok, "旧备份暂时不能删除不应否定已完成的新 EXE 切换")
