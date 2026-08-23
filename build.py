@@ -29,6 +29,16 @@ DEPLOY_BAK = ROOT / "build" / f"{NAME}_deploy_bak"
 _RUNTIME = ("data", "logs", "backup", "config.json")
 
 
+def _safe_console_print(*values) -> None:
+    """在非 UTF-8 控制台中也安全输出中文提示。"""
+    text = " ".join(str(value) for value in values)
+    stream = sys.stdout
+    encoding = getattr(stream, "encoding", None)
+    if encoding:
+        text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    print(text, file=stream)
+
+
 def backup_runtime(root: Path = LEGACY_DIST, bak: Path = BAK) -> None:
     """备份指定目录下的运行时数据。"""
     if not root.exists():
@@ -180,7 +190,7 @@ def deploy_program(src_exe: Path, target_exe: Path, runtime_bak: Path) -> bool:
             # 旧版进程仍在运行时，Windows 可能暂时不允许删除备份文件。
             # 新 EXE 已经完成原子切换，保留 .old.exe 比把一次成功部署误报成失败更安全；
             # 下一次构建或用户退出旧进程后再清理即可。
-            print("旧版 EXE 仍被使用，暂时保留备份:", target_old)
+            _safe_console_print("旧版 EXE 仍被使用，暂时保留备份:", target_old)
     return True
 
 
@@ -198,7 +208,7 @@ def build_exe() -> int:
         # 不打包进内部，避免写入临时解压目录或安装目录导致数据丢失。
         "app.py",
     ]
-    print("Running:", " ".join(cmd))
+    _safe_console_print("Running:", " ".join(cmd))
     return subprocess.call(cmd)
 
 
@@ -218,17 +228,17 @@ def main() -> int:
                 legacy_root = dl / NAME
                 if migrate_legacy_runtime(legacy_root, dl):
                     if remove_legacy_program(legacy_root):
-                        print("已移除不含运行数据的旧文件夹版:", legacy_root)
+                        _safe_console_print("已移除不含运行数据的旧文件夹版:", legacy_root)
                     elif legacy_root.exists():
-                        print("旧文件夹版含运行数据，已保留:", legacy_root)
+                        _safe_console_print("旧文件夹版含运行数据，已保留:", legacy_root)
                 else:
-                    print("旧文件夹版运行数据迁移失败，已保留旧目录:", legacy_root)
+                    _safe_console_print("旧文件夹版运行数据迁移失败，已保留旧目录:", legacy_root)
                     return 1
             else:
-                print("单文件 EXE 部署失败，未覆盖现有程序。")
+                _safe_console_print("单文件 EXE 部署失败，未覆盖现有程序。")
                 return 1
         else:
-            print("未找到下载文件夹，跳过部署:", dl)
+            _safe_console_print("未找到下载文件夹，跳过部署:", dl)
     return code
 
 
