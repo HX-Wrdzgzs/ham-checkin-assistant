@@ -558,13 +558,15 @@ class MainWindow(QMainWindow):
             self._quit()
 
     def _prompt_update(self, release) -> None:
-        from services.update_service import can_self_update
+        from services.update_service import can_self_update, release_display_version
+
+        display_version = release_display_version(release)
 
         if not release.expected_sha256:
             answer = QMessageBox.question(
                 self,
                 "发现新版本",
-                f"发现新版本 {release.version}，但该 Release 没有 SHA256 校验文件。\n"
+                f"发现新版本 {display_version}，但该 Release 没有 SHA256 校验文件。\n"
                 "为保护本地程序，自动安装已停用，是否打开发布页手动查看？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes,
@@ -578,7 +580,7 @@ class MainWindow(QMainWindow):
             answer = QMessageBox.question(
                 self,
                 "发现新版本",
-                f"发现新版本 {release.version}。当前为源码运行，不能自动替换 EXE，\n"
+                f"发现新版本 {display_version}。当前为源码运行，不能自动替换 EXE，\n"
                 "是否打开 GitHub 发布页？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes,
@@ -594,7 +596,7 @@ class MainWindow(QMainWindow):
         box.setWindowTitle("发现新版本")
         box.setText(
             f"当前版本：{__version__}\n"
-            f"最新版本：{release.version}\n\n"
+            f"最新版本：{display_version}\n\n"
             "是否下载并自动安装？安装时不会覆盖本地数据库、备份和配置。"
         )
         notes = (release.release_notes or "").strip()

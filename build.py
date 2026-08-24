@@ -13,10 +13,14 @@
 """
 from __future__ import annotations
 
+import argparse
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 NAME = "HAM点名助手"
@@ -27,6 +31,9 @@ LEGACY_DIST = DIST_ROOT / NAME
 BAK = ROOT / "build" / f"{NAME}_databak"
 DEPLOY_BAK = ROOT / "build" / f"{NAME}_deploy_bak"
 _RUNTIME = ("data", "logs", "backup", "config.json")
+_VERSION_OVERRIDE_RE = re.compile(
+    r"^(?:\d+\.\d+\.\d+|HX-HAM-\d+\.\d+\.\d+)$"
+)
 
 
 def _safe_console_print(*values) -> None:
@@ -194,8 +201,28 @@ def deploy_program(src_exe: Path, target_exe: Path, runtime_bak: Path) -> bool:
     return True
 
 
-def build_exe() -> int:
-    """运行 PyInstaller，返回退出码。"""
+def _write_build_version(version_override: str) -> Path:
+    """创建只供本次 PyInstaller 构建携带版本文件的临时目录。"""
+    version_override = str(version_override or "").strip()
+    if not _VERSION_OVERRIDE_RE.fullmatch(version_override):
+        raise ValueError(f"非法构建版本：{version_override!r}")
+    build_root = ROOT / "build"
+    build_root.mkdir(parents=True, exist_ok=True)
+    version_root = Path(tempfile.mkdtemp(prefix="ham-build-version-", dir=build_root))
+    path = version_root / "build_version.json"
+    try:
+        with path.open("w", encoding="utf-8", newline="\n") as stream:
+            json.dump({"version": version_override}, stream, ensure_ascii=False)
+            stream.write("\n")
+    except BaseException:
+        shutil.rmtree(version_root, ignore_errors=True)
+        raise
+    return version_root
+
+
+def build_exe(version_override: str | None = None) -> int:
+    """运行 PyInstaller，返回退出码；可为测试构建嵌入明确版本。"""
+    version_root = None
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
@@ -208,15 +235,25 @@ def build_exe() -> int:
         # 不打包进内部，避免写入临时解压目录或安装目录导致数据丢失。
         "app.py",
     ]
-    _safe_console_print("Running:", " ".join(cmd))
-    return subprocess.call(cmd)
+    try:
+        if version_override is not None:
+            version_root = _write_build_version(version_override)
+            # 清理 PyInstaller 缓存，确保同名 EXE 的测试版本不会复用旧的
+            # PYZ/数据目录；清理范围由 PyInstaller 控制，不涉及用户运行数据。
+            cmd.insert(3, "--clean")
+            cmd.extend(["--add-data", f"{version_root};."])
+        _safe_console_print("Running:", " ".join(cmd))
+        return subprocess.call(cmd)
+    finally:
+        if version_root is not None:
+            shutil.rmtree(version_root, ignore_errors=True)
 
 
-def main() -> int:
+def main(version_override: str | None = None) -> int:
     backup_runtime()
     code = -1  # P3：异常路径下 code 也必有值，杜绝 UnboundLocalError
     try:
-        code = build_exe()
+        code = build_exe(version_override)
     finally:
         # build 失败也必须恢复 runtime（任务书第一阶段 #2）
         restore_runtime()
@@ -243,4 +280,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    parser = argparse.ArgumentParser(description="构建 HAM 点名助手单文件 EXE")
+    parser.add_argument(
+        "--version",
+        dest="version_override",
+        help="为本次构建嵌入版本，例如 HX-HAM-0.0.2；不填则使用稳定版本",
+    )
+    sys.exit(main(parser.parse_args().version_override))

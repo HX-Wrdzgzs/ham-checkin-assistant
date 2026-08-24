@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from build import (
     backup_runtime,
+    _write_build_version,
     deploy_program,
     migrate_legacy_runtime,
     remove_legacy_program,
@@ -42,6 +43,19 @@ class TestBuildProtection(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_test_build_version_file_uses_fixed_packaged_name(self):
+        """测试版临时目录内的文件名必须固定，冻结后才能被 version.py 找到。"""
+        import build
+
+        with patch.object(build, "ROOT", self.tmp):
+            version_root = _write_build_version("HX-HAM-0.0.2")
+        try:
+            version_file = version_root / "build_version.json"
+            self.assertEqual(version_file.read_text(encoding="utf-8").strip(),
+                             '{"version": "HX-HAM-0.0.2"}')
+        finally:
+            shutil.rmtree(version_root, ignore_errors=True)
 
     def test_build_preserves_database(self):
         dist = _make_runtime(self.tmp / "dist")

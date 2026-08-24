@@ -21,16 +21,16 @@ class TestUiSmoke(unittest.TestCase):
         dialog = AboutDialog()
         release = ReleaseInfo(
             version="0.9.5",
-            tag_name="v0.9.5",
-            html_url="https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/v0.9.5",
-            download_url="https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v0.9.5/HAM.exe",
+            tag_name="HX-HAM-0.9.5",
+            html_url="https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/HX-HAM-0.9.5",
+            download_url="https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/HX-HAM-0.9.5/HAM.exe",
             expected_sha256="a" * 64,
             release_notes="新增版本信息窗口和更新说明。",
             published_at="2026-08-24T00:00:00Z",
         )
         try:
             dialog.set_release(release)
-            self.assertIn("0.9.5", dialog.cloud_version_label.text())
+            self.assertIn("HX-HAM-0.9.5", dialog.cloud_version_label.text())
             self.assertIn("有新版本可用", dialog.cloud_version_label.text())
             self.assertIn("新增版本信息窗口", dialog.notes_browser.toPlainText())
             self.assertTrue(dialog.release_button.isEnabled())

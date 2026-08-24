@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from services.update_service import ReleaseInfo, version_key
+from services.update_service import ReleaseInfo, release_display_version, version_key
 from version import __version__
 
 PROJECT_URL = "https://github.com/HX-Wrdzgzs/ham-checkin-assistant"
@@ -131,7 +131,8 @@ class AboutDialog(QDialog):
         except Exception:  # noqa: BLE001
             is_newer = False
         suffix = "（有新版本可用）" if is_newer else "（当前已是最新）"
-        self.cloud_version_label.setText(f"云端最新版本：{release.version} {suffix}")
+        display_version = release_display_version(release)
+        self.cloud_version_label.setText(f"云端最新版本：{display_version} {suffix}")
         published = release.published_at[:10] if release.published_at else ""
         source = f"GitHub Release {release.tag_name}"
         if published:

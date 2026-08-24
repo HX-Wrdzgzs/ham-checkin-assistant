@@ -19,7 +19,7 @@ import re
 import shutil
 from pathlib import Path
 
-from version import __version__
+from version import __version_number__
 
 REPOSITORY = "HX-Wrdzgzs/ham-checkin-assistant"
 ROOT = Path(__file__).resolve().parent
@@ -64,8 +64,18 @@ def _changelog_notes(version: str, changelog_path: Path = ROOT / "CHANGELOG.md")
     if not changelog_path.is_file():
         return ""
     text = changelog_path.read_text(encoding="utf-8")
-    heading = re.compile(rf"^##\s+{re.escape(version)}(?:\s|\(|$)", re.MULTILINE)
-    match = heading.search(text)
+    headings = (
+        re.compile(rf"^##\s+{re.escape(version)}(?:\s|\(|$)", re.MULTILINE),
+        re.compile(
+            rf"^##\s+{re.escape(TEST_RELEASE_PREFIX + version)}(?:\s|\(|$)",
+            re.MULTILINE,
+        ),
+    )
+    match = None
+    for heading in headings:
+        match = heading.search(text)
+        if match is not None:
+            break
     if match is None:
         return ""
     rest = text[match.end():]
@@ -83,7 +93,7 @@ def _tag_matches_version(tag_name: str, version: str) -> bool:
 def prepare_release(
     exe_path: Path = DEFAULT_EXE,
     *,
-    version: str = __version__,
+    version: str = __version_number__,
     tag_name: str | None = None,
     release_dir: Path = DEFAULT_RELEASE_DIR,
     manifest_path: Path = DEFAULT_MANIFEST,
@@ -152,7 +162,7 @@ def prepare_release(
 def main() -> int:
     parser = argparse.ArgumentParser(description="准备 HAM 点名助手 GitHub Release 产物")
     parser.add_argument("--exe", type=Path, default=DEFAULT_EXE)
-    parser.add_argument("--version", default=__version__)
+    parser.add_argument("--version", default=__version_number__)
     parser.add_argument("--tag", default=None)
     parser.add_argument("--release-dir", type=Path, default=DEFAULT_RELEASE_DIR)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)

@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from PySide6.QtCore import QThread, Signal
 
@@ -28,6 +28,15 @@ from version import __version__
 
 REPOSITORY = "HX-Wrdzgzs/ham-checkin-assistant"
 LATEST_API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+TEST_RELEASE_PREFIX = "HX-HAM-"
+TEST_RELEASE_API_URL = (
+    f"https://api.github.com/repos/{REPOSITORY}/releases/tags/"
+    "{tag_name}"
+)
+TEST_RELEASE_MANIFEST_URL = (
+    f"https://github.com/{REPOSITORY}/releases/download/"
+    "{tag_name}/latest.json"
+)
 FALLBACK_MANIFEST_URL = (
     "https://raw.githubusercontent.com/"
     f"{REPOSITORY}/main/updates/latest.json"
@@ -68,6 +77,33 @@ def version_key(value: str) -> tuple[int, int, int]:
     if match is None:
         raise UpdateError(f"无法识别版本号：{value!r}")
     return tuple(int(part) for part in match.groups())
+
+
+def _is_test_version(value: str) -> bool:
+    return bool(re.fullmatch(
+        rf"{re.escape(TEST_RELEASE_PREFIX)}\d+\.\d+\.\d+",
+        str(value or "").strip(),
+    ))
+
+
+def release_display_version(release: ReleaseInfo) -> str:
+    """返回适合界面展示的版本；测试版保留 HX-HAM 前缀。"""
+    tag_name = str(release.tag_name or "").strip()
+    if tag_name.startswith("v"):
+        return tag_name[1:]
+    return tag_name or release.version
+
+
+def _update_urls(current_version: str) -> tuple[str, tuple[str, ...]]:
+    """按本地版本选择稳定 Release 或同 tag 测试 Release。"""
+    current_version = str(current_version or "").strip()
+    if _is_test_version(current_version):
+        tag_name = quote(current_version, safe="")
+        return (
+            TEST_RELEASE_API_URL.format(tag_name=tag_name),
+            (TEST_RELEASE_MANIFEST_URL.format(tag_name=tag_name),),
+        )
+    return LATEST_API_URL, (FALLBACK_MANIFEST_URL, LEGACY_FALLBACK_MANIFEST_URL)
 
 
 def _allowed_release_url(url: str) -> bool:
@@ -134,8 +170,9 @@ def check_latest_release(
     timeout: float = 5.0,
     opener=None,
 ) -> ReleaseInfo | None:
-    """查询最新稳定 Release；没有更新时返回 None。"""
-    release = fetch_latest_release(timeout=timeout, opener=opener)
+    """查询当前版本所在通道的 Release；没有更新时返回 None。"""
+    release = fetch_latest_release(
+        current_version=current_version, timeout=timeout, opener=opener)
     if version_key(release.version) <= version_key(current_version):
         return None
     return release
@@ -143,27 +180,31 @@ def check_latest_release(
 
 def fetch_latest_release(
     *,
+    current_version: str = __version__,
     timeout: float = 5.0,
     opener=None,
 ) -> ReleaseInfo:
-    """读取最新稳定 Release，即使它与本地版本相同也返回元数据。
+    """读取当前版本通道的 Release，即使它与本地版本相同也返回元数据。
 
     自动更新只需要知道“是否更高”，而“关于 / 版本”页面还需要显示
     云端当前版本和 Release 正文，因此这两个场景必须使用不同的语义。
+    稳定版使用 GitHub 的 latest API；HX-HAM 测试版使用精确 tag API，
+    不会因为 GitHub 的 latest API 排除预发布而误读稳定版。
     """
+    api_url, manifest_urls = _update_urls(current_version)
     try:
         raw = _read_url(
-            LATEST_API_URL,
+            api_url,
             timeout=timeout,
             accept="application/vnd.github+json",
             opener=opener,
         )
         return _release_from_api_payload(raw, timeout=timeout, opener=opener)
     except UpdateError as api_error:
-        # GitHub 未认证 API 有公共限流；稳定清单固定在 main。旧开发分支地址仅为
-        # 兼容已经发布出去的过渡版本，main 可用后不会依赖开发分支。
+        # GitHub 未认证 API 有公共限流。测试通道只回退到同一个 tag 的
+        # Release 附件 latest.json，绝不回退到稳定清单。
         manifest_errors = []
-        for manifest_url in (FALLBACK_MANIFEST_URL, LEGACY_FALLBACK_MANIFEST_URL):
+        for manifest_url in manifest_urls:
             try:
                 manifest_raw = _read_url(
                     manifest_url,

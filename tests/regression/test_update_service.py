@@ -13,6 +13,7 @@ from services.update_service import (
     check_latest_release,
     download_update,
     fetch_latest_release,
+    release_display_version,
     version_key,
 )
 
@@ -146,6 +147,70 @@ class TestUpdateService(unittest.TestCase):
         release = fetch_latest_release(opener=_Opener(values))
         self.assertEqual(release.version, "0.9.2")
         self.assertEqual(release.release_notes, "修复识别和数据保存问题。")
+
+    def test_test_version_queries_exact_tag_and_keeps_test_display_name(self):
+        tag_name = "HX-HAM-0.0.2"
+        api_url = (
+            "https://api.github.com/repos/HX-Wrdzgzs/ham-checkin-assistant/"
+            f"releases/tags/{tag_name}"
+        )
+        exe_url = (
+            "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/"
+            f"releases/download/{tag_name}/HAM.exe"
+        )
+        checksum_url = (
+            "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/"
+            f"releases/download/{tag_name}/{CHECKSUM_ASSET_NAME}"
+        )
+        payload = {
+            "tag_name": tag_name,
+            "html_url": f"https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/{tag_name}",
+            "body": "测试版修复版本显示和更新通道。",
+            "assets": [
+                {"name": "HAM.exe", "browser_download_url": exe_url},
+                {"name": CHECKSUM_ASSET_NAME, "browser_download_url": checksum_url},
+            ],
+        }
+        values = {
+            api_url: json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            checksum_url: b"a" * 64 + b"  HAM.exe\n",
+        }
+        opener = _Opener(values)
+        release = fetch_latest_release(current_version=tag_name, opener=opener)
+        self.assertEqual(opener.urls[0], api_url)
+        self.assertEqual(release.tag_name, tag_name)
+        self.assertEqual(release.version, "0.0.2")
+        self.assertEqual(release_display_version(release), tag_name)
+        self.assertEqual(release.release_notes, "测试版修复版本显示和更新通道。")
+
+    def test_test_version_falls_back_only_to_same_tag_manifest(self):
+        tag_name = "HX-HAM-0.0.2"
+        api_url = (
+            "https://api.github.com/repos/HX-Wrdzgzs/ham-checkin-assistant/"
+            f"releases/tags/{tag_name}"
+        )
+        manifest_url = (
+            "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/"
+            f"releases/download/{tag_name}/latest.json"
+        )
+        manifest = {
+            "version": "0.0.2",
+            "tag_name": tag_name,
+            "html_url": f"https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/{tag_name}",
+            "download_url": f"https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/{tag_name}/HAM.exe",
+            "sha256": "b" * 64,
+            "release_notes": "测试版备用清单说明。",
+        }
+        with mock.patch(
+            "services.update_service._read_url",
+            side_effect=[UpdateError("test API unavailable"),
+                         json.dumps(manifest, ensure_ascii=False).encode("utf-8")],
+        ) as read_url:
+            release = fetch_latest_release(current_version=tag_name)
+        self.assertEqual(read_url.call_args_list[0].args[0], api_url)
+        self.assertEqual(read_url.call_args_list[1].args[0], manifest_url)
+        self.assertEqual(release.tag_name, tag_name)
+        self.assertEqual(release.release_notes, "测试版备用清单说明。")
 
     def test_download_update_verifies_sha256(self):
         exe = b"verified-exe-content"
