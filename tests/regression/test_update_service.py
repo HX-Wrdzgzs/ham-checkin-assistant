@@ -12,6 +12,7 @@ from services.update_service import (
     UpdateError,
     check_latest_release,
     download_update,
+    fetch_latest_release,
     version_key,
 )
 
@@ -136,6 +137,15 @@ class TestUpdateService(unittest.TestCase):
     def test_check_latest_release_returns_none_when_current(self):
         _payload, values = _release_payload("0.9.2", "0" * 64)
         self.assertIsNone(check_latest_release("0.9.2", opener=_Opener(values)))
+
+    def test_fetch_latest_release_returns_current_metadata_and_notes(self):
+        payload, values = _release_payload("0.9.2", "0" * 64)
+        payload["body"] = "修复识别和数据保存问题。"
+        api_url = "https://api.github.com/repos/HX-Wrdzgzs/ham-checkin-assistant/releases/latest"
+        values[api_url] = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        release = fetch_latest_release(opener=_Opener(values))
+        self.assertEqual(release.version, "0.9.2")
+        self.assertEqual(release.release_notes, "修复识别和数据保存问题。")
 
     def test_download_update_verifies_sha256(self):
         exe = b"verified-exe-content"

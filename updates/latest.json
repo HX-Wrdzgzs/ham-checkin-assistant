@@ -4,5 +4,6 @@
   "html_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/v0.9.4",
   "download_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v0.9.4/HAM.exe",
   "asset_name": "HAM.exe",
-  "sha256": "3fded59437d1fb7ac221b7ca553cdd326d99ab83c925ede25c37fce66c6306dc"
+  "sha256": "3fded59437d1fb7ac221b7ca553cdd326d99ab83c925ede25c37fce66c6306dc",
+  "release_notes": "本版本改进现场设备与天线识别、未识别内容保留、快速点名和 Excel 后台保存；同时完善单文件 EXE、运行数据目录迁移与 GitHub 自动更新兼容性。"
 }

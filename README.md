@@ -99,6 +99,27 @@ Space 模式专门照顾只录呼号的高频点名：输入一个有效呼号�
 - 发布流程由 `.github/workflows/release.yml` 自动执行：推送与 `version.py` 一致的 `vX.Y.Z` Tag 后，会先跑完整测试，再构建单文件 EXE、生成主/兼容完全相同的附件（兼容附件使用 ASCII 物理名 + 中文 label）、生成双条目真实 SHA256、创建/刷新 GitHub Release，并自动把最新清单写回 `main/updates/latest.json`。无需手工填写 SHA256。
 - 用 `python app.py` 源码运行时不自动替换 Python 源码；托盘中的“检查更新”仍可打开 Release 页面。
 
+## 关于、版本与支持
+
+软件顶部的“关于 / 版本”以及托盘菜单中的同名入口会显示：
+
+- 当前运行版本（本地版本）；
+- GitHub Release 返回的云端最新版本；
+- 当前 Release 的更新说明和发布日期；
+- GitHub 项目地址、完整 Release 页面和自愿赞助入口。
+
+版本信息通过公开 GitHub Release 查询，查询失败不会影响本地点名、SQLite 或 Excel；
+也可以点击“刷新云端版本”再次查询。发现新版本时，更新对话框会先显示摘要，
+可以点击“查看更新说明”打开对应 Release，再决定是否下载更新。
+
+本软件持续免费使用，不设置因版本更新产生的功能收费。赞助完全自愿，不影响软件功能、
+自动更新、数据保存或后续使用：
+
+[自愿赞助支持作者](https://www.ifdian.net/a/wrdzgzs?utm_source=copylink&utm_medium=link)
+
+目前没有单独注册的官网，因此 GitHub 项目仓库就是官方发布地址。等以后确定稳定域名后，
+再把独立官网补到这里和软件的“关于 / 版本”页面，避免用户遇到多个未经确认的地址。
+
 如果 Windows SmartScreen 第一次提示未知发布者，请先确认文件来自上面的 Release 页面，并核对发布页的 SHA256 校验文件；不要从其他链接下载同名 EXE。
 
 ## 运行

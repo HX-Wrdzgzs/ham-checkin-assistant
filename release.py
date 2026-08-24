@@ -55,6 +55,22 @@ def _atomic_write_text(path: Path, text: str) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _changelog_notes(version: str, changelog_path: Path = ROOT / "CHANGELOG.md") -> str:
+    """提取指定版本的变更正文，供 API 限流时的备用清单展示。"""
+    if not changelog_path.is_file():
+        return ""
+    text = changelog_path.read_text(encoding="utf-8")
+    heading = re.compile(rf"^##\s+{re.escape(version)}(?:\s|\(|$)", re.MULTILINE)
+    match = heading.search(text)
+    if match is None:
+        return ""
+    rest = text[match.end():]
+    next_heading = re.search(r"^##\s+", rest, re.MULTILINE)
+    if next_heading is not None:
+        rest = rest[:next_heading.start()]
+    return rest.strip()
+
+
 def prepare_release(
     exe_path: Path = DEFAULT_EXE,
     *,
@@ -113,6 +129,9 @@ def prepare_release(
         "asset_name": RELEASE_ASSET_NAME,
         "sha256": digest,
     }
+    release_notes = _changelog_notes(version)
+    if release_notes:
+        manifest["release_notes"] = release_notes
     _atomic_write_text(
         manifest_path,
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",

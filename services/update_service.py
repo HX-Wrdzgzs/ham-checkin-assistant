@@ -58,6 +58,8 @@ class ReleaseInfo:
     html_url: str
     download_url: str
     expected_sha256: str | None
+    release_notes: str = ""
+    published_at: str = ""
 
 
 def version_key(value: str) -> tuple[int, int, int]:
@@ -133,6 +135,22 @@ def check_latest_release(
     opener=None,
 ) -> ReleaseInfo | None:
     """查询最新稳定 Release；没有更新时返回 None。"""
+    release = fetch_latest_release(timeout=timeout, opener=opener)
+    if version_key(release.version) <= version_key(current_version):
+        return None
+    return release
+
+
+def fetch_latest_release(
+    *,
+    timeout: float = 5.0,
+    opener=None,
+) -> ReleaseInfo:
+    """读取最新稳定 Release，即使它与本地版本相同也返回元数据。
+
+    自动更新只需要知道“是否更高”，而“关于 / 版本”页面还需要显示
+    云端当前版本和 Release 正文，因此这两个场景必须使用不同的语义。
+    """
     try:
         raw = _read_url(
             LATEST_API_URL,
@@ -140,7 +158,7 @@ def check_latest_release(
             accept="application/vnd.github+json",
             opener=opener,
         )
-        return _release_from_api_payload(raw, current_version, timeout=timeout, opener=opener)
+        return _release_from_api_payload(raw, timeout=timeout, opener=opener)
     except UpdateError as api_error:
         # GitHub 未认证 API 有公共限流；稳定清单固定在 main。旧开发分支地址仅为
         # 兼容已经发布出去的过渡版本，main 可用后不会依赖开发分支。
@@ -153,7 +171,7 @@ def check_latest_release(
                     accept="application/json",
                     opener=opener,
                 )
-                return _release_from_manifest(manifest_raw, current_version)
+                return _release_from_manifest(manifest_raw)
             except UpdateError as manifest_error:
                 manifest_errors.append(str(manifest_error))
         raise UpdateError(
@@ -163,11 +181,10 @@ def check_latest_release(
 
 def _release_from_api_payload(
     raw: bytes,
-    current_version: str,
     *,
     timeout: float,
     opener=None,
-) -> ReleaseInfo | None:
+) -> ReleaseInfo:
     """解析 GitHub API 的 latest release 响应。"""
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -178,8 +195,6 @@ def _release_from_api_payload(
 
     tag_name = str(payload.get("tag_name") or "")
     latest_version = version_key(tag_name)
-    if latest_version <= version_key(current_version):
-        return None
 
     assets = payload.get("assets")
     if not isinstance(assets, list):
@@ -206,10 +221,12 @@ def _release_from_api_payload(
         html_url=str(payload.get("html_url") or ""),
         download_url=download_url,
         expected_sha256=expected_sha256,
+        release_notes=str(payload.get("body") or "").strip(),
+        published_at=str(payload.get("published_at") or "").strip(),
     )
 
 
-def _release_from_manifest(raw: bytes, current_version: str) -> ReleaseInfo | None:
+def _release_from_manifest(raw: bytes) -> ReleaseInfo:
     """解析仓库公开备用清单，下载地址仍必须是 GitHub Release。"""
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -220,8 +237,6 @@ def _release_from_manifest(raw: bytes, current_version: str) -> ReleaseInfo | No
 
     version = str(payload.get("version") or payload.get("tag_name") or "")
     latest_version = version_key(version)
-    if latest_version <= version_key(current_version):
-        return None
     download_url = str(payload.get("download_url") or "")
     if not _allowed_release_url(download_url):
         raise UpdateError("备用清单下载地址不是受信任的 GitHub Release 地址")
@@ -236,6 +251,8 @@ def _release_from_manifest(raw: bytes, current_version: str) -> ReleaseInfo | No
         html_url=html_url,
         download_url=download_url,
         expected_sha256=expected_sha256,
+        release_notes=str(payload.get("release_notes") or payload.get("body") or "").strip(),
+        published_at=str(payload.get("published_at") or "").strip(),
     )
 
 
@@ -412,6 +429,9 @@ class UpdateWorker(QThread):
         try:
             if self.action == "check":
                 release = check_latest_release(opener=None)
+                self.result.emit({"action": self.action, "release": release})
+            elif self.action == "latest":
+                release = fetch_latest_release(opener=None)
                 self.result.emit({"action": self.action, "release": release})
             elif self.action == "download" and self.release is not None:
                 downloaded = download_update(

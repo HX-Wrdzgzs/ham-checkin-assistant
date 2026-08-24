@@ -12,6 +12,32 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 class TestUiSmoke(unittest.TestCase):
+    def test_about_dialog_shows_local_cloud_and_release_notes(self):
+        from PySide6.QtWidgets import QApplication
+        from services.update_service import ReleaseInfo
+        from ui.about_dialog import AboutDialog
+
+        app = QApplication.instance() or QApplication([])
+        dialog = AboutDialog()
+        release = ReleaseInfo(
+            version="0.9.5",
+            tag_name="v0.9.5",
+            html_url="https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/v0.9.5",
+            download_url="https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v0.9.5/HAM.exe",
+            expected_sha256="a" * 64,
+            release_notes="新增版本信息窗口和更新说明。",
+            published_at="2026-08-24T00:00:00Z",
+        )
+        try:
+            dialog.set_release(release)
+            self.assertIn("0.9.5", dialog.cloud_version_label.text())
+            self.assertIn("有新版本可用", dialog.cloud_version_label.text())
+            self.assertIn("新增版本信息窗口", dialog.notes_browser.toPlainText())
+            self.assertTrue(dialog.release_button.isEnabled())
+        finally:
+            dialog.deleteLater()
+            app.processEvents()
+
     def test_mainwindow_instantiates_with_all_tabs(self):
         from unittest import mock
         from PySide6.QtWidgets import QApplication

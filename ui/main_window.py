@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from services.app_service import AppService
 from ui.hotkey import GlobalHotkey
+from ui.about_dialog import AboutDialog
 from ui.pages import (
     HistoryPage, MonitorPage, SessionPage, SettingsPage, StationPage,
 )
@@ -102,10 +103,13 @@ class MainWindow(QMainWindow):
         self.btn_floating = QPushButton("悬浮窗")
         self.btn_floating.setCheckable(True)
         self.btn_floating.clicked.connect(self._toggle_floating)
+        self.btn_about = QPushButton("关于 / 版本")
+        self.btn_about.clicked.connect(self._show_about)
         top = QHBoxLayout()
         top.addWidget(self.session_lbl)
         top.addStretch()
         top.addWidget(self.btn_floating)
+        top.addWidget(self.btn_about)
         top.addWidget(self.btn_new_session)
         top.addWidget(self.btn_pick_session)
         top_w = QWidget(); top_w.setLayout(top)
@@ -121,6 +125,8 @@ class MainWindow(QMainWindow):
         self._workers = WorkerManager(service.settings, self)
         self._update_worker = None
         self._update_manual = False
+        self._about_worker = None
+        self._about_dialog = None
         self.history_page = HistoryPage(service, workers=self._workers)
         self.settings_page = SettingsPage(service)
         # NRL Nanny 只读监听（第四阶段）：点击候选填入快速录入框，绝不自动提交
@@ -165,8 +171,10 @@ class MainWindow(QMainWindow):
         act_main = QAction("打开主窗口", self); act_main.triggered.connect(self._show_main)
         act_update = QAction("检查更新", self); act_update.triggered.connect(
             lambda: self._start_update_check(manual=True))
+        act_about = QAction("关于 / 版本", self); act_about.triggered.connect(self._show_about)
         act_quit = QAction("退出", self); act_quit.triggered.connect(self._quit)
-        menu.addAction(act_show); menu.addAction(act_main); menu.addAction(act_update)
+        menu.addAction(act_show); menu.addAction(act_main); menu.addAction(act_about)
+        menu.addAction(act_update)
         menu.addSeparator(); menu.addAction(act_quit)
         self._tray.setContextMenu(menu)
         self._tray.setToolTip("江苏省中继点名助手")
@@ -437,6 +445,51 @@ class MainWindow(QMainWindow):
         # P1-3：统一 WorkerManager 提交；已有任务则跳过
         self._workers.submit_sync(self._sync_done, message_cb=self.history_page._log)
 
+    # ---------- 关于 / 版本 ----------
+    def _show_about(self) -> None:
+        if self._about_dialog is not None and self._about_dialog.isVisible():
+            self._about_dialog.raise_()
+            self._about_dialog.activateWindow()
+            return
+        dialog = AboutDialog(self)
+        self._about_dialog = dialog
+        dialog.refresh_requested.connect(self._start_about_release_check)
+        dialog.finished.connect(lambda _result: self._about_dialog_closed(dialog))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        self._start_about_release_check()
+
+    def _about_dialog_closed(self, dialog: AboutDialog) -> None:
+        if self._about_dialog is dialog:
+            self._about_dialog = None
+
+    def _start_about_release_check(self) -> None:
+        from services.update_service import UpdateWorker
+
+        dialog = self._about_dialog
+        if dialog is None or not dialog.isVisible():
+            return
+        if self._about_worker is not None and self._about_worker.isRunning():
+            return
+        dialog.set_loading()
+        worker = UpdateWorker("latest", parent=self)
+        worker.result.connect(self._about_release_done)
+        worker.finished.connect(lambda: self._about_release_finished(worker))
+        self._about_worker = worker
+        worker.start()
+
+    def _about_release_finished(self, worker) -> None:
+        if self._about_worker is worker:
+            self._about_worker = None
+
+    def _about_release_done(self, result: dict) -> None:
+        dialog = self._about_dialog
+        if dialog is None:
+            return
+        error = result.get("error")
+        dialog.set_release(result.get("release"), error=str(error) if error else None)
+
     # ---------- GitHub Release 自动更新 ----------
     def _start_update_check(self, manual: bool = False) -> None:
         from services.update_service import UpdateWorker
@@ -535,16 +588,31 @@ class MainWindow(QMainWindow):
                 webbrowser.open(release.html_url)
             return
 
-        answer = QMessageBox.question(
-            self,
-            "发现新版本",
+        import webbrowser
+
+        box = QMessageBox(self)
+        box.setWindowTitle("发现新版本")
+        box.setText(
             f"当前版本：{__version__}\n"
             f"最新版本：{release.version}\n\n"
-            "是否下载并自动安装？安装时不会覆盖本地数据库、备份和配置。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+            "是否下载并自动安装？安装时不会覆盖本地数据库、备份和配置。"
         )
-        if answer != QMessageBox.StandardButton.Yes:
+        notes = (release.release_notes or "").strip()
+        if notes:
+            summary = notes if len(notes) <= 900 else notes[:900].rstrip() + "…"
+            box.setInformativeText("本次更新摘要：\n" + summary)
+            box.setDetailedText(notes)
+        else:
+            box.setInformativeText("该 Release 暂无文字版更新说明，可打开 GitHub 页面查看。")
+        view_button = box.addButton("查看更新说明", QMessageBox.ButtonRole.ActionRole)
+        install_button = box.addButton("下载并安装", QMessageBox.ButtonRole.AcceptRole)
+        later_button = box.addButton("暂不更新", QMessageBox.ButtonRole.RejectRole)
+        install_button.setDefault(True)
+        box.exec()
+        if box.clickedButton() is view_button:
+            webbrowser.open(release.html_url)
+            return
+        if box.clickedButton() is not install_button:
             self.statusBar().showMessage("已跳过本次更新，可在托盘菜单重新检查", 5000)
             return
         self._start_update_download(release)
@@ -592,12 +660,12 @@ class MainWindow(QMainWindow):
         self.floating.save_position()
         self.hotkey.stop()
         # 更新下载也使用独立线程；退出前请求取消，避免销毁 QThread 时留下线程。
-        update_worker = self._update_worker
-        if update_worker is not None and update_worker.isRunning():
-            update_worker.requestInterruption()
-            if not update_worker.wait(7000):
-                self.statusBar().showMessage("更新任务仍在进行，暂不退出，请稍候", 6000)
-                return
+        for worker in (self._update_worker, self._about_worker):
+            if worker is not None and worker.isRunning():
+                worker.requestInterruption()
+                if not worker.wait(7000):
+                    self.statusBar().showMessage("更新任务仍在进行，暂不退出，请稍候", 6000)
+                    return
         # 第四阶段：应用退出时先安全停止 NRL 监听线程
         try:
             self.monitor_page.monitor.stop()
