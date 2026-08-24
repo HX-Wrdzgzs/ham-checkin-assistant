@@ -90,6 +90,19 @@ class TestReleasePrepare(unittest.TestCase):
                 manifest_path=self.tmp / "latest.json",
             )
 
+    def test_prepare_release_accepts_explicit_test_tag(self):
+        exe = self.tmp / "HAM.exe"
+        exe.write_bytes(b"test-release-exe")
+        manifest = prepare_release(
+            exe,
+            version="0.0.2",
+            tag_name="HX-HAM-0.0.2",
+            release_dir=self.tmp / "release",
+            manifest_path=self.tmp / "latest.json",
+        )
+        self.assertEqual(manifest["tag_name"], "HX-HAM-0.0.2")
+        self.assertIn("/HX-HAM-0.0.2/HAM.exe", manifest["download_url"])
+
     def test_prepare_release_rejects_missing_exe_without_touching_manifest(self):
         manifest = self.tmp / "latest.json"
         manifest.write_text('{"version":"old"}\n', encoding="utf-8")

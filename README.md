@@ -97,6 +97,7 @@ Space 模式专门照顾只录呼号的高频点名：输入一个有效呼号�
 - 下载完成后，更新程序等待当前 EXE 正常退出，再替换并重新启动；运行数据位于 `%LOCALAPPDATA%\HAM点名助手\`，不依赖 EXE 所在目录，也不会被更新包覆盖。
 - GitHub API 暂时限流时会读取 `main/updates/latest.json` 稳定更新清单；0.9.2/0.9.3 使用过的 `codex/ham-checkin-release` 清单会在正式 Release 时同步刷新，帮助旧客户端完成一次跨版本升级。两条路径都不可用时只跳过本次检查，本地点名、Excel 和 SQLite 不受影响。也可以从托盘菜单点击“检查更新”。
 - 发布流程由 `.github/workflows/release.yml` 自动执行：推送与 `version.py` 一致的 `vX.Y.Z` Tag 后，会先跑完整测试，再构建单文件 EXE、生成主/兼容完全相同的附件（兼容附件使用 ASCII 物理名 + 中文 label）、生成双条目真实 SHA256、创建/刷新 GitHub Release，并自动把最新清单写回 `main/updates/latest.json`。无需手工填写 SHA256。
+- 手动测试发布可以使用 `HX-HAM-X.Y.Z` 标签，例如 `HX-HAM-0.0.2`；测试 Release 应标记为 Pre-release，不会写入稳定 `latest.json`，也不会让正式版用户误装测试包。
 - 用 `python app.py` 源码运行时不自动替换 Python 源码；托盘中的“检查更新”仍可打开 Release 页面。
 
 ## 关于、版本与支持

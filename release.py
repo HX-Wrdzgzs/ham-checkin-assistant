@@ -5,6 +5,9 @@
 上传用的 ASCII 兼容副本 ``release/HAM-legacy.exe``、
 ``release/SHA256SUMS.txt``，并原子刷新 ``updates/latest.json``。
 三个 EXE 必须是完全相同的二进制内容；清单中的 SHA256 永远从实际 EXE 计算，禁止手填。
+
+正式版本使用 ``vX.Y.Z`` 标签；手动测试版也允许使用
+``HX-HAM-X.Y.Z`` 标签，但测试版不应写入稳定自动更新清单。
 """
 from __future__ import annotations
 
@@ -31,6 +34,7 @@ LEGACY_RELEASE_ASSET_NAME = "HAM点名助手.exe"
 # ASCII 物理名并设置中文 label，才能同时保留主资产和旧客户端可匹配的中文 label。
 GITHUB_LEGACY_UPLOAD_ASSET_NAME = "HAM-legacy.exe"
 CHECKSUM_ASSET_NAME = "SHA256SUMS.txt"
+TEST_RELEASE_PREFIX = "HX-HAM-"
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 
@@ -71,6 +75,11 @@ def _changelog_notes(version: str, changelog_path: Path = ROOT / "CHANGELOG.md")
     return rest.strip()
 
 
+def _tag_matches_version(tag_name: str, version: str) -> bool:
+    """允许正式标签和明确标记的手动测试标签。"""
+    return tag_name in (f"v{version}", f"{TEST_RELEASE_PREFIX}{version}")
+
+
 def prepare_release(
     exe_path: Path = DEFAULT_EXE,
     *,
@@ -88,9 +97,10 @@ def prepare_release(
         raise ValueError(f"非法版本号：{version!r}")
     expected_tag = f"v{version}"
     tag_name = str(tag_name or expected_tag).strip()
-    if tag_name != expected_tag:
+    if not _tag_matches_version(tag_name, version):
         raise ValueError(
-            f"Tag 与 version.py 不一致：期望 {expected_tag}，实际 {tag_name}")
+            f"Tag 与 version 不一致：期望 {expected_tag} 或 "
+            f"{TEST_RELEASE_PREFIX}{version}，实际 {tag_name}")
     if not exe_path.is_file() or exe_path.suffix.lower() != ".exe" or exe_path.stat().st_size <= 0:
         raise FileNotFoundError(f"没有有效的构建产物：{exe_path}")
 
