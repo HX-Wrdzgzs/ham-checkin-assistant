@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows;
 using HamCheckin.Native.Core.Storage;
 using HamCheckin.Native.Core.Updates;
@@ -24,7 +26,7 @@ public partial class AboutWindow : Window, IDisposable
 
     public void SetPreviewState()
     {
-        StatusText.Text = "云端最新版本：1.0.0（当前已是最新）";
+        StatusText.Text = "云端版本：1.0.0（当前已是最新）";
         ReleaseNotesText.Text = "稳定版\n\n· Native WPF / .NET 10\n· SQLite 现场提交\n· Excel 后台导出\n· 本地资料库和 SHA-256 更新校验";
         CheckButton.IsEnabled = true;
         DownloadButton.IsEnabled = false;
@@ -48,16 +50,26 @@ public partial class AboutWindow : Window, IDisposable
             _availableRelease = NativeUpdateService.IsNewer(release.Version, NativeVersion.Current)
                 ? release
                 : null;
-            ReleaseNotesText.Text = string.IsNullOrWhiteSpace(release.ReleaseNotes)
-                ? "该 Release 没有附带更新说明。"
-                : release.ReleaseNotes;
             if (_availableRelease is null)
             {
-                StatusText.Text = $"云端最新版本：{release.TagName}（当前已是最新）";
+                if (NativeUpdateService.IsNewer(NativeVersion.Current, release.Version))
+                {
+                    StatusText.Text = $"本地版本 {NativeVersion.Current} 高于云端公开版本 {release.TagName}，没有可用更新。";
+                    ReleaseNotesText.Text = $"云端公开清单仍是旧版本 {release.TagName}。\n\n"
+                        + $"本地版本：{NativeVersion.Current}\n"
+                        + $"云端版本：{release.Version}\n\n"
+                        + "旧版本更新说明已隐藏，避免把旧版 Markdown 内容误显示成当前版本说明。";
+                }
+                else
+                {
+                    StatusText.Text = $"云端版本：{release.TagName}（当前已是最新）";
+                    ReleaseNotesText.Text = FormatReleaseNotes(release.ReleaseNotes);
+                }
             }
             else
             {
                 StatusText.Text = $"发现新版本：{_availableRelease.TagName}，已通过下载地址和 SHA-256 合同检查。";
+                ReleaseNotesText.Text = FormatReleaseNotes(release.ReleaseNotes);
                 DownloadButton.IsEnabled = true;
             }
         }
@@ -141,6 +153,36 @@ public partial class AboutWindow : Window, IDisposable
     }
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
+
+    public static string FormatReleaseNotes(string? markdown)
+    {
+        if (string.IsNullOrWhiteSpace(markdown))
+        {
+            return "该 Release 没有附带更新说明。";
+        }
+
+        var builder = new StringBuilder();
+        foreach (var rawLine in markdown.Replace("\r\n", "\n").Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0)
+            {
+                if (builder.Length > 0 && !builder.ToString().EndsWith("\n\n", StringComparison.Ordinal))
+                {
+                    builder.AppendLine();
+                }
+                continue;
+            }
+
+            line = Regex.Replace(line, @"^#{1,6}\s*", string.Empty);
+            line = Regex.Replace(line, @"\[([^\]]+)\]\([^\)]+\)", "$1");
+            line = line.Replace("**", string.Empty).Replace("__", string.Empty).Replace("`", string.Empty);
+            line = Regex.Replace(line, @"^[-*+]\s+", "· ");
+            builder.AppendLine(line);
+        }
+
+        return builder.ToString().Trim();
+    }
 
     public void Dispose()
     {

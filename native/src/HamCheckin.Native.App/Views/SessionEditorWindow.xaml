@@ -7,6 +7,14 @@
         Background="{StaticResource AppBackgroundBrush}"
         FontFamily="Microsoft YaHei UI"
         UseLayoutRounding="True">
+    <Window.Resources>
+        <Style x:Key="SessionInputTextBox" TargetType="TextBox" BasedOn="{StaticResource InputTextBox}">
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
@@ -19,28 +27,28 @@
         <Grid Grid.Row="2" Margin="0,0,0,10">
             <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock Text="场次名称" VerticalAlignment="Center"/>
-            <TextBox x:Name="NameBox" Grid.Column="1" Style="{StaticResource InputTextBox}" Height="36"/>
+            <TextBox x:Name="NameBox" Grid.Column="1" Style="{StaticResource SessionInputTextBox}"/>
         </Grid>
         <Grid Grid.Row="3" Margin="0,0,0,10">
             <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock Text="场次日期" VerticalAlignment="Center"/>
-            <TextBox x:Name="DateBox" Grid.Column="1" Style="{StaticResource InputTextBox}" Height="36"/>
+            <TextBox x:Name="DateBox" Grid.Column="1" Style="{StaticResource SessionInputTextBox}"/>
         </Grid>
         <Grid Grid.Row="4" Margin="0,0,0,10">
             <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock Text="主控呼号" VerticalAlignment="Center"/>
-            <TextBox x:Name="OperatorBox" Grid.Column="1" Style="{StaticResource InputTextBox}" Height="36"/>
+            <TextBox x:Name="OperatorBox" Grid.Column="1" Style="{StaticResource SessionInputTextBox}"/>
         </Grid>
         <Grid Grid.Row="5" Margin="0,0,0,10">
             <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock Text="中继名称" VerticalAlignment="Center"/>
-            <TextBox x:Name="RepeaterBox" Grid.Column="1" Style="{StaticResource InputTextBox}" Height="36"/>
+            <TextBox x:Name="RepeaterBox" Grid.Column="1" Style="{StaticResource SessionInputTextBox}"/>
         </Grid>
         <Grid Grid.Row="6" Margin="0,0,0,10">
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock Text="Excel 路径" VerticalAlignment="Center"/>
-            <TextBox x:Name="WorkbookBox" Grid.Column="1" Style="{StaticResource InputTextBox}" Height="36"/>
+            <TextBox x:Name="WorkbookBox" Grid.Column="1" Style="{StaticResource SessionInputTextBox}"/>
             <TextBlock Grid.Row="1" Grid.Column="1" Text="可留空；启动和快速录入不会打开 Excel。" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="2,4,0,0"/>
         </Grid>
         <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right">

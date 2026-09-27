@@ -32,6 +32,7 @@ internal static class PreviewRenderer
         RenderMain(Path.Combine(outputDirectory, "06-地点包省市树.png"), viewModel, "Catalog", 1180, 720);
         RenderMain(Path.Combine(outputDirectory, "07-快捷键设置.png"), viewModel, "Settings", 1180, 760);
         RenderAbout(Path.Combine(outputDirectory, "08-关于-版本-更新.png"));
+        RenderSessionEditor(Path.Combine(outputDirectory, "09-编辑场次信息-修正版.png"));
     }
 
     public static void Render(string outputPath, int width = 1440, int height = 900)
@@ -89,6 +90,18 @@ internal static class PreviewRenderer
         window.UpdateLayout();
         FlushRender(window);
         SaveWindowContent(outputPath, window, 650, 560);
+        window.Close();
+    }
+
+    private static void RenderSessionEditor(string outputPath)
+    {
+        var session = new SessionInfo(1, "第1场点名", "2026-09-25", "active", 38,
+            "BA4THG", "江苏省中继");
+        var window = new SessionEditorWindow(session) { Width = 560, Height = 500 };
+        window.Show();
+        window.UpdateLayout();
+        FlushRender(window);
+        SaveWindowContent(outputPath, window, 560, 500);
         window.Close();
     }
 

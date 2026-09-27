@@ -43,7 +43,7 @@
 
 ## 用户现场验收顺序
 
-1. 优先从 Downloads 打开自包含包 `HAM点名助手-v1.0.0-候选-20260927-3\HAM点名助手.exe`；如果选择框架依赖小包，必须保留同目录的 `e_sqlite3.dll` 并确认已安装 .NET 10 Desktop Runtime。
+1. 优先从 Downloads 打开自包含包 `HAM点名助手-v1.0.0-候选-20260927-4\HAM点名助手.exe`；如果选择框架依赖小包，必须保留同目录的 `e_sqlite3.dll` 并确认已安装 .NET 10 Desktop Runtime。
 2. 确认数据路径显示在 `%LOCALAPPDATA%\HAM点名助手\data`，而不是 EXE 当前目录；确认启动没有打开 Excel。
 3. 确认默认进入最早的 active 场次；没有可写场次时创建当天的第 1 场。
 4. 在输入框输入并提交：

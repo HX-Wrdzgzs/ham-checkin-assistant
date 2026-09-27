@@ -166,6 +166,46 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
         });
     }
 
+    [Fact]
+    public void AboutReleaseNotesAreReadablePlainText()
+    {
+        var formatted = AboutWindow.FormatReleaseNotes(
+            "## What's Changed\n* **修复输入** by [HX-Wrdzgzs](https://github.com/HX-Wrdzgzs)\n\n**Full Changelog**: [v0.9.3...v0.9.4](https://github.com/HX-Wrdzgzs/ham-checkin-assistant/compare/v0.9.3...v0.9.4)");
+
+        Assert.Contains("What's Changed", formatted);
+        Assert.Contains("· 修复输入 by HX-Wrdzgzs", formatted);
+        Assert.DoesNotContain("##", formatted);
+        Assert.DoesNotContain("**", formatted);
+        Assert.DoesNotContain("https://", formatted);
+    }
+
+    [Fact]
+    public void SessionEditorFieldsKeepTextInsideTheirBounds()
+    {
+        _fixture.Run(() =>
+        {
+            var window = new SessionEditorWindow(null)
+            {
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false
+            };
+            window.Show();
+            window.UpdateLayout();
+
+            var name = (TextBox)window.FindName("NameBox")!;
+            var date = (TextBox)window.FindName("DateBox")!;
+            Assert.Equal("第1场点名", name.Text);
+            Assert.Matches(@"^\d{4}-\d{2}-\d{2}$", date.Text);
+            Assert.Equal(14, name.FontSize);
+            Assert.Equal(14, date.FontSize);
+            Assert.True(name.ActualHeight >= 38);
+            Assert.True(date.ActualHeight >= 38);
+            Assert.Equal(VerticalAlignment.Center, name.VerticalContentAlignment);
+
+            window.Close();
+        });
+    }
+
 }
 
 public sealed class WpfDispatcherFixture : IDisposable
