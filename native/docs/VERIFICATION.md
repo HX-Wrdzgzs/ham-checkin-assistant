@@ -7,7 +7,7 @@
 
 | 检查 | 实际结果 |
 |---|---:|
-| Release 全解决方案编译 | PASS，0 error；0 warning |
+| Release 全解决方案编译 | PASS，0 error；25 个 CA 代码分析警告 |
 | Native 核心 xUnit 自动化测试 | PASS，73 / 73 |
 | WPF UI 自动化测试 | PASS，4 / 4 |
 | 解析循环 | 20,000 次 |
@@ -21,7 +21,7 @@
 | SQLite 连续提交 | 150 条 |
 | SQLite 平均单条提交 | 9.121 ms |
 | SQLite `quick_check` | `ok` |
-| 自包含 win-x64 单 EXE | 68,001,332 bytes；SHA-256 `4ED84331E5A89119EB59891A434C98C2AD37B04542BCA0B8EB62539B565A107B` |
+| 自包含 win-x64 单 EXE | 68,000,982 bytes；SHA-256 `CF5CA8298C682043988B2FE78BE2D652F304C4430A9A82A2552853EA195EDF83` |
 | 框架依赖 win-x64 EXE | 921,805 bytes；同目录 `e_sqlite3.dll` 1,978,880 bytes |
 | 发布 EXE 离屏渲染自检 | PASS，退出码 0 |
 | 两个发布包正常启动保持运行 5 秒 | PASS；均无 .NET Runtime 1026 异常 |
@@ -62,8 +62,8 @@
 自包含 .NET 10 候选包：
 
 ```text
-%USERPROFILE%\Downloads\HAM点名助手-v1.0.0-候选-20260927-2\HAM点名助手.exe
-SHA-256: 4ED84331E5A89119EB59891A434C98C2AD37B04542BCA0B8EB62539B565A107B
+%USERPROFILE%\Downloads\HAM点名助手-v1.0.0-候选-20260927-3\HAM点名助手.exe
+SHA-256: CF5CA8298C682043988B2FE78BE2D652F304C4430A9A82A2552853EA195EDF83
 文件版本：1.0.0.0
 ```
 

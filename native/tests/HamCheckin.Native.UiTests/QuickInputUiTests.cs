@@ -153,10 +153,12 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             window.UpdateLayout();
 
             var version = (TextBlock)window.FindName("CurrentVersionText")!;
+            var developer = (TextBlock)window.FindName("DeveloperText")!;
             var status = (TextBlock)window.FindName("StatusText")!;
             var check = (Button)window.FindName("CheckButton")!;
 
             Assert.Equal("1.0.0", version.Text);
+            Assert.Equal("开发者：BA4THG（HX-Wrdzgzs）", developer.Text);
             Assert.Contains("当前已是最新", status.Text);
             Assert.True(check.IsEnabled);
 

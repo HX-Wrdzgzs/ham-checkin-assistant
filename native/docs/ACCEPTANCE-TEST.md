@@ -8,7 +8,7 @@
 |---|---|---|
 | C# 核心单元/集成测试 | PASS | `dotnet test native/HamCheckin.Native.sln -c Release --no-build`，73/73 |
 | WPF UI 自动化测试 | PASS | `dotnet test native/tests/HamCheckin.Native.UiTests/HamCheckin.Native.UiTests.csproj -c Release --no-build`，4/4 |
-| Release 编译 | PASS | .NET 10 `dotnet build native/HamCheckin.Native.sln -c Release --no-restore`，0 error；0 warning |
+| Release 编译 | PASS | .NET 10 `dotnet build native/HamCheckin.Native.sln -c Release --no-restore`，0 error；25 个 CA 代码分析警告 |
 | 识别基准 | PASS | `native/docs/performance-latest.json`，QTH/设备/天线/功率金标准已输出 |
 | Open XML Excel 结构 | PASS | 9 列、无“未识别”、场次日期/主控/中继写入测试 |
 | 工信部筛选逻辑 | PASS | 固定模拟接口保留电台、排除蓝牙/非电台；真实官网全量同步 NOT_RUN |
@@ -43,7 +43,7 @@
 
 ## 用户现场验收顺序
 
-1. 优先从 Downloads 打开自包含包 `HAM点名助手-v1.0.0-候选-20260927-2\HAM点名助手.exe`；如果选择框架依赖小包，必须保留同目录的 `e_sqlite3.dll` 并确认已安装 .NET 10 Desktop Runtime。
+1. 优先从 Downloads 打开自包含包 `HAM点名助手-v1.0.0-候选-20260927-3\HAM点名助手.exe`；如果选择框架依赖小包，必须保留同目录的 `e_sqlite3.dll` 并确认已安装 .NET 10 Desktop Runtime。
 2. 确认数据路径显示在 `%LOCALAPPDATA%\HAM点名助手\data`，而不是 EXE 当前目录；确认启动没有打开 Excel。
 3. 确认默认进入最早的 active 场次；没有可写场次时创建当天的第 1 场。
 4. 在输入框输入并提交：
