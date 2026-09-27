@@ -1,7 +1,7 @@
 """回归测试：P1-11 —— 默认设备词典只保留可靠映射。
 
 - 已验证机型可解析。
-- 不确定的映射（x6200 / u7 / n7500 / m8268）不得再写死。
+- 不确定的映射（x6200 / u7 / n7500）不得再写死。
 """
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ class TestDeviceDict(unittest.TestCase):
             "zyt": "自由通",
             "qyt": "全易通",
             "qyt6900": "全易通 QYT-6900",
+            "r6": "摩托罗拉 R6",
         }
         for alias, std in verified.items():
             a = self.store.lookup("device", alias)
@@ -44,11 +45,52 @@ class TestDeviceDict(unittest.TestCase):
 
     def test_unreliable_mappings_removed(self):
         """manufacturer/model 不确定的映射不得写死。"""
-        for alias in ("x6200", "u7", "n7500", "m8268"):
+        for alias in ("x6200", "u7", "n7500"):
             self.assertIsNone(self.store.lookup("device", alias),
                               f"{alias} 映射不确定，不得硬编码")
             r = self.svc.parse(alias)
             self.assertEqual(r.device.value, "", f"{alias} 不应被当作设备解析")
+
+    def test_devices_from_supplied_roster_have_shortcuts(self):
+        """用户提供的名单样本中的设备缩写应可直接复用。"""
+        verified = {
+            "m8268": "摩托罗拉 M8268",
+            "m8668": "摩托罗拉 M8668",
+            "p8260": "摩托罗拉 P8260",
+            "r7": "摩托罗拉 R7",
+            "shk8800": "森海克斯 SHK-8800",
+            "tm481": "建武TM-481",
+            "tm8118": "TM-8118",
+            "tm800": "HYT-TM800",
+            "uvk6": "泉盛 UV-K6",
+            "uvk18": "泉盛 UV-K1(8)",
+            "uv5rmini": "宝锋 UV-5R Mini",
+            "1907r": "YAESU FT-1907R",
+            "5dr": "YAESU FT-5DR",
+        }
+        for alias, standard in verified.items():
+            item = self.store.lookup("device", alias)
+            self.assertIsNotNone(item, f"{alias} 应已收录")
+            self.assertEqual(item.standard_value, standard)
+            result = self.svc.parse(f"BA4AAA {alias}")
+            self.assertEqual(result.device.value, standard, alias)
+            self.assertEqual(result.unmatched, [], alias)
+            self.assertIn((standard, alias), self.svc.complete(alias), alias)
+
+    def test_roster_brand_and_model_forms_are_normalized(self):
+        """名单中的带品牌写法和无空格写法不能落到未识别。"""
+        cases = {
+            "BA4AAA 摩托罗拉 M8268": "摩托罗拉 M8268",
+            "BA4AAA 森海克斯 SHK-8800": "森海克斯 SHK-8800",
+            "BA4AAA 建武 TM-481": "建武TM-481",
+            "BA4AAA 建武TM-481": "建武TM-481",
+            "BA4AAA 泉盛 UV-K1(8)": "泉盛 UV-K1(8)",
+            "BA4AAA HYT-TM800": "HYT-TM800",
+        }
+        for text, standard in cases.items():
+            result = self.svc.parse(text)
+            self.assertEqual(result.device.value, standard, text)
+            self.assertEqual(result.unmatched, [], text)
 
     def test_common_chinese_brands(self):
         """国产对讲机常见缩写（品牌拼音首字母 + 常见型号）。"""

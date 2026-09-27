@@ -208,7 +208,7 @@ def main():
         submitted = []
 
         def on_submitted(result):
-            # 与 MainWindow 快速路径一致：先落库/写 Excel 内存，不在每条上 Save。
+            # 与 MainWindow 快速路径一致：只落库 SQLite，不触碰 Excel COM。
             submitted.append(sim_svc.commit(result, save_excel=False))
 
         panel.submitted.connect(on_submitted)
@@ -244,7 +244,7 @@ def main():
         app_qt.processEvents()
 
     human_simulation("human_no_excel")
-    human_simulation("human_mock_excel_deferred", with_excel=True)
+    human_simulation("human_mock_excel_post_session_sync", with_excel=True)
 
     # ============ 轮5：模糊匹配 ============
     print("\n===== 轮5 模糊匹配（RapidFuzz） =====")

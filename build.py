@@ -31,6 +31,7 @@ LEGACY_DIST = DIST_ROOT / NAME
 BAK = ROOT / "build" / f"{NAME}_databak"
 DEPLOY_BAK = ROOT / "build" / f"{NAME}_deploy_bak"
 _RUNTIME = ("data", "logs", "backup", "config.json")
+_UNSAFE_QT_DLLS = frozenset({"icuuc.dll", "icudt78.dll"})
 _VERSION_OVERRIDE_RE = re.compile(
     r"^(?:\d+\.\d+\.\d+|HX-HAM-\d+\.\d+\.\d+)$"
 )
@@ -77,6 +78,70 @@ def restore_runtime(root: Path = LEGACY_DIST, bak: Path = BAK) -> None:
 def _verify_artifact(exe: Path) -> bool:
     """部署前校验单文件产物完整。"""
     return exe.is_file() and exe.suffix.lower() == ".exe" and exe.stat().st_size > 0
+
+
+def _pyinstaller_environment() -> dict[str, str]:
+    """为 PyInstaller 提供不受外部 DLL 污染的构建环境。
+
+    当前开发机的 Codex 运行时带有 Poppler 的 ICU DLL。PyInstaller 会按
+    PATH 解析 Qt6Core.dll 的依赖，结果可能把与 Qt 不兼容的 icuuc.dll 和
+    icudt78.dll 收进 EXE。应用本身不需要把这套 ICU 打包进去，Windows
+    自带的 ICU 已经能满足当前 PySide6/Qt 运行时；构建时只保留系统目录，
+    避免把构建机上偶然存在的第三方 DLL 固化到发布物中。
+    """
+    env = os.environ.copy()
+    system_root = env.get("SystemRoot") or env.get("WINDIR")
+    if not system_root:
+        return env
+
+    system_dirs = (
+        Path(system_root) / "System32",
+        Path(system_root),
+        Path(system_root) / "System32" / "Wbem",
+        Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0",
+    )
+    env["PATH"] = os.pathsep.join(
+        str(directory) for directory in system_dirs if directory.is_dir()
+    )
+    return env
+
+
+def _verify_qt_payload(exe: Path) -> bool:
+    """检查单文件内的 Qt 关键文件和已知错误 ICU 依赖。
+
+    这一步必须在部署前执行。只检查 EXE 文件大小无法发现 Qt 原生 DLL
+    已被错误依赖污染的问题，而错误依赖会在用户机器上表现为 QtCore
+    导入失败。
+    """
+    if not _verify_artifact(exe):
+        return False
+    try:
+        from PyInstaller.archive.readers import CArchiveReader
+
+        archive = CArchiveReader(str(exe))
+        names = {
+            str(name).replace("/", "\\").lower()
+            for name in archive.toc
+        }
+    except Exception as exc:  # noqa: BLE001
+        _safe_console_print("无法检查 PyInstaller Qt 依赖:", exc)
+        return False
+
+    if "pyside6\\qt6core.dll" not in names:
+        _safe_console_print("构建产物缺少 PySide6\\Qt6Core.dll，拒绝部署。")
+        return False
+
+    unsafe = sorted(
+        name for name in names
+        if Path(name).name.lower() in _UNSAFE_QT_DLLS
+    )
+    if unsafe:
+        _safe_console_print(
+            "构建产物包含可能导致 QtCore 导入失败的 ICU DLL，拒绝部署:",
+            ", ".join(unsafe),
+        )
+        return False
+    return True
 
 
 def _runtime_present(root: Path) -> bool:
@@ -226,11 +291,13 @@ def build_exe(version_override: str | None = None) -> int:
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
+        "--clean",
         "--onefile",
         "--windowed",
         "--name", NAME,
         "--icon", str(ROOT / "assets" / "icon.ico"),
         "--add-data", f"{ROOT / 'assets'};assets",
+        "--runtime-hook", str(ROOT / "qt_runtime_hook.py"),
         # data/、logs/、backup/、config.json 均由新版在 LocalAppData 创建，
         # 不打包进内部，避免写入临时解压目录或安装目录导致数据丢失。
         "app.py",
@@ -238,12 +305,9 @@ def build_exe(version_override: str | None = None) -> int:
     try:
         if version_override is not None:
             version_root = _write_build_version(version_override)
-            # 清理 PyInstaller 缓存，确保同名 EXE 的测试版本不会复用旧的
-            # PYZ/数据目录；清理范围由 PyInstaller 控制，不涉及用户运行数据。
-            cmd.insert(3, "--clean")
             cmd.extend(["--add-data", f"{version_root};."])
         _safe_console_print("Running:", " ".join(cmd))
-        return subprocess.call(cmd)
+        return subprocess.call(cmd, env=_pyinstaller_environment())
     finally:
         if version_root is not None:
             shutil.rmtree(version_root, ignore_errors=True)
@@ -258,6 +322,9 @@ def main(version_override: str | None = None) -> int:
         # build 失败也必须恢复 runtime（任务书第一阶段 #2）
         restore_runtime()
     if code == 0:
+        if not _verify_qt_payload(DIST_EXE):
+            _safe_console_print("Qt 运行时校验失败，未部署新 EXE。")
+            return 1
         dl = Path.home() / "Downloads"
         if dl.exists():
             target_exe = dl / f"{NAME}.exe"

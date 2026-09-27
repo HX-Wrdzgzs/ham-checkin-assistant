@@ -208,17 +208,17 @@ class TestDeferredExcelSave(unittest.TestCase):
         finally:
             svc.close()
 
-    def test_deferred_commit_flushes_once(self):
+    def test_fast_commit_defers_all_excel_work_until_explicit_flush(self):
         svc, wb = make_svc_with_excel()
         try:
             before = wb.save_count
             res = svc.commit(svc.parse("bg4tki njqx k6 y 5"), save_excel=False)
             self.assertTrue(res["ok"])
-            self.assertEqual(res["excel_state"], "written")
+            self.assertEqual(res["excel_state"], "deferred")
             self.assertFalse(res["excel_persisted"])
-            self.assertEqual(wb.save_count, before, "延迟提交不应立即 Save")
+            self.assertEqual(wb.save_count, before, "快速提交不应触碰 Excel")
             c = svc.repo.get_checkin(res["checkin"].id)
-            self.assertEqual(c.excel_sync_status, "written")
+            self.assertEqual(c.excel_sync_status, "pending")
 
             ok, msg = svc.flush_excel_pending()
             self.assertTrue(ok, msg)
@@ -234,7 +234,7 @@ class TestDeferredExcelSave(unittest.TestCase):
         finally:
             svc.close()
 
-    def test_written_row_is_not_duplicated_when_flushed_with_another_record(self):
+    def test_deferred_rows_are_not_duplicated_when_flushed_as_a_batch(self):
         svc, wb = make_svc_with_excel()
         try:
             r1 = svc.commit(svc.parse("bg4tki njqx k6 y 5"), save_excel=False)

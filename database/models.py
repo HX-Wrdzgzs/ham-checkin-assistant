@@ -116,7 +116,11 @@ class AuditEntry:
 
 @dataclass
 class ParseField:
-    """Parser 单个字段结果。source: input/alias/history_recent/history_frequent/fuzzy/manual"""
+    """Parser 单个字段结果。
+
+    source: input/alias/observed_alias/miit_catalog/history_recent/
+    history_frequent/fuzzy/manual
+    """
     value: str = ""
     source: str = ""
     confidence: float = 0.0

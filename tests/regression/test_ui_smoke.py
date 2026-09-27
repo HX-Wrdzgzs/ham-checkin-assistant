@@ -40,7 +40,7 @@ class TestUiSmoke(unittest.TestCase):
 
     def test_mainwindow_instantiates_with_all_tabs(self):
         from unittest import mock
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication, QLabel
         from tests.helpers import make_service
         from ui.main_window import MainWindow
 
@@ -57,6 +57,16 @@ class TestUiSmoke(unittest.TestCase):
             names = [w.tabs.tabText(i) for i in range(w.tabs.count())]
             for expected in ("快速点名", "本场记录", "呼号库", "历史数据", "NRL 监听", "设置"):
                 self.assertIn(expected, names, f"缺少选项卡：{expected}")
+            qth_help = [
+                label for label in w.settings_page.findChildren(QLabel)
+                if "内置行政区会在后台自动校准" in label.text()
+            ]
+            self.assertEqual(len(qth_help), 1)
+            self.assertTrue(qth_help[0].wordWrap(), "QTH 说明文字必须允许换行")
+            self.assertLess(
+                w.minimumSizeHint().width(), 1000,
+                "长路径和说明文字不应把主窗口最小宽度撑到超宽",
+            )
         finally:
             # 应用退出路径：停 hotkey → monitor → worker shutdown → service close
             try:
@@ -78,8 +88,8 @@ class TestUiSmoke(unittest.TestCase):
             w.deleteLater()
             app.processEvents()
 
-    def test_quick_commit_batches_excel_save_after_idle(self):
-        """主窗口快速路径：连续提交只写内存，停手后定时器一次 Save。"""
+    def test_quick_commit_does_not_touch_excel_until_post_session_sync(self):
+        """主窗口快速路径：连续提交只写 SQLite，不触碰 Excel COM。"""
         from unittest import mock
         from PySide6.QtTest import QTest
         from PySide6.QtWidgets import QApplication
@@ -101,11 +111,11 @@ class TestUiSmoke(unittest.TestCase):
             w._on_submitted(svc.parse("bg4tki njqx k6 y 5"))
             w._on_submitted(svc.parse("ba4xxx njqx k6 y 5"))
             self.assertEqual(wb.save_count, 0)
-            QTest.qWait(750)
+            QTest.qWait(750)  # 后台/事件循环运行也不应触发快速路径 Excel Save
             app.processEvents()
-            self.assertEqual(wb.save_count, 1)
+            self.assertEqual(wb.save_count, 0)
             rows = svc.repo.list_checkins(svc.current_session().id)
-            self.assertEqual([c.excel_sync_status for c in rows], ["persisted", "persisted"])
+            self.assertEqual([c.excel_sync_status for c in rows], ["pending", "pending"])
         finally:
             try:
                 w.hotkey.stop()

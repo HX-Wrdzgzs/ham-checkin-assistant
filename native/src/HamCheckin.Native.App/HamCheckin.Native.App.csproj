@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>HamCheckin.Native.App</RootNamespace>
+    <AssemblyName>HAM点名助手</AssemblyName>
+    <ApplicationIcon>..\..\..\assets\icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyTitle>HAM 点名助手 Windows 原生版</AssemblyTitle>
+    <Product>HAM 点名助手 Windows 原生版</Product>
+    <Description>面向 Windows 的轻量、键盘优先业余无线电点名助手原生稳定版。</Description>
+    <Company>HX-Wrdzgzs</Company>
+    <Authors>HX-Wrdzgzs</Authors>
+    <NeutralLanguage>zh-CN</NeutralLanguage>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\HamCheckin.Native.Core\HamCheckin.Native.Core.csproj" />
+  </ItemGroup>
+</Project>

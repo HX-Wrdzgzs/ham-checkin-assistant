@@ -135,7 +135,8 @@ DEFAULTS: dict = {
     "excel_save_delay_ms": 600,
     "excel_template": "",
     "excel_sheet_name": "",
-    # 正常退出后自动恢复上次本地场次；异常退出仍进入崩溃恢复。
+    # 保留旧字段以兼容历史配置；正常启动现在默认选择本地第一场，
+    # 不再把上次关闭时的场次作为默认场次。
     "clean_shutdown": False,
     "last_local_session_id": None,
     # 365dt
@@ -159,6 +160,21 @@ DEFAULTS: dict = {
     "window_opacity": 0.95,
     "window_on_top": True,
     "window_position": None,
+    # 工信部电台型号库：首次下载仍需用户在设置页显式点击；后续可在空闲时
+    # 只检查头部，完整校验由用户手动触发。资料库固定落在 data_dir 下。
+    "miit_catalog_auto_update": False,
+    "miit_catalog_page_size": 1000,
+    "miit_catalog_last_auto_check": "",
+    # 道路/学校/车站等地点包：同步在后台进行，输入热路径只查本地库。
+    # 内置行政区每次启动都会快速校准；远程地点包/天地图均为可选来源。
+    "qth_place_auto_update": True,
+    "qth_place_selected_provinces": ["江苏"],
+    "qth_place_last_update": "",
+    "qth_place_sync_interval_hours": 24,
+    "qth_place_pack_url": "",
+    # 天地图 tk 由用户自行申请并填写，不硬编码到软件或公开仓库。
+    "qth_tianditu_token": "",
+    "qth_online_query_limit": 5,
 }
 
 
@@ -309,15 +325,29 @@ class Settings:
                 errors.append("fuzzy_mid 必须小于 fuzzy_high")
         except (TypeError, ValueError):
             errors.append("fuzzy_mid / fuzzy_high 必须为数字")
-        for key in ("dt365_max_fetch", "backup_keep", "excel_save_delay_ms"):
+        for key in ("dt365_max_fetch", "backup_keep", "excel_save_delay_ms",
+                    "miit_catalog_page_size", "qth_place_sync_interval_hours",
+                    "qth_online_query_limit"):
             v = candidate.get(key, self.get(key, 0))
             try:
-                if float(v) <= 0:
+                if float(v) < 0 or (
+                        float(v) == 0 and key != "qth_online_query_limit"):
                     errors.append(f"{key} 必须为正数")
                 elif key == "excel_save_delay_ms" and not 100 <= float(v) <= 5000:
                     errors.append("excel_save_delay_ms 必须在 100~5000 毫秒之间")
+                elif key == "miit_catalog_page_size" and not 5 <= float(v) <= 1000:
+                    errors.append("miit_catalog_page_size 必须在 5~1000 之间")
+                elif key == "qth_place_sync_interval_hours" and not 1 <= float(v) <= 720:
+                    errors.append("qth_place_sync_interval_hours 必须在 1~720 小时之间")
+                elif key == "qth_online_query_limit" and not 0 <= float(v) <= 50:
+                    errors.append("qth_online_query_limit 必须在 0~50 之间")
             except (TypeError, ValueError):
                 errors.append(f"{key} 必须为数字")
+        qth_pack_url = str(candidate.get(
+            "qth_place_pack_url", self.get("qth_place_pack_url", "")
+        ) or "").strip()
+        if qth_pack_url and not qth_pack_url.lower().startswith("https://"):
+            errors.append("qth_place_pack_url 必须使用 HTTPS")
         submit_key = candidate.get(
             "quick_submit_key", self.get("quick_submit_key", "Enter"))
         if not is_valid_quick_submit_key(submit_key):
@@ -360,6 +390,23 @@ class Settings:
     @property
     def db_path(self) -> Path:
         return self.data_dir / "ham_checkin.db"
+
+    @property
+    def miit_catalog_path(self) -> Path:
+        """独立的工信部电台资料库，不写入 EXE/源码目录。"""
+        # 运行时配置固定使用 LocalAppData 下的专用 data 目录，不能随着
+        # EXE、快捷方式的工作目录或用户把主数据库迁移到别处而漂移。
+        # 测试/临时 Settings 仍沿用其隔离 data_dir，避免测试触碰真实用户库。
+        if self.path.resolve() == CONFIG_PATH.resolve():
+            return USER_DATA_DIR / "data" / "miit_radio_catalog.db"
+        return self.data_dir / "miit_radio_catalog.db"
+
+    @property
+    def qth_place_catalog_path(self) -> Path:
+        """道路/地标地点映射库，独立于点名主库和工信部型号库。"""
+        if self.path.resolve() == CONFIG_PATH.resolve():
+            return USER_DATA_DIR / "data" / "qth_places.db"
+        return self.data_dir / "qth_places.db"
 
     @property
     def path(self) -> Path:

@@ -1,0 +1,36 @@
+<Window x:Class="HamCheckin.Native.App.Views.QuickWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="HAM 点名助手 · 快速输入"
+        Width="560" Height="280" MinWidth="420" MinHeight="190"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResizeWithGrip"
+        ShowInTaskbar="True"
+        Background="{StaticResource AppBackgroundBrush}"
+        FontFamily="Microsoft YaHei UI"
+        UseLayoutRounding="True"
+        DataContextChanged="Window_DataContextChanged"
+        Closing="Window_Closing">
+    <Grid Margin="12" Background="{StaticResource AppBackgroundBrush}">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal"><TextBlock Text="{Binding SessionTitle}" FontWeight="Bold"/><TextBlock Text="  ·  主控 " Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding OperatorCallsign}" Foreground="{StaticResource AccentBrush}"/></StackPanel>
+            <CheckBox Grid.Column="1" Content="置顶" IsChecked="True" Margin="10,0,7,0" VerticalAlignment="Center" Checked="Topmost_Checked" Unchecked="Topmost_Unchecked"/>
+            <Button Grid.Column="2" Content="×" Style="{StaticResource BaseButton}" Padding="9,2" Click="CloseButton_Click"/>
+        </Grid>
+        <Grid Grid.Row="1" Margin="0,10,0,7">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBox x:Name="QuickInputBox" Height="44" Style="{StaticResource InputTextBox}" FontSize="16" PreviewKeyDown="Input_PreviewKeyDown" TextChanged="QuickInputBox_TextChanged" GotKeyboardFocus="QuickInputBox_GotKeyboardFocus" AutomationProperties.Name="快速点名输入" AutomationProperties.AutomationId="quick-input-window"/>
+            <Button Grid.Column="1" Content="提交" Style="{StaticResource PrimaryButton}" Command="{Binding SubmitCommand}" Margin="8,0,0,0" MinWidth="72"/>
+        </Grid>
+        <WrapPanel Grid.Row="2" VerticalAlignment="Top">
+            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,5,5"><StackPanel><TextBlock Text="呼号" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Callsign}" FontSize="12" FontWeight="Bold"/></StackPanel></Border>
+            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,5,5"><StackPanel><TextBlock Text="QTH" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Qth}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></StackPanel></Border>
+            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,5,5"><StackPanel><TextBlock Text="设备" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Device}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></StackPanel></Border>
+            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,5,5"><StackPanel><TextBlock Text="天线" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Antenna}" FontSize="12" TextTrimming="CharacterEllipsis"/></StackPanel></Border>
+            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,5,5"><StackPanel><TextBlock Text="功率" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Power}" FontSize="12" FontWeight="Bold" Foreground="{StaticResource SuccessBrush}"/></StackPanel></Border>
+        </WrapPanel>
+        <Grid Grid.Row="3" Margin="0,6,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="{Binding StatusMessage}" FontSize="10" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/><Button Grid.Column="1" Content="打开主窗口" Style="{StaticResource BaseButton}" Padding="10,5" Click="ShowMain_Click"/></Grid>
+    </Grid>
+</Window>

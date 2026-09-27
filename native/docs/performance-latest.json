@@ -1,0 +1,69 @@
+{
+  "runtime": "10.0.12",
+  "os": "Microsoft Windows NT 10.0.26300.0",
+  "builtin_first_parse_ms": 32.402,
+  "parser_iterations": 20000,
+  "parser_p50_ms": 0.1161,
+  "parser_p95_ms": 0.3024,
+  "parser_p99_ms": 0.4857,
+  "external_catalog": {
+    "load_ms": 91,
+    "QthPlaceCount": 2521,
+    "QthAliasCount": 9628,
+    "DeviceAliasCount": 179,
+    "MiitModelCount": 7704
+  },
+  "recognition_cases": [
+    {
+      "input": "BA4RLL QYT6900 5W YZ YZ",
+      "callsign": "BA4RLL",
+      "qth": "江苏省扬州市",
+      "device": "全易通 QYT-6900",
+      "antenna": "原装天线",
+      "power": "5W",
+      "unmatched": ""
+    },
+    {
+      "input": "BA4AAA NJXW PD780 4.2M 5W",
+      "callsign": "BA4AAA",
+      "qth": "江苏省南京市玄武区",
+      "device": "海能达 PD-780",
+      "antenna": "4.2米玻璃钢",
+      "power": "5W",
+      "unmatched": ""
+    },
+    {
+      "input": "BA4AAA R6 Y H NJXW",
+      "callsign": "BA4AAA",
+      "qth": "江苏省南京市玄武区",
+      "device": "摩托罗拉 R6",
+      "antenna": "原装天线",
+      "power": "高",
+      "unmatched": ""
+    },
+    {
+      "input": "BA4AAA UVK6 771 1W YZ",
+      "callsign": "BA4AAA",
+      "qth": "江苏省扬州市",
+      "device": "泉盛 UV-K6",
+      "antenna": "SRH-771",
+      "power": "1W",
+      "unmatched": ""
+    },
+    {
+      "input": "BA4AAA XZ-991 5W MYSTERY",
+      "callsign": "BA4AAA",
+      "qth": "",
+      "device": "XZ-991",
+      "antenna": "",
+      "power": "5W",
+      "unmatched": "MYSTERY"
+    }
+  ],
+  "sqlite_init_ms": 27.811,
+  "sqlite_commits": 150,
+  "sqlite_commit_total_ms": 1368.163,
+  "sqlite_commit_avg_ms": 9.121,
+  "sqlite_quick_check": "ok",
+  "total_ms": 4538.133
+}

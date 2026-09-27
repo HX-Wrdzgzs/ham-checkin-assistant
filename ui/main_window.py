@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timedelta
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
@@ -82,8 +83,9 @@ class MainWindow(QMainWindow):
     def __init__(self, service: AppService) -> None:
         super().__init__()
         self.service = service
-        # 快速点名：SQLite 立即提交，Excel 在输入空闲后合并 Save。
-        # dirty 只表示本进程有“已写入 Excel 内存但尚未 Save”的记录。
+        self._closing = False
+        # 保留旧版 Excel 连接后的延迟同步状态；快速点名本身不触碰 Excel。
+        # dirty 只表示显式使用传统 Excel 路径后有待 Save 的内容。
         self._excel_flush_dirty = False
         self._excel_flush_failed = False
         self._undo_in_progress = False
@@ -123,12 +125,25 @@ class MainWindow(QMainWindow):
         self.station_page = StationPage(service)
         # 统一后台任务管理器（P1-3）：单一任务 + 有序退出
         self._workers = WorkerManager(service.settings, self)
+        self._miit_auto_timer = QTimer(self)
+        self._miit_auto_timer.setSingleShot(True)
+        self._miit_auto_timer.timeout.connect(self._maybe_auto_miit_update)
+        self._qth_auto_timer = QTimer(self)
+        self._qth_auto_timer.setSingleShot(True)
+        self._qth_auto_timer.timeout.connect(self._maybe_auto_qth_sync)
+        self._startup_sync_retry_timer = QTimer(self)
+        self._startup_sync_retry_timer.setSingleShot(True)
+        self._startup_sync_retry_timer.timeout.connect(self._startup_sync)
         self._update_worker = None
         self._update_manual = False
         self._about_worker = None
         self._about_dialog = None
         self.history_page = HistoryPage(service, workers=self._workers)
-        self.settings_page = SettingsPage(service)
+        self.settings_page = SettingsPage(service, workers=self._workers)
+        self.settings_page.qth_sync_requested.connect(
+            lambda: self._start_qth_sync(manual=True)
+        )
+        self.settings_page.qth_sync_cancel_requested.connect(self._cancel_qth_sync)
         # NRL Nanny 只读监听（第四阶段）：点击候选填入快速录入框，绝不自动提交
         self.monitor_page = MonitorPage(
             service,
@@ -190,16 +205,29 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._startup_after_recovery)
         self._refresh_session()
         self._refresh_all()
-        self._startup_sync()
+        # 自动检查只在用户打开设置后启用，且只做头部增量扫描；首次下载永远
+        # 需要用户点击，避免启动阶段偷偷产生大流量。
+        self._miit_auto_timer.start(12000)
+        # QTH 内置行政区校准/可选地点源同步均在后台执行，输入热路径始终
+        # 只查本地 SQLite；首次启动给窗口留出事件循环时间再开始。
+        self._qth_auto_timer.start(5000)
         # 自动检查更新放到事件循环后，网络异常或 GitHub 较慢都不能阻塞窗口出现。
         QTimer.singleShot(1500, self._start_update_check)
 
     def _startup_after_recovery(self) -> None:
-        self._crash_recovery()
+        recovery_state = self._crash_recovery()
+        # 正常启动固定定位本地“第 1 场”；用户可以随后点击“选择场次”切换。
+        # 如果用户在崩溃恢复对话框中选择“稍后处理”，则新建空白场次，
+        # 不能悄悄再次打开尚未处理的残留 active 场次。
+        if self.service.current_session() is None and recovery_state != "defer":
+            self.service.select_default_startup_session()
         # 恢复处理完成后仍无当前场次 → 才创建新场次
         if self.service.current_session() is None:
             self.service.create_session()
         self._refresh_all()
+        # 恢复/创建场次完成后再启动历史同步，避免同步 worker 与启动恢复
+        # 竞争当前场次；同步失败只影响画像刷新，不影响本地快速点名。
+        self._startup_sync()
 
     # ---------- 刷新 ----------
     def _refresh_session(self) -> None:
@@ -250,10 +278,10 @@ class MainWindow(QMainWindow):
                     return
             self._refresh_all()
 
-    def _crash_recovery(self) -> None:
+    def _crash_recovery(self) -> str:
         active = self.service.startup_sessions()
         if not active:
-            return
+            return "none"
         items = [f"[{s.id}] {s.name}　{s.date}" for s in active]
         items += ["── 结束所有未结束场次 ──", "── 稍后处理 ──"]
         choice, ok = QInputDialog.getItem(self, "检测到未结束点名",
@@ -262,17 +290,21 @@ class MainWindow(QMainWindow):
                                           items, 0, False)
         if not ok:
             self.service.handle_crash_recovery("defer")
-            return
+            return "defer"
         idx = items.index(choice)
         if idx < len(active):
             sid = self.service.handle_crash_recovery(str(active[idx].id))
             if sid is not None:
-                ok2, msg = self.service.excel_connect()
-                self.statusBar().showMessage(f"已继续场次，Excel：{msg}", 5000)
+                self.statusBar().showMessage(
+                    "已继续场次；Excel 改为场后导出，不在启动时连接", 5000)
+                return "selected"
+            return "defer"
         elif "结束所有" in choice:
             self.service.handle_crash_recovery("end_all")
+            return "end_all"
         else:
             self.service.handle_crash_recovery("defer")
+            return "defer"
 
     # ---------- 提交 / 撤销 ----------
     def _feedback(self, text: str, ok: bool = True) -> None:
@@ -294,7 +326,7 @@ class MainWindow(QMainWindow):
         self._excel_flush_timer.start(self._excel_save_delay_ms())
 
     def _on_input_activity(self, text: str) -> None:
-        """输入中持续重置 Excel 保存计时器，只在真正空闲后 Save。"""
+        """兼容传统 Excel 路径；快速点名默认不会产生 dirty 状态。"""
         if text.strip():
             self._schedule_excel_flush()
 
@@ -338,8 +370,8 @@ class MainWindow(QMainWindow):
         self.session_page.refresh()
 
     def _on_submitted(self, result) -> None:
-        # 先把记录写入 SQLite/Excel 内存，Save 留给空闲计时器合并处理；
-        # 这样下一位呼号可以立即开始输入，不会被 Excel COM Save 卡住。
+        # 先把记录安全写入 SQLite。快速点名不连接、不写入 Excel；场后由
+        # “导出本场”或显式 Excel 补同步完成表格输出。
         res = self.service.commit(result, save_excel=False)
         if not res.get("ok"):
             msg = res.get("message", "提交失败")
@@ -357,7 +389,7 @@ class MainWindow(QMainWindow):
             self._excel_flush_failed = False
             msg += "　Excel：待保存"
             self._schedule_excel_flush()
-        elif not res.get("excel_persisted", False):
+        elif res.get("excel_state") in {"error", "conflict"}:
             msg += f"　Excel: {res.get('excel_msg')}"
         self.statusBar().showMessage(msg, 5000)
         self._feedback(msg)
@@ -440,10 +472,155 @@ class MainWindow(QMainWindow):
             self.floating.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, on_top)
         except Exception:  # noqa: BLE001
             pass
+        # 保存后立即重新评估 QTH 后台同步；关闭开关时取消尚未开始的检查。
+        if bool(candidate.get("qth_place_auto_update", True)):
+            self._qth_auto_timer.start(1000)
+        else:
+            self._qth_auto_timer.stop()
 
     def _startup_sync(self) -> None:
-        # P1-3：统一 WorkerManager 提交；已有任务则跳过
-        self._workers.submit_sync(self._sync_done, message_cb=self.history_page._log)
+        # P1-3：统一 WorkerManager 提交。恢复对话框、已有导入或其它后台
+        # 任务造成竞态时，不把启动同步静默丢掉，稍后自动重试一次又一次，
+        # 但关闭窗口后立即停止重试。
+        if self._closing:
+            return
+        if self._workers.submit_sync(self._sync_done, message_cb=self.history_page._log):
+            return
+        self._startup_sync_retry_timer.start(1000)
+
+    def _maybe_auto_miit_update(self) -> None:
+        if not bool(self.service.settings.get("miit_catalog_auto_update", False)):
+            return
+        status = self.service.miit_catalog_status()
+        if int(status.get("count") or 0) <= 0:
+            return
+        raw = str(self.service.settings.get("miit_catalog_last_auto_check", "") or "")
+        try:
+            last = datetime.fromisoformat(raw) if raw else None
+        except ValueError:
+            last = None
+        if last is not None and datetime.now() - last < timedelta(days=7):
+            return
+        if self._workers.busy():
+            # 型号库扫描本身可以与现场 Excel worker 并行，但自动检查的约束
+            # 更严格：只在真正空闲时启动，忙时稍后再试，不把启动顺序变成
+            # “本次永远跳过”。
+            self._miit_auto_timer.start(30000)
+            return
+        if not self._workers.submit_miit_catalog(
+                full=False, done_cb=self._miit_auto_done,
+                progress_cb=lambda _payload: None):
+            # 竞态下刚好有任务开始，稍后再尝试。
+            self._miit_auto_timer.start(30000)
+            return
+        self.statusBar().showMessage("正在后台检查工信部电台型号库更新…", 6000)
+
+    # ---------- QTH 地点库后台同步 ----------
+    def _qth_sync_interval_hours(self) -> int:
+        try:
+            value = int(self.service.settings.get("qth_place_sync_interval_hours", 24))
+        except (TypeError, ValueError):
+            value = 24
+        return max(1, min(value, 720))
+
+    def _start_qth_sync(self, manual: bool = False) -> bool:
+        """启动一次 QTH 同步；网络和地点库写入都在独立 worker 中完成。"""
+        if self._closing:
+            return False
+        if self._workers.qth_busy():
+            if manual:
+                self.statusBar().showMessage(
+                    "当前有后台任务，QTH 同步稍后再试；不会影响快速点名", 6000)
+            else:
+                self._qth_auto_timer.start(30000)
+            return False
+        try:
+            limit = int(self.service.settings.get("qth_online_query_limit", 5) or 0)
+        except (TypeError, ValueError):
+            limit = 5
+        queries = self.service.qth_place_sync_queries(limit)
+        submitted = self._workers.submit_qth_place_sync(
+            queries,
+            self._qth_sync_done,
+        )
+        if not submitted:
+            if manual:
+                self.statusBar().showMessage(
+                    "QTH 同步未启动：当前已有后台任务，请稍后再试", 6000)
+            else:
+                self._qth_auto_timer.start(30000)
+            return False
+        self.statusBar().showMessage(
+            "QTH 正在后台同步；快速点名和本地搜索不受影响", 6000)
+        return True
+
+    def _maybe_auto_qth_sync(self) -> None:
+        if self._closing or not bool(
+                self.service.settings.get("qth_place_auto_update", True)):
+            return
+        status = self.service.qth_place_status()
+        raw = str(
+            status.get("last_success_at")
+            or self.service.settings.get("qth_place_last_update", "")
+            or ""
+        )
+        try:
+            last = datetime.fromisoformat(raw) if raw else None
+        except ValueError:
+            last = None
+        if last is not None:
+            elapsed = datetime.now() - last
+            interval = timedelta(hours=self._qth_sync_interval_hours())
+            if elapsed < interval:
+                remaining_ms = int((interval - elapsed).total_seconds() * 1000) + 1000
+                self._qth_auto_timer.start(max(60000, min(remaining_ms, 3600000)))
+                return
+        self._start_qth_sync(manual=False)
+
+    def _cancel_qth_sync(self) -> None:
+        if self._workers.cancel_qth_place_sync():
+            self.statusBar().showMessage("正在取消 QTH 同步；已有本地点名数据不会改变", 6000)
+        else:
+            self.statusBar().showMessage("当前没有正在运行的 QTH 同步", 4000)
+
+    def _qth_sync_done(self, result: dict) -> None:
+        # worker 完成后重新打开主线程的只读连接，让解析器立即看到新快照。
+        refreshed = self.service.refresh_qth_place_catalog()
+        if result.get("ok") and refreshed.get("ok"):
+            self.service.settings.set(
+                "qth_place_last_update", datetime.now().isoformat(timespec="seconds")
+            )
+            message = f"QTH 同步完成：{result.get('message') or '本地地点库已更新'}"
+            self.statusBar().showMessage(message, 8000)
+        elif result.get("status") == "cancelled":
+            self.statusBar().showMessage("QTH 同步已取消，继续使用上次可用地点库", 8000)
+        else:
+            message = str(result.get("message") or "QTH 同步失败")
+            if not refreshed.get("ok"):
+                message += f"；刷新失败：{refreshed.get('message')}"
+            self.statusBar().showMessage(message, 10000)
+        if hasattr(self.settings_page, "_refresh_qth_place_status"):
+            self.settings_page._refresh_qth_place_status()
+        if bool(self.service.settings.get("qth_place_auto_update", True)):
+            self._qth_auto_timer.start(
+                max(60000, min(self._qth_sync_interval_hours() * 3600000, 3600000))
+            )
+
+    def _miit_auto_done(self, result: dict) -> None:
+        self.service.refresh_miit_catalog()
+        if result.get("ok"):
+            # 只有头部检查确实提交成功才推进时间戳；失败时下次空闲仍可重试，
+            # 避免一次网络抖动把自动更新静默跳过整整一周。
+            self.service.settings.set(
+                "miit_catalog_last_auto_check", datetime.now().isoformat(timespec="seconds"),
+            )
+            self.statusBar().showMessage(
+                f"电台型号库更新检查完成：新增/变更扫描 {result.get('scanned', 0)} 条",
+                6000,
+            )
+        else:
+            # 自动任务只留状态，不弹模态窗打断点名。
+            self.statusBar().showMessage("电台型号库自动检查失败，可在设置页手动重试", 8000)
 
     # ---------- 关于 / 版本 ----------
     def _show_about(self) -> None:
@@ -656,6 +833,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("已最小化到托盘（右键托盘图标退出）", 5000)
 
     def _quit(self) -> None:
+        self._closing = True
+        self._startup_sync_retry_timer.stop()
+        self._miit_auto_timer.stop()
+        self._qth_auto_timer.stop()
         # 退出前最后一次冲刷快速录入留下的 written 行；失败也不丢 SQLite，
         # 数据库状态会保留为未同步，下一次可从“补同步缺失”继续。
         self._flush_excel_pending(manual=True)

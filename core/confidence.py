@@ -6,6 +6,7 @@ SOURCE_CONFIDENCE = {
     "input": 1.0,
     "alias": 1.0,
     "region": 0.95,
+    "place": 0.96,
     "rule": 0.95,
     "history_recent": 0.8,
     "history_frequent": 0.7,

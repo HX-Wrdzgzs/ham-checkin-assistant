@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import unittest
 
 from tests.helpers import make_service
@@ -115,6 +116,50 @@ class TestWorkerManager(unittest.TestCase):
         self.assertFalse(ok, "已有任务时必须拒绝")
         mgr.shutdown()  # 不阻塞（fake 已结束）
         self.assertFalse(mgr.busy())
+
+    def test_miit_worker_does_not_block_excel_worker(self):
+        """型号库使用独立资料库/worker，扫描时仍可提交 Excel 后台保存。"""
+        from unittest.mock import MagicMock, patch
+
+        from tests.helpers import make_settings
+        from ui.worker_manager import WorkerManager
+
+        settings, _tmp = make_settings()
+        mgr = WorkerManager(settings)
+        miit = MagicMock()
+        miit.isRunning.return_value = True
+        mgr._miit_current = miit
+        fake_excel = MagicMock()
+        fake_excel.isRunning.return_value = True
+        with patch("ui.worker_manager.ExcelUpdateWorker", return_value=fake_excel):
+            self.assertTrue(mgr.busy())
+            self.assertTrue(mgr.submit_excel_update({}, lambda _result: None))
+        self.assertIs(mgr._current, fake_excel)
+        mgr._current = None
+        mgr._miit_current = None
+
+    def test_qth_place_import_worker_writes_isolated_catalog(self):
+        """地点包导入走后台 worker，完成后返回可刷新主连接的状态。"""
+        from tests.helpers import make_settings
+        from ui.worker_manager import QthPlaceImportWorker
+
+        settings, tmp = make_settings()
+        pack = tmp / "places.jsonl"
+        pack.write_text(json.dumps({
+            "name": "中山路169号",
+            "province": "江苏省",
+            "city": "南京市",
+            "district": "鼓楼区",
+            "canonical_qth": "江苏省南京市鼓楼区中山路169号",
+        }, ensure_ascii=False) + "\n", encoding="utf-8")
+        emitted = []
+        worker = QthPlaceImportWorker(settings, pack)
+        worker.done.connect(emitted.append)
+        worker.run()
+        self.assertEqual(len(emitted), 1)
+        self.assertTrue(emitted[0]["ok"], emitted[0])
+        self.assertEqual(emitted[0]["count"], 1)
+        self.assertEqual(emitted[0]["status"]["count"], 1)
 
 
 if __name__ == "__main__":

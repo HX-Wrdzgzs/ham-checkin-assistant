@@ -11,9 +11,10 @@ from core.confidence import confidence_for
 from core.fuzzy_resolver import fuzzy_resolve, fuzzy_resolve_pinyin
 from core.predictor import Predictor
 from database.models import ParseField, ParseResult
-from normalizers.antenna import resolve_antenna
+from normalizers.antenna import normalize_antenna_measurement, resolve_antenna
 from normalizers.callsign import normalize_callsign
 from normalizers.device import resolve_device
+from normalizers.device_aliases import device_model_key
 from normalizers.dictionaries import AliasStore, norm_key
 from normalizers.power import resolve_power
 from normalizers.qth import QthNormalizer
@@ -22,9 +23,32 @@ from normalizers.region_index import RegionIndex
 _SIGNAL = re.compile(r"^5[1-9]$")
 _UNIT_POWER = re.compile(r"^\d+(?:\.\d+)?(w|瓦)$", re.I)
 _UNKNOWN_ANTENNA_METERS = re.compile(
-    r"^\d+(?:\.\d+)?米(?:玻璃钢|天线|gp)?$", re.I)
+    r"^\d+(?:\.\d+)?(?:米|m)(?:玻璃钢|天线|gp)?$", re.I)
 _UNKNOWN_DEVICE = re.compile(r"^(?=.*[a-z])(?=.*\d)[a-z0-9._-]{3,}$", re.I)
-_CHINESE_DEVICE_PREFIXES = ("八重洲", "海能达", "好易通")
+_CHINESE_DEVICE_PREFIXES = (
+    "八重洲", "海能达", "好易通", "摩托罗拉", "威泰克斯", "泉盛", "宝锋",
+    "全易通", "建伍", "艾可慕", "即时通", "特易通", "欧讯", "灵通", "科立讯",
+    "建武", "森海克斯",
+)
+_DEVICE_BRANDS = {
+    "摩托罗拉": "摩托罗拉", "motorola": "摩托罗拉", "moto": "摩托罗拉",
+    "八重洲": "八重洲", "yaesu": "YAESU",
+    "艾可慕": "ICOM", "icom": "ICOM",
+    "建伍": "KENWOOD", "kenwood": "KENWOOD",
+    "建武": "建武",
+    "海能达": "海能达", "hytera": "海能达",
+    "hyt": "海能达",
+    "宝锋": "宝锋", "baofeng": "宝锋",
+    "泉盛": "泉盛", "quansheng": "泉盛",
+    "全易通": "全易通", "qyt": "全易通",
+    "威泰克斯": "威诺", "vertex": "威诺",
+    "即时通": "即时通", "zastone": "即时通",
+    "特易通": "特易通", "tyt": "特易通",
+    "欧讯": "欧讯", "wouxun": "欧讯",
+    "灵通": "灵通", "linton": "灵通",
+    "科立讯": "科立讯", "kirisun": "科立讯",
+    "森海克斯": "森海克斯",
+}
 
 _POWER_WORDS = {
     "低功": "低",
@@ -59,7 +83,8 @@ def _looks_like_antenna(token: str) -> bool:
     """判断未收录但明显像天线描述的原文，避免被 QTH 兜底吞掉。"""
     text = (token or "").strip()
     key = norm_key(text)
-    if "天线" in text or _UNKNOWN_ANTENNA_METERS.fullmatch(text):
+    if ("天线" in text or _UNKNOWN_ANTENNA_METERS.fullmatch(text)
+            or normalize_antenna_measurement(text)):
         return True
     # 现场会把设备/地点拼在一起写成“HT湖北上台”这类天线描述；
     # 只对已知天线前缀 HT + 中文后缀启用，避免把普通中文 QTH 误判为天线。
@@ -91,6 +116,12 @@ def _looks_like_device(token: str) -> bool:
             and any(ch.isdigit() for ch in key))
 
 
+def _looks_like_branded_model(token: str) -> bool:
+    """品牌上下文中的短型号（例如 Motorola R6）允许两字符。"""
+    key = device_model_key(token)
+    return bool(re.fullmatch(r"[a-z]+\d+[a-z0-9]*", key, re.I))
+
+
 def _looks_like_power_word(token: str) -> bool:
     return norm_key(token) in _POWER_WORDS
 
@@ -98,16 +129,69 @@ def _looks_like_power_word(token: str) -> bool:
 class Parser:
     def __init__(self, store: AliasStore, region: RegionIndex, predictor: Predictor,
                  fuzzy_high: float = 92.0, fuzzy_mid: float = 75.0,
-                 fuzzy_margin: float = 5.0) -> None:
+                 fuzzy_margin: float = 5.0, radio_catalog=None, qth_places=None) -> None:
         self.store = store
         self.region = region
-        self.qth_norm = QthNormalizer(store, region)
+        self.qth_norm = QthNormalizer(store, region, qth_places)
         self.predictor = predictor
         self.fuzzy_high = fuzzy_high
         self.fuzzy_mid = fuzzy_mid
         self.fuzzy_margin = fuzzy_margin
+        self.radio_catalog = radio_catalog
+        # 来自本地已明确记录的“观察缩写”。它与用户词典和工信部快照
+        # 分开，只有型号键唯一映射到一个标准值时才会被注入。
+        self.observed_device_aliases: dict[str, str] = {}
         self._qth_fuzzy_opts = None
         self._qth_ambiguous_displays: set[str] | None = None
+
+    def set_observed_device_aliases(self, aliases: dict[str, str] | None) -> None:
+        """更新历史观察到的设备缩写，不写入用户词典。"""
+        self.observed_device_aliases = dict(aliases or {})
+
+    def resolve_device_token(self, token: str) -> tuple[str, str]:
+        """按“用户词典 → 历史观察缩写 → 工信部精确型号”解析设备。
+
+        返回 ``(标准值, 来源)``。来源单独保留，便于预览区区分“用户已
+        确认的缩写”和“根据历史记录观察到的缩写”。
+        """
+        value, _ = resolve_device(self.store, token)
+        if value:
+            return value, "alias"
+        observed = self.observed_device_aliases.get(device_model_key(token))
+        if observed:
+            return observed, "observed_alias"
+        if self.radio_catalog is not None:
+            try:
+                matches = self.radio_catalog.exact_model(token)
+            except Exception:  # noqa: BLE001 - 型号库不可用不影响现场解析
+                matches = []
+            if matches:
+                first = matches[0]
+                value = (first.get("standard_name") or first.get("model") or "").strip()
+                if value:
+                    return value, "miit_catalog"
+            # 只有短的字母+数字缩写才走这一层；合法呼号形状优先留给
+            # 呼号阶段，避免把 BA4XXX 之类误当作型号后缀。若多个官方
+            # 记录对应不同标准值，则不擅自选择，仍交给候选/人工确认。
+            key = device_model_key(token)
+            _, valid_call, _ = normalize_callsign(token)
+            if (not valid_call and len(key) >= 2 and re.search(r"[a-z]", key)
+                    and re.search(r"\d", key)
+                    and hasattr(self.radio_catalog, "abbreviation_matches")):
+                try:
+                    abbreviation_rows = self.radio_catalog.abbreviation_matches(
+                        token, limit=50,
+                    )
+                except Exception:  # noqa: BLE001 - 型号库不可用不影响现场解析
+                    abbreviation_rows = []
+                values = {
+                    (row.get("standard_name") or row.get("model") or "").strip()
+                    for row in abbreviation_rows
+                    if (row.get("standard_name") or row.get("model") or "").strip()
+                }
+                if len(values) == 1:
+                    return next(iter(values)), "miit_catalog"
+        return "", ""
 
     def invalidate_caches(self) -> None:
         """别名/省份变化后使模糊缓存失效（由 AppService 在词典/区划变更时调用）。"""
@@ -116,7 +200,11 @@ class Parser:
 
     def _is_alias_token(self, t: str) -> bool:
         """token 是否已收录为设备/天线/功率/QTH 缩写（优先于呼号判定）。"""
-        return any(self.store.lookup(k, t) for k in ("device", "antenna", "power", "qth"))
+        if self.resolve_device_token(t)[0]:
+            return True
+        if any(self.store.lookup(k, t) for k in ("antenna", "power", "qth")):
+            return True
+        return False
 
     def _consume_compound_device(self, result: ParseResult,
                                  tokens: list[str], used: list[bool]) -> None:
@@ -130,12 +218,71 @@ class Parser:
                 if any(used[j] for j in indexes):
                     continue
                 phrase = " ".join(tokens[j] for j in indexes)
-                v, _ = resolve_device(self.store, phrase)
+                v, source = self.resolve_device_token(phrase)
                 if not v:
                     continue
-                result.device = ParseField(v, "alias", 1.0, raw=phrase)
+                result.device = ParseField(v, source, 1.0, raw=phrase)
                 for j in indexes:
                     used[j] = True
+                return
+
+    def _consume_brand_device_pair(self, result: ParseResult,
+                                   tokens: list[str], used: list[bool]) -> None:
+        """保留“品牌 + 未核准型号”的明确输入。
+
+        工信部没有收录的进口旧机、二手机型仍然是合法的现场资料。只要
+        品牌是白名单中的电台品牌，旁边是字母+数字型号，就把两者作为
+        一个设备值保存；若型号本身已有词典/工信部标准，则优先使用该
+        标准，不擅自重新命名。
+        """
+        if result.device.value:
+            return
+        for i, token in enumerate(tokens):
+            if used[i] or norm_key(token) not in _DEVICE_BRANDS:
+                continue
+            # 品牌通常写在型号前；优先向后看，避免把前面的 BA4XXX
+            # 呼号误当成“字母+数字型号”。
+            for j in (i + 1, i - 1):
+                if j < 0 or j >= len(tokens) or used[j]:
+                    continue
+                model = tokens[j].strip()
+                if not (_looks_like_device(model) or _looks_like_branded_model(model)):
+                    continue
+                # 词典中也有“品牌本身”的缩写（如 tyt/qyt）。品牌后面
+                # 若没有型号，前一个通常就是呼号；不能把 ``BG4TKI TYT``
+                # 拼成“特易通 BG4TKI”。向后找仍可正常处理
+                # ``摩托罗拉 M8268``，这里只限制反向消费。
+                if j < i and _looks_like_callsign(model):
+                    continue
+                resolved, source = self.resolve_device_token(model)
+                value = resolved or f"{_DEVICE_BRANDS[norm_key(token)]} {model.upper()}"
+                result.device = ParseField(value, source or "input", 1.0,
+                                           raw=f"{token} {model}")
+                used[i] = True
+                used[j] = True
+                return
+
+        # 现场也会省略品牌与型号之间的空格，例如“摩托罗拉R6”。先跳过
+        # 已有完整词典/工信部命中的写法，再只对白名单品牌拆解，避免把
+        # 任意中文+数字地点改造成设备。
+        for i, token in enumerate(tokens):
+            if used[i] or self.resolve_device_token(token)[0]:
+                continue
+            # 这里不能用 device_model_key：它专门去掉中文，只适合比较型号。
+            # 无空格中文品牌（“摩托罗拉R6”）需要保留品牌前缀再拆分。
+            compact = norm_key(token)
+            for brand_key, brand in sorted(
+                    _DEVICE_BRANDS.items(), key=lambda item: len(norm_key(item[0])),
+                    reverse=True):
+                brand_compact = norm_key(brand_key)
+                if not brand_compact or not compact.startswith(brand_compact):
+                    continue
+                model = device_model_key(compact[len(brand_compact):])
+                if not _looks_like_branded_model(model):
+                    continue
+                value = f"{brand} {model.upper()}"
+                result.device = ParseField(value, "input", 1.0, raw=token)
+                used[i] = True
                 return
 
     def _qth_fuzzy_options(self) -> list:
@@ -189,6 +336,7 @@ class Parser:
         self._consume_overlapping_aliases(result, tokens, used)
         # 现场名单后半段常见“BF 5rh / BF UV-32 / RYT 6900 / wpks 2108”。
         # 组合命中必须早于单 token 设备阶段，否则 BF 会先占位、型号会落入未识别。
+        self._consume_brand_device_pair(result, tokens, used)
         self._consume_compound_device(result, tokens, used)
 
         # 1. 呼号（已收录缩写优先，避免 id52/ft1900/1907 这类被误当呼号）
@@ -222,9 +370,9 @@ class Parser:
         for i, t in enumerate(tokens):
             if used[i]:
                 continue
-            v, _ = resolve_device(self.store, t)
+            v, source = self.resolve_device_token(t)
             if v and not result.device.value:
-                result.device = ParseField(v, "alias", 1.0, raw=t)
+                result.device = ParseField(v, source, 1.0, raw=t)
                 used[i] = True
 
         # 4. 天线
@@ -243,7 +391,7 @@ class Parser:
             if used[i]:
                 continue
             v, source, cands = self.qth_norm.resolve(t)
-            if v and source in ("alias", "region") and not result.qth.value:
+            if v and source in ("alias", "region", "place") and not result.qth.value:
                 result.qth = ParseField(v, source, confidence_for(source), raw=t)
                 if len(cands) > 1:
                     result.qth.candidates = cands
@@ -260,7 +408,10 @@ class Parser:
                 result.power = ParseField(_POWER_WORDS[norm_key(t)], "input", 1.0, raw=t)
                 used[i] = True
             elif _looks_like_antenna(t) and not result.antenna.value:
-                result.antenna = ParseField(t.strip(), "input", 1.0, raw=t)
+                result.antenna = ParseField(
+                    normalize_antenna_measurement(t) or t.strip(),
+                    "input", 1.0, raw=t,
+                )
                 used[i] = True
             elif _looks_like_device(t) and not result.device.value:
                 result.device = ParseField(t.strip(), "input", 1.0, raw=t)
@@ -322,7 +473,7 @@ class Parser:
                 continue
             qth, source, candidates = self.qth_norm.resolve(token)
             antenna, _ = resolve_antenna(self.store, token)
-            if qth and source in ("alias", "region"):
+            if qth and source in ("alias", "region", "place"):
                 if antenna:
                     overlaps.append((i, token, qth, source, candidates, antenna))
                 else:
@@ -419,8 +570,13 @@ class Parser:
         if level != "low":
             best_level, best_hits, best_kind = level, hits, "qth"
         # 设备 / 天线 / 功率：字符相似度
+        device_options = self.store.options("device")
+        device_options += [
+            (key, value) for key, value in self.observed_device_aliases.items()
+            if key not in {item[0] for item in device_options}
+        ]
         for opts, kind in [
-            (self.store.options("device"), "device"),
+            (device_options, "device"),
             (self.store.options("antenna"), "antenna"),
             (self.store.options("power"), "power"),
         ]:
@@ -430,6 +586,40 @@ class Parser:
                 continue
             if best_level == "low" or (hits and hits[0][0] > (best_hits[0][0] if best_hits else 0)):
                 best_level, best_hits, best_kind = level, hits, kind
+        # 本地工信部快照只用于设备候选，不联网。只在 token 足够长时查询，
+        # 避免用户每敲一个字符都扫描几十万条型号记录。
+        if (best_kind is None or best_kind == "device") and self.radio_catalog is not None:
+            key = norm_key(token)
+            if len(key) >= 3 and not result.device.value:
+                try:
+                    catalog_hits = self.radio_catalog.search(
+                        token, limit=3, allow_fuzzy=False,
+                    )
+                except TypeError:
+                    # 兼容旧版/测试替身 catalog；正式资料库支持快速检索开关。
+                    try:
+                        catalog_hits = self.radio_catalog.search(token, limit=3)
+                    except Exception:  # noqa: BLE001
+                        catalog_hits = []
+                except Exception:  # noqa: BLE001
+                    catalog_hits = []
+                if catalog_hits:
+                    labels = [h.get("standard_name") or h.get("model") for h in catalog_hits]
+                    labels = [v for v in labels if v]
+                    if labels:
+                        exact = next(
+                            (h for h in catalog_hits
+                             if norm_key(h.get("model")) == key), None,
+                        )
+                        if exact:
+                            result.device = ParseField(
+                                exact.get("standard_name") or exact.get("model"),
+                                "miit_catalog", 0.98, raw=token,
+                            )
+                            used[i] = True
+                            return
+                        if not best_hits:
+                            result.device.candidates = list(dict.fromkeys(labels))
         if not best_hits:
             return
         field = getattr(result, best_kind)

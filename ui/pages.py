@@ -8,12 +8,14 @@ from PySide6.QtCore import QStandardPaths, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
     QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-    QLineEdit, QListWidget, QMessageBox, QPushButton, QSpinBox, QTabWidget,
-    QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QLineEdit, QListWidget, QMessageBox, QPushButton, QSizePolicy, QSpinBox,
+    QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QProgressBar,
 )
 
 from config.settings import QUICK_SUBMIT_KEY_OPTIONS, normalize_quick_submit_key
 from excel.exporter import hhmm, export_template
+from normalizers.device_aliases import device_model_abbreviations
 from services.app_service import AppService
 from services.monitor_service import MonitorService
 from ui.source_labels import source_label
@@ -66,21 +68,35 @@ class SessionPage(QWidget):
         self.excel_lbl = QLabel("○ 未连接")
         self._ids: list[int] = []
         self._undo_in_progress = False
-        btn_row = QHBoxLayout()
-        btn_row.addWidget(_button("撤销选中/上一行", self._undo, "↶"))
-        btn_row.addWidget(_button("修改选中", self._edit, "✎"))
-        btn_row.addWidget(_button("导出本场", self._export, "⇩"))
-        btn_row.addWidget(_button("连接 Excel", self._connect, "🔌"))
-        btn_row.addWidget(_button("保存/补同步", self._sync_missing, "⇢"))
-        btn_row.addWidget(_button("一致性检查", self._check, "✔"))
-        btn_row.addWidget(_button("复制本场", self._copy, "⧉"))
-        btn_row.addWidget(_button("结束本场", self._end, "⏹"))
-        btn_row.addStretch()
+        # 操作按钮分成两行，避免 12 个按钮的总 minimumSizeHint 把主窗口
+        # 撑到 1200 像素以上。窗口变窄时表格可以横向滚动，操作区仍然可用。
+        actions = [
+            _button("撤销选中/上一行", self._undo, "↶"),
+            _button("修改选中", self._edit, "✎"),
+            _button("资料补全", self._complete_records, "✦"),
+            _button("选择场次补全", self._choose_completion_session, "⌕"),
+            _button("补全记录", self._show_completion_batches, "▤"),
+            _button("撤销补全", self._undo_completion, "↶"),
+            _button("导出本场", self._export, "⇩"),
+            _button("连接 Excel", self._connect, "🔌"),
+            _button("保存/补同步", self._sync_missing, "⇢"),
+            _button("一致性检查", self._check, "✔"),
+            _button("复制本场", self._copy, "⧉"),
+            _button("结束本场", self._end, "⏹"),
+        ]
+        action_rows = QVBoxLayout()
+        action_rows.setContentsMargins(0, 0, 0, 0)
+        for start in range(0, len(actions), 6):
+            row = QHBoxLayout()
+            for button in actions[start:start + 6]:
+                row.addWidget(button)
+            row.addStretch()
+            action_rows.addLayout(row)
         lay = QVBoxLayout(self)
         lay.addWidget(self.info_lbl)
         lay.addWidget(self.excel_lbl)
         lay.addWidget(self.stats_lbl)
-        lay.addLayout(btn_row)
+        lay.addLayout(action_rows)
         lay.addWidget(self.table)
 
     def refresh(self) -> None:
@@ -102,7 +118,7 @@ class SessionPage(QWidget):
             f"重复报到 {stats['dup']}　省外 {stats['outside']}")
         self.excel_lbl.setText(self.service.excel_status_text())
         rows = [[c.sequence_no, hhmm(c.checkin_time), c.callsign,
-                 c.qth_standard, c.device_standard, c.antenna_standard,
+                 self.service.full_qth(c.qth_standard), c.device_standard, c.antenna_standard,
                  c.power_standard, c.signal, source_label(c.source), c.unmatched]
                 for c in checkins]
         _fill_table(self.table,
@@ -163,6 +179,149 @@ class SessionPage(QWidget):
         status_bar = getattr(window, "statusBar", None)
         if callable(status_bar):
             status_bar().showMessage(message, 6000)
+
+    def _complete_records(self) -> None:
+        session = self.service.current_session()
+        if session is None:
+            session = self._choose_local_session("选择需要补全的本地场次")
+        if session is None:
+            return
+        self._complete_for_session(session)
+
+    def _choose_completion_session(self) -> None:
+        session = self._choose_local_session("选择需要补全的本地场次")
+        if session is not None:
+            self._complete_for_session(session)
+
+    def _choose_local_session(self, title: str):
+        sessions = self.service.all_sessions()
+        if not sessions:
+            QMessageBox.information(self, "资料补全", "暂无本地场次")
+            return None
+        current = self.service.current_session()
+        items = [
+            f"[{s.id}] {s.name}　{s.date}　({s.status})"
+            for s in sessions
+        ]
+        default = next((i for i, s in enumerate(sessions)
+                        if current is not None and s.id == current.id), 0)
+        choice, ok = QInputDialog.getItem(self, title, "场次（活动/已结束均可，外部历史已过滤）：",
+                                          items, default, False)
+        if not ok:
+            return None
+        return sessions[items.index(choice)]
+
+    def _complete_for_session(self, session) -> None:
+        suggestions = self.service.completion_suggestions(session.id)
+        if not suggestions:
+            QMessageBox.information(
+                self, "资料补全",
+                f"「{session.name}」暂时没有可确认的补全建议。\n"
+                "未识别原文仍然完整保存在 SQLite/Excel 中，可先导入历史或补充词典后再试。")
+            return
+        from ui.completion_dialog import CompletionDialog
+
+        dialog = CompletionDialog(self.service, session.id, suggestions, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.apply_result:
+            return
+        result = dialog.apply_result
+        task = result.get("excel_task")
+        if task is not None:
+            self.excel_update_requested.emit(task)
+        status_suffix = "（已结束场次保持 ended，未重新开启）" if session.status == "ended" else ""
+        self._show_status(result.get("message", "资料补全已保存") + status_suffix)
+        self.refresh()
+
+    def _undo_completion(self) -> None:
+        session = self.service.current_session()
+        if session is None:
+            session = self._choose_local_session("选择要撤销补全的本地场次")
+        if session is None:
+            return
+        answer = QMessageBox.question(
+            self, "撤销资料补全",
+            "撤销当前场次最后一批资料补全？\n"
+            "如果补全后又手工修改过相关字段，软件会拒绝撤销以避免覆盖。")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        result = self.service.undo_last_completion(session.id)
+        if not result.get("ok"):
+            QMessageBox.warning(self, "撤销资料补全", result.get("message", "撤销失败"))
+            return
+        task = result.get("excel_task")
+        if task is not None:
+            self.excel_update_requested.emit(task)
+        self._show_status(result.get("message", "已撤销上一批资料补全"))
+        self.refresh()
+
+    def _show_completion_batches(self) -> None:
+        session = self._choose_local_session("查看哪个场次的补全记录")
+        if session is None:
+            return
+        batches = self.service.list_completion_batches(session.id, limit=100)
+        if not batches:
+            QMessageBox.information(self, "补全记录", f"「{session.name}」还没有补全批次")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"补全记录：{session.name}（{session.date}）")
+        dialog.resize(1050, 560)
+        table = QTableWidget(len(batches), 8)
+        table.setHorizontalHeaderLabels(
+            ["批次", "应用时间", "状态", "记录数", "字段数", "Excel", "Excel错误", "查看"])
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.verticalHeader().setVisible(False)
+        for row, batch in enumerate(batches):
+            values = [
+                batch.get("batch_id", ""), batch.get("created_at", ""),
+                batch.get("status", ""), batch.get("record_count", 0),
+                batch.get("change_count", 0), batch.get("excel_status", ""),
+                batch.get("excel_error", ""), "双击查看明细",
+            ]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(str(value or ""))
+                if col == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, batch.get("batch_id"))
+                table.setItem(row, col, item)
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        detail = QTextEdit(); detail.setReadOnly(True); detail.setMinimumHeight(180)
+
+        def show_detail(_row: int, _column: int = 0) -> None:
+            current_row = table.currentRow()
+            if current_row < 0:
+                return
+            batch_id = str(table.item(current_row, 0).data(Qt.ItemDataRole.UserRole) or "")
+            details = self.service.completion_batch_details(batch_id)
+            detail.setPlainText("\n".join(
+                f"#{item.get('record_id')} {item.get('field_name')}: "
+                f"{item.get('old_value') or '（空）'} → {item.get('new_value') or '（空）'}；"
+                f"未识别：{item.get('old_unmatched') or '（空）'} → "
+                f"{item.get('new_unmatched') or '（空）'}；"
+                f"来源：{item.get('source_type')} / {item.get('source_detail') or '-'}；"
+                f"置信度：{item.get('confidence', 0)}%；"
+                f"工信部记录：{item.get('miit_article_id') or '-'}；"
+                f"状态：{item.get('status')}"
+                for item in details
+            ) or "该批次没有字段明细")
+
+        table.cellClicked.connect(show_detail)
+        table.cellDoubleClicked.connect(show_detail)
+        if batches:
+            table.selectRow(0)
+            show_detail(0)
+        close_button = _button("关闭", dialog.reject)
+        button_row = QHBoxLayout(); button_row.addStretch(); button_row.addWidget(close_button)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(
+            "补全先写入 SQLite，再异步同步对应场次的 Excel。Excel 失败不会删除补全，"
+            "可从本场记录重新补同步。"))
+        layout.addWidget(table)
+        layout.addWidget(detail)
+        layout.addLayout(button_row)
+        dialog.exec()
 
     def _export(self) -> None:
         session = self.service.current_session()
@@ -317,6 +476,9 @@ class HistoryPage(QWidget):
         if "__error__" in res:
             self._log(str(res["__error__"]))
         else:
+            # ImportWorker 使用独立 SQLite 连接；任务完成后在主线程刷新
+            # 历史观察缩写，让未核准机型也能在下一次输入中补全。
+            self.service.refresh_observed_device_aliases()
             self._log(f"导入完成：{len(res)} 个文件")
         self.refresh()
 
@@ -333,6 +495,9 @@ class HistoryPage(QWidget):
     def _sync_done(self, result: dict) -> None:
         self.status_lbl.setText("")
         if result.get("ok"):
+            # SyncWorker 同样使用独立连接，365dt 写入完成后重新读取
+            # 观察型号，避免把后台刚同步的机型等到下次启动才可用。
+            self.service.refresh_observed_device_aliases()
             failed = result.get("failed") or []
             msg = (f"365dt 同步完成：新增 {result.get('inserted')} 条，"
                    f"跳过 {result.get('skipped')} 条")
@@ -379,7 +544,10 @@ class HistoryPage(QWidget):
         btn_cancel = _button("取消", lambda: dlg.reject())
         row = QHBoxLayout(); row.addStretch(); row.addWidget(btn_ok); row.addWidget(btn_cancel)
         lay = QVBoxLayout(dlg)
-        lay.addWidget(QLabel("从导入历史推导的常用缩写建议："))
+        lay.addWidget(QLabel(
+            "从本地签到、365dt 和 Excel 历史记录推导设备/QTH 缩写；"
+            "只生成建议，勾选“加入选中”后才会永久写入词典："
+        ))
         lay.addWidget(table)
         lay.addLayout(row)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -399,16 +567,20 @@ class HistoryPage(QWidget):
 class SettingsPage(QWidget):
     """设置：常规 / Excel / 365dt / 阈值 / 词典管理。"""
 
-    def __init__(self, service: AppService, parent=None) -> None:
+    qth_sync_requested = Signal()
+    qth_sync_cancel_requested = Signal()
+    def __init__(self, service: AppService, workers=None, parent=None) -> None:
         super().__init__(parent)
         self.service = service
         self.s = service.settings
+        self.workers = workers
         # P1-14：保存后 UI 层回调（如重新注册全局快捷键），由主窗口注入
         self._on_settings_applied = None
         tabs = QTabWidget()
         tabs.addTab(self._build_general(), "常规")
         tabs.addTab(self._build_excel(), "Excel")
         tabs.addTab(self._build_sync(), "365dt / 监听")
+        tabs.addTab(self._build_qth_places(), "QTH 地点")
         tabs.addTab(self._build_thresholds(), "解析")
         tabs.addTab(self._build_aliases(), "词典")
         lay = QVBoxLayout(self)
@@ -456,6 +628,11 @@ class SettingsPage(QWidget):
         self.cb_ontop.setChecked(bool(self.s.get("window_on_top", True)))
         f.addRow("", self.cb_ontop)
         self.lbl_db = QLabel(str(self.s.db_path))
+        self.lbl_db.setWordWrap(True)
+        self.lbl_db.setMinimumWidth(0)
+        self.lbl_db.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         f.addRow("数据库文件", self.lbl_db)
         # P2：备份 / 恢复
         row = QHBoxLayout()
@@ -500,15 +677,20 @@ class SettingsPage(QWidget):
         f.addRow("Excel 文件", row)
         self.ed_excel_sheet = QLineEdit(str(self.s.get("excel_sheet_name")))
         f.addRow("Sheet 名称", self.ed_excel_sheet)
-        self.cb_auto_save = QCheckBox("提交后自动保存 Excel（空闲合并）")
+        self.cb_auto_save = QCheckBox("连接 Excel 后允许传统自动同步（快速点名不使用）")
         self.cb_auto_save.setChecked(bool(self.s.get("excel_auto_save", True)))
+        self.cb_auto_save.setToolTip(
+            "快速点名始终只写 SQLite；此选项只影响已连接 Excel 后的旧版同步/补同步路径。"
+        )
         f.addRow("", self.cb_auto_save)
         self.sp_excel_delay = QSpinBox()
         self.sp_excel_delay.setRange(100, 5000)
         self.sp_excel_delay.setSingleStep(50)
         self.sp_excel_delay.setValue(int(self.s.get("excel_save_delay_ms", 600)))
-        self.sp_excel_delay.setToolTip("连续点名时，停止输入该时间后合并保存一次，避免每条都触发 Excel Save")
-        f.addRow("空闲保存延迟（毫秒）", self.sp_excel_delay)
+        self.sp_excel_delay.setToolTip(
+            "仅用于兼容传统 Excel 内存写入路径；快速点名不等待 Excel，也不会触发此计时器。"
+        )
+        f.addRow("传统 Excel 空闲保存延迟（毫秒）", self.sp_excel_delay)
         f.addRow("", _button("连接 Excel", self._connect_excel))
         f.addRow("", _button("生成空白模板", self._make_template))
         return w
@@ -540,7 +722,165 @@ class SettingsPage(QWidget):
         self.sp_fetch.setValue(int(self.s.get("dt365_max_fetch", 300)))
         self.sp_fetch.setToolTip("每次同步最多拉取多少个呼号的历史（365dt 每个呼号约返回最近 50 条）")
         f.addRow("每次拉取呼号数", self.sp_fetch)
+
+        # 工信部电台型号库：首次下载/更新均在后台运行，快速点名不依赖网络。
+        self.miit_auto = QCheckBox("每周空闲时检查电台型号库更新（不打断点名）")
+        self.miit_auto.setChecked(bool(self.s.get("miit_catalog_auto_update", False)))
+        f.addRow("工信部自动检查", self.miit_auto)
+        self.sp_miit_page = QSpinBox()
+        self.sp_miit_page.setRange(5, 1000)
+        self.sp_miit_page.setSingleStep(50)
+        self.sp_miit_page.setValue(int(self.s.get("miit_catalog_page_size", 1000)))
+        self.sp_miit_page.setToolTip("官网拒绝大分页时会自动降级；单线程顺序请求")
+        f.addRow("型号库每页数量", self.sp_miit_page)
+        self.miit_status = QLabel("")
+        self.miit_status.setWordWrap(True)
+        self.miit_status.setMinimumWidth(0)
+        self.miit_status.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        f.addRow("型号库状态", self.miit_status)
+        self.miit_progress = QProgressBar()
+        self.miit_progress.setRange(0, 100)
+        self.miit_progress.setValue(0)
+        f.addRow("同步进度", self.miit_progress)
+        miit_buttons = QHBoxLayout()
+        miit_buttons.addWidget(_button("首次下载电台型号库", self._start_miit_full, "⇩"))
+        miit_buttons.addWidget(_button("更新电台型号库", self._start_miit_incremental, "⟳"))
+        miit_buttons.addWidget(_button("重新完整同步", self._restart_miit_full, "↻"))
+        miit_buttons.addWidget(_button("取消同步", self._cancel_miit, "⏹"))
+        miit_buttons.addWidget(_button("打开型号库搜索", self._open_miit_search, "⌕"))
+        f.addRow("工信部电台库", miit_buttons)
+        self._refresh_miit_status()
         return w
+
+    # ---- QTH 地点包 ----
+    def _build_qth_places(self) -> QWidget:
+        w = QWidget()
+        f = QFormLayout(w)
+        self.qth_place_status = QLabel("")
+        self.qth_place_status.setWordWrap(True)
+        self.qth_place_status.setMinimumWidth(0)
+        self.qth_place_status.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        f.addRow("本地地点库", self.qth_place_status)
+        self.ed_qth_provinces = QLineEdit(
+            ",".join(self.s.get("qth_place_selected_provinces", ["江苏"]) or [])
+        )
+        self.ed_qth_provinces.setToolTip("用于以后下载/安装地点包，多个省份用逗号分隔")
+        f.addRow("计划使用省份", self.ed_qth_provinces)
+        self.cb_qth_auto = QCheckBox("启动后后台同步 QTH（不阻塞快速点名）")
+        self.cb_qth_auto.setChecked(bool(self.s.get("qth_place_auto_update", True)))
+        self.cb_qth_auto.setToolTip(
+            "行政区划来自程序内置快照；道路、学校、车站等详细地点需要配置地点包或天地图 Key。"
+        )
+        f.addRow("后台自动同步", self.cb_qth_auto)
+        self.sp_qth_interval = QSpinBox()
+        self.sp_qth_interval.setRange(1, 720)
+        self.sp_qth_interval.setSuffix(" 小时")
+        self.sp_qth_interval.setValue(
+            int(self.s.get("qth_place_sync_interval_hours", 24) or 24)
+        )
+        self.sp_qth_interval.setToolTip("自动同步的最短间隔；手动点击同步不受此间隔限制")
+        f.addRow("自动同步间隔", self.sp_qth_interval)
+        self.ed_qth_pack_url = QLineEdit(str(self.s.get("qth_place_pack_url", "") or ""))
+        self.ed_qth_pack_url.setPlaceholderText("可选：HTTPS JSONL / CSV 地点包地址")
+        self.ed_qth_pack_url.setToolTip(
+            "如果你有自己的公开地点包，可填 HTTPS 地址；支持 ETag/Last-Modified 缓存。"
+        )
+        f.addRow("远程地点包", self.ed_qth_pack_url)
+        self.ed_qth_tianditu_token = QLineEdit(
+            str(self.s.get("qth_tianditu_token", "") or "")
+        )
+        self.ed_qth_tianditu_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ed_qth_tianditu_token.setPlaceholderText("可选：天地图 tk / Key")
+        self.ed_qth_tianditu_token.setToolTip(
+            "只用于后台缓存已保存过的道路/学校/车站等 QTH，不用于全网抓取。"
+        )
+        f.addRow("天地图 Key", self.ed_qth_tianditu_token)
+        self.sp_qth_online_limit = QSpinBox()
+        self.sp_qth_online_limit.setRange(0, 50)
+        self.sp_qth_online_limit.setSuffix(" 条")
+        self.sp_qth_online_limit.setValue(
+            int(self.s.get("qth_online_query_limit", 5) or 0)
+        )
+        self.sp_qth_online_limit.setToolTip("每次后台最多缓存多少条本地历史道路 QTH；0 表示不请求天地图")
+        f.addRow("每次在线缓存上限", self.sp_qth_online_limit)
+        sync_buttons = QHBoxLayout()
+        sync_buttons.addWidget(_button("立即同步 QTH", self.qth_sync_requested.emit, "↻"))
+        sync_buttons.addWidget(_button("取消同步", self.qth_sync_cancel_requested.emit, "■"))
+        sync_buttons.addStretch()
+        f.addRow("手动同步", sync_buttons)
+        f.addRow(
+            "导入地点包",
+            _button("导入 JSONL / CSV 地点包…", self._pick_qth_place_pack, "⇩"),
+        )
+        qth_help = QLabel(
+            "内置行政区会在后台自动校准；远程地点包每行至少包含 name、province、city、"
+            "district、canonical_qth，可选 aliases、kind。天地图需要用户自行申请 Key，"
+            "这里只缓存已保存过的道路/学校/车站 QTH，不做全网抓取。输入时始终只查本地库，"
+            "唯一精确命中才自动采用，同名地点会保留候选供选择。网络失败会保留旧库，"
+            "不会阻塞点名或删除已有记录。"
+        )
+        # 说明文字必须允许换行，否则 QFormLayout 会按整行文本计算
+        # minimumSizeHint，把主窗口最小宽度撑到两千像素以上，导致用户无法
+        # 拖窄窗口。让标签随设置页宽度换行，同时保留可读的最小高度。
+        qth_help.setWordWrap(True)
+        qth_help.setMinimumWidth(0)
+        f.addRow("说明", qth_help)
+        self._refresh_qth_place_status()
+        return w
+
+    def _refresh_qth_place_status(self) -> None:
+        label = getattr(self, "qth_place_status", None)
+        if label is None:
+            return
+        status = self.service.qth_place_status()
+        sync_status = status.get("last_sync_status") or "未同步"
+        sync_message = status.get("last_sync_message") or ""
+        success_at = status.get("last_success_at") or "尚未成功同步"
+        label.setText(
+            f"记录 {status.get('count', 0)} 条；最近写入：{status.get('updated_at') or '尚未导入'}\n"
+            f"最近成功同步：{success_at}；状态：{sync_status}\n"
+            f"{sync_message}\n"
+            f"文件：{status.get('path', self.s.qth_place_catalog_path)}"
+        )
+
+    def _pick_qth_place_pack(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入 QTH 地点包", "",
+            "地点包 (*.jsonl *.ndjson *.json *.csv *.gz *.zip)",
+        )
+        if not path:
+            return
+        if self.workers is None:
+            result = self.service.import_qth_place_pack(path)
+            self._qth_place_import_done(result)
+            return
+        if not self.workers.submit_qth_place_import(path, self._qth_place_import_done):
+            QMessageBox.information(
+                self, "QTH 地点包", "当前已有后台任务（同步、导入或 Excel 保存），请稍后再试。"
+            )
+            return
+        self.qth_place_status.setText("正在后台导入地点包；快速点名仍可继续。")
+
+    def _qth_place_import_done(self, result: dict) -> None:
+        if result.get("ok"):
+            refreshed = self.service.refresh_qth_place_catalog()
+            self._refresh_qth_place_status()
+            if refreshed.get("ok"):
+                QMessageBox.information(
+                    self, "QTH 地点包", f"已导入/更新 {result.get('count', 0)} 条地点。"
+                )
+            else:
+                QMessageBox.warning(
+                    self, "QTH 地点包",
+                    "地点包已写入，但主界面刷新失败：" + str(refreshed.get("message")),
+                )
+        else:
+            self._refresh_qth_place_status()
+            QMessageBox.warning(self, "QTH 地点包", str(result.get("message") or "导入失败"))
 
     # ---- 阈值 ----
     def _build_thresholds(self) -> QWidget:
@@ -566,6 +906,130 @@ class SettingsPage(QWidget):
         # 每次切到设置页都刷新词典，确保“生成词典建议”加入的别名立即可见
         for kind in ("qth", "device", "antenna", "power"):
             self._reload_alias(kind)
+        self._refresh_miit_status()
+        self._refresh_qth_place_status()
+
+    def _refresh_miit_status(self, progress: dict | None = None) -> None:
+        status = self.service.miit_catalog_status()
+        run = status.get("run") or {}
+        if progress:
+            total = int(progress.get("total") or 0)
+            scanned = int(progress.get("scanned") or 0)
+            pages = int(progress.get("total_pages") or 0)
+            page = int(progress.get("page") or 0)
+            if total:
+                self.miit_progress.setValue(max(0, min(100, int(scanned * 100 / total))))
+            self.miit_status.setText(
+                f"后台同步：第 {page}/{pages or '?'} 页，已扫描 {scanned} 条，"
+                f"保留电台 {progress.get('retained', 0)} 条，"
+                f"排除 {progress.get('excluded', 0)} 条，未分类 {progress.get('unknown', 0)} 条"
+            )
+            return
+        if run.get("status") in {"running", "cancelled", "failed"}:
+            self.miit_status.setText(
+                f"上次同步状态：{run.get('status')}；已扫描 {run.get('scanned_count', 0)} 条。"
+                + (f"原因：{run.get('last_error')}" if run.get("last_error") else "")
+            )
+        else:
+            updated = status.get("updated_at") or "尚未完成同步"
+            self.miit_status.setText(
+                f"本地电台型号：{status.get('count', 0)} 条；最近完成：{updated}；"
+                f"规则：{status.get('filter_rule_version', 'radio-v1')}\n"
+                f"文件：{status.get('path', self.s.miit_catalog_path)}"
+            )
+
+    def _start_miit_full(self) -> None:
+        self._start_miit_sync(full=True, resume=True)
+
+    def _restart_miit_full(self) -> None:
+        self._start_miit_sync(full=True, resume=False)
+
+    def _start_miit_incremental(self) -> None:
+        self._start_miit_sync(full=False)
+
+    def _start_miit_sync(self, *, full: bool, resume: bool = True) -> None:
+        if self.workers is None:
+            QMessageBox.warning(self, "型号库", "后台任务管理器尚未就绪")
+            return
+        if not self.workers.submit_miit_catalog(
+                full=full, resume=resume,
+                done_cb=self._miit_done, progress_cb=self._miit_progress):
+            QMessageBox.information(
+                self, "型号库", "当前已有后台任务（同步、导入或 Excel 保存），请稍后再试。")
+            return
+        self.miit_progress.setValue(0)
+        if not full:
+            action = "正在后台检查更新"
+        elif resume:
+            action = "正在后台继续读取"
+        else:
+            action = "正在后台重新读取"
+        self.miit_status.setText(
+            action
+            + "工信部“无线电发射设备型号核准”（category 352），"
+            "不会写入蓝牙、模块、手机等非电台记录。"
+        )
+
+    def _cancel_miit(self) -> None:
+        if self.workers is not None and self.workers.cancel_miit_catalog():
+            self.miit_status.setText("正在取消；已完成页会保留断点，下次可继续。")
+        else:
+            self.miit_status.setText("当前没有正在运行的型号库同步。")
+
+    def _miit_progress(self, payload: dict) -> None:
+        self._refresh_miit_status(payload)
+
+    def _miit_done(self, result: dict) -> None:
+        refreshed = self.service.refresh_miit_catalog()
+        if result.get("ok"):
+            self._refresh_miit_status()
+            self.miit_progress.setValue(100)
+            self._show_status(
+                f"工信部电台型号库完成：扫描 {result.get('scanned', 0)} 条，"
+                f"保留 {result.get('retained', 0)} 条，排除 {result.get('excluded', 0)} 条"
+            )
+        else:
+            self._refresh_miit_status(result)
+            QMessageBox.warning(self, "型号库同步失败", str(result.get("message") or "同步失败"))
+        if not refreshed.get("ok"):
+            self.miit_status.setText(
+                self.miit_status.text() + "\n主界面刷新失败：" + str(refreshed.get("message"))
+            )
+
+    def _open_miit_search(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("本地工信部电台型号库搜索")
+        dialog.resize(820, 480)
+        query = QLineEdit()
+        query.setPlaceholderText("型号/品牌/申请单位/核准代码（只查本地，不联网）")
+        table = QTableWidget()
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        detail = QTextEdit(); detail.setReadOnly(True); detail.setMaximumHeight(130)
+
+        def search() -> None:
+            # 型号库搜索是资料核对入口，不应沿用现场补全的 3 条候选上限；
+            # 搜索品牌（如“泉盛”）时要能看到完整匹配列表。
+            rows = self.service.search_miit_radio_models(query.text(), limit=200)
+            _fill_table(
+                table,
+                ["标准名称", "官方型号", "类别", "申请单位", "核准代码", "有效期"],
+                [[r.get("standard_name"), r.get("model"), r.get("device_class"),
+                  r.get("applicant"), r.get("approval_code"),
+                  r.get("expiry_status") or "未标记过期"] for r in rows],
+                stretch_col=0,
+            )
+            detail.setPlainText("\n".join(
+                f"{r.get('standard_name') or r.get('model')}：记录 {r.get('article_id')}；"
+                f"CMIIT {r.get('cmiit_id') or '-'}；匹配：{r.get('match_reason')}；"
+                f"历史核准 {r.get('historical_count', 1)} 条"
+                for r in rows
+            ))
+
+        row = QHBoxLayout(); row.addWidget(query); row.addWidget(_button("搜索", search, "⌕"))
+        lay = QVBoxLayout(dialog); lay.addLayout(row); lay.addWidget(table); lay.addWidget(detail)
+        query.returnPressed.connect(search)
+        dialog.exec()
 
     def _alias_tab(self, kind: str) -> QWidget:
         w = QWidget()
@@ -580,6 +1044,8 @@ class SettingsPage(QWidget):
         add_row.addWidget(_button("添加", lambda: self._add_alias(kind, ed_alias, ed_std), "＋"))
         if kind == "qth":
             add_row.addWidget(_button("生成缩写", lambda: self._gen_abbr(ed_alias, ed_std), "⚡"))
+        elif kind == "device":
+            add_row.addWidget(_button("生成缩写", lambda: self._gen_device_abbr(ed_alias, ed_std), "⚡"))
         add_row.addWidget(_button("删除选中", lambda: self._del_alias(kind, table), "－"))
         lay = QVBoxLayout(w)
         lay.addWidget(table)
@@ -597,6 +1063,24 @@ class SettingsPage(QWidget):
             QMessageBox.warning(self, "生成缩写",
                                 f"缩写 {abbr} 已被其他 QTH 占用：{'、'.join(conflicts)}\n"
                                 f"请手动改别名，不能覆盖。")
+
+    def _gen_device_abbr(self, ed_alias: QLineEdit, ed_std: QLineEdit) -> None:
+        """从用户确认的设备标准名生成主型号缩写，不调用工信部。"""
+        values = device_model_abbreviations(ed_std.text().strip())
+        if not values:
+            QMessageBox.warning(
+                self, "生成设备缩写",
+                "未找到明确的字母+数字型号。请先填写完整设备名，例如：摩托罗拉 M8268。",
+            )
+            return
+        ed_alias.setText(values[0])
+        if len(values) > 1:
+            QMessageBox.information(
+                self, "生成设备缩写",
+                f"已填入主缩写：{values[0]}\n"
+                f"还可使用：{'、'.join(values[1:])}\n"
+                "点击“添加”后可再分别加入其他缩写。",
+            )
 
     def _reload_alias(self, kind: str) -> None:
         table = self._alias_tables.get(kind)
@@ -643,6 +1127,16 @@ class SettingsPage(QWidget):
             "excel_save_delay_ms": self.sp_excel_delay.value(),
             "dt365_uid": self.ed_uid.text().strip(),
             "dt365_max_fetch": self.sp_fetch.value(),
+            "miit_catalog_auto_update": self.miit_auto.isChecked(),
+            "miit_catalog_page_size": self.sp_miit_page.value(),
+            "qth_place_auto_update": self.cb_qth_auto.isChecked(),
+            "qth_place_selected_provinces": [
+                item.strip() for item in self.ed_qth_provinces.text().split(",") if item.strip()
+            ],
+            "qth_place_sync_interval_hours": self.sp_qth_interval.value(),
+            "qth_place_pack_url": self.ed_qth_pack_url.text().strip(),
+            "qth_tianditu_token": self.ed_qth_tianditu_token.text().strip(),
+            "qth_online_query_limit": self.sp_qth_online_limit.value(),
             "fuzzy_high": float(self.sp_high.value()),
             "fuzzy_mid": float(self.sp_mid.value()),
         }

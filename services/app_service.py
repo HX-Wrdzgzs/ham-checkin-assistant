@@ -6,6 +6,8 @@ SQLite 写入成功后才写 Excel；Excel 失败不影响 SQLite。
 from __future__ import annotations
 
 import re
+import uuid
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -14,24 +16,27 @@ from core.logging_setup import get_logger, setup_logging
 from core.parser import Parser
 from core.predictor import Predictor
 from database.db import backup_daily, connect
+from database.miit_catalog import MiitCatalogRepository
+from database.qth_places import QthPlaceCatalog
 from database.models import Checkin, ParseResult, Session
 from database.repository import Repository
 from database.seed import seed_default_aliases
 from excel.controller import ExcelController
 from excel.exporter import export_session as exporter_export, hhmm
 from normalizers.dictionaries import AliasStore, norm_key
+from normalizers.device_aliases import device_model_abbreviations
 from normalizers.region_index import RegionIndex
 from normalizers.regions import REGIONS
 from providers.dt365 import Dt365Provider
 from providers.excel_import import ExcelImportProvider
+from providers.miit import model_abbreviations
+from services.completion_service import CompletionEngine, full_qth_candidate
+from services.miit_catalog_service import MiitCatalogSyncService
+from services.qth_place_service import QthPlaceService
 from services.standardizer import Standardizer
 from services.sync_service import SyncService
 
 app_log = get_logger("app")
-
-# 设备别名建议：剥离的常见品牌前缀
-_BRANDS = ("yaesu", "icom", "kenwood", "anytone", "motorola", "quansheng",
-           "baofeng", "wouxun", "vertex", "alincotw", "retvis", "jim")
 
 
 def _norm(v) -> str:
@@ -57,6 +62,23 @@ def _remove_unmatched_value(unmatched: str, value: str) -> str:
             remaining = parts[:start] + parts[start + width:]
             return " ".join(remaining)
     return " ".join(parts)
+
+
+def _remove_unmatched_span(unmatched: str, start, end) -> str:
+    """按预览时记录的 token 区间消费未识别内容。
+
+    处理重复 ``yz`` 时不能再次按字符串找“第一个 yz”，否则用户选择
+    第二个 token 也会误删第一个。区间从原始快照计算，并由调用方按倒序
+    消费，前面的 token 位置不会被后面的删除影响。
+    """
+    try:
+        start, end = int(start), int(end)
+    except (TypeError, ValueError):
+        return str(unmatched or "").strip()
+    parts = str(unmatched or "").split()
+    if start < 0 or end <= start or end > len(parts):
+        return str(unmatched or "").strip()
+    return " ".join(parts[:start] + parts[end:])
 
 
 def build_consistency_report(sqlite_checkins: list, excel_rows: list[dict]) -> tuple[bool, str]:
@@ -147,6 +169,19 @@ class AppService:
 
         self.conn = connect(settings.db_path)
         self.repo = Repository(self.conn)
+        # 工信部资料库是可选的独立快照：损坏/尚未下载时不能阻止本地点名。
+        try:
+            self.miit_catalog = MiitCatalogRepository(settings.miit_catalog_path)
+        except Exception as exc:  # noqa: BLE001
+            self.miit_catalog = None
+            app_log.warning("MIIT catalog unavailable; local check-in remains usable: %s", exc)
+        try:
+            self.qth_place_catalog = QthPlaceCatalog(settings.qth_place_catalog_path)
+            self.qth_place_service = QthPlaceService(self.qth_place_catalog)
+        except Exception as exc:  # noqa: BLE001
+            self.qth_place_catalog = None
+            self.qth_place_service = None
+            app_log.warning("QTH place catalog unavailable; admin QTH remains usable: %s", exc)
         seed_default_aliases(self.repo)
         self.store = AliasStore(self.repo)
         self.region = RegionIndex(settings.get("default_province", "江苏"))
@@ -156,11 +191,23 @@ class AppService:
             fuzzy_high=float(settings.get("fuzzy_high", 92)),
             fuzzy_mid=float(settings.get("fuzzy_mid", 75)),
             fuzzy_margin=float(settings.get("fuzzy_margin", 5)),
+            radio_catalog=self.miit_catalog,
+            qth_places=self.qth_place_service,
         )
         # 预热解析缓存（模糊选项/频率），避免首键卡顿
         self.parser._qth_fuzzy_options()
         self._value_frequency()
         self.standardizer = Standardizer(self.store, self.region)
+        self.completion_engine = CompletionEngine(
+            self.repo, self.standardizer, self.region, catalog=self.miit_catalog,
+            place_resolver=self.qth_place_service,
+        )
+        # 从已有签到/导入记录建立“观察缩写”索引。它不修改数据库，也不
+        # 冒充工信部核准；只在一个缩写唯一指向一个已明确标准值时参与
+        # 现场解析，冲突值会留给设置页人工确认。
+        self._observed_device_evidence: dict[str, Counter[str]] = {}
+        self._observed_device_aliases: dict[str, str] = {}
+        self.refresh_observed_device_aliases()
         self.excel = ExcelController()
         self.excel_provider = ExcelImportProvider(self.repo)
         self.sync_service = SyncService(
@@ -271,12 +318,40 @@ class AppService:
         if self._clean_shutdown and self._last_local_session_id:
             previous = next((s for s in active if s.id == self._last_local_session_id), None)
             if previous is not None:
-                self._current_session_id = previous.id
-                self._apply_excel_binding(previous)
-                app_log.info("clean startup resumed local session #%d %s",
-                             previous.id, previous.name)
+                # 旧版本会在这里恢复 last_local_session_id，造成正常重启后
+                # 自动跳到上一次场次。现在正常启动统一由 UI 选择“第 1 场”
+                # 作为默认；保留这个分支只是为了兼容旧配置并明确跳过崩溃提示。
+                app_log.info(
+                    "clean startup found previous local session #%d %s; "
+                    "default session selection is deferred to the UI",
+                    previous.id, previous.name,
+                )
                 return []
         return active
+
+    def select_default_startup_session(self) -> Session | None:
+        """选择正常启动的默认本地场次，不恢复上次场次也不连接 Excel。
+
+        优先选择名称严格为“第 1 场点名”的可写场次；如果旧数据库没有
+        这个标准名称，则选择最早创建的本地 active 场次。结束场次保持只读，
+        不会被启动逻辑偷偷 reopen。
+        """
+        active = [s for s in self.all_sessions() if s.status == "active"]
+        if not active:
+            return None
+
+        def is_first_named(session: Session) -> bool:
+            return bool(re.fullmatch(r"第0*1场点名", str(session.name or "").strip()))
+
+        first_named = [s for s in active if is_first_named(s)]
+        selected = min(first_named or active, key=lambda s: int(s.id or 0))
+        self._current_session_id = selected.id
+        # 启动默认选场次也不自动连接该场次的 Excel；连接必须由用户明确触发。
+        app_log.info(
+            "clean startup selected default local session #%d %s; Excel remains disconnected",
+            selected.id, selected.name,
+        )
+        return selected
 
     def handle_crash_recovery(self, choice) -> int | None:
         """崩溃恢复决策。choice: 'end_all' / 'defer' / session_id(str)。
@@ -315,7 +390,7 @@ class AppService:
         return self.repo.list_sessions(local_only=True)
 
     def mark_clean_shutdown(self) -> bool:
-        """记录正常退出状态；下次启动自动回到上次本地 active 场次。"""
+        """记录正常退出状态；下次启动默认选择第一场，不再恢复上次停留场次。"""
         session = self.current_session()
         sid = None
         if session is not None and not (session.external_source or "").strip():
@@ -336,9 +411,405 @@ class AppService:
             return []
         return self.repo.list_checkins(sid)
 
+    # ---------- 本场资料补全（与实时 Parser 分离） ----------
+    def completion_suggestions(self, session_id: int | None = None) -> list[dict]:
+        session = self.repo.get_session(session_id) if session_id else self.current_session()
+        if session is None:
+            return []
+        return self.completion_engine.suggest_session(session.id)
+
+    # ---------- 工信部电台型号库 ----------
+    def miit_catalog_status(self) -> dict:
+        if self.miit_catalog is None:
+            return {
+                "path": str(self.settings.miit_catalog_path), "count": 0,
+                "filter_rule_version": "radio-v1", "error": "本地型号库暂不可用",
+            }
+        try:
+            return self.miit_catalog.status()
+        except Exception as exc:  # noqa: BLE001
+            return {"path": str(self.settings.miit_catalog_path), "count": 0,
+                    "error": str(exc)}
+
+    def refresh_miit_catalog(self) -> dict:
+        """同步 worker 完成后刷新主线程的只读连接。"""
+        if self.miit_catalog is None:
+            try:
+                self.miit_catalog = MiitCatalogRepository(self.settings.miit_catalog_path)
+                self.parser.radio_catalog = self.miit_catalog
+                self.completion_engine.catalog = self.miit_catalog
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "message": f"型号库打开失败：{exc}"}
+        else:
+            try:
+                self.miit_catalog.reopen()
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "message": f"型号库刷新失败：{exc}"}
+        return {"ok": True, "status": self.miit_catalog_status()}
+
+    def search_miit_radio_models(self, query: str, limit: int = 3) -> list[dict]:
+        """只查本地正式快照；该入口绝不发起网络请求。"""
+        if self.miit_catalog is None:
+            return []
+        try:
+            return self.miit_catalog.search(query, limit=limit)
+        except Exception:  # noqa: BLE001
+            app_log.exception("MIIT local catalog search failed")
+            return []
+
+    def new_miit_catalog_sync(self, *, provider=None) -> MiitCatalogSyncService:
+        """为后台线程创建独立连接的同步服务。"""
+        return MiitCatalogSyncService(
+            self.settings.miit_catalog_path, provider=provider,
+        )
+
+    def cache_miit_device_results(self, query: str, results: list[dict]) -> int:
+        """主线程缓存用户主动查询到的公开型号核准结果。"""
+        return self.repo.cache_miit_device_results(query, results)
+
+    def cached_miit_device_results(self, query: str, limit: int = 3) -> list[dict]:
+        return self.repo.find_miit_device_cache(query, limit=limit)
+
+    def _build_completion_excel_task(self, session_id: int, batch_id: str,
+                                      changes: list[dict]) -> dict | None:
+        """把整批补全合成一个 Excel worker 任务，只连接和 Save 一次。"""
+        session = self.repo.get_session(session_id)
+        if session is None:
+            return None
+        current = self.current_session()
+        if current is not None and current.id == session_id and self.excel.sheet is not None:
+            excel_path = self.excel.excel_path or self.excel.binding_id
+            try:
+                sheet_name = str(self.excel.sheet.Name or "")
+            except Exception:  # noqa: BLE001
+                sheet_name = session.excel_sheet_name or ""
+            binding_id = self.excel.binding_id
+        else:
+            # 补全已结束场次时不能借用当前场次的 Excel 连接；只使用该场次
+            # 自己保存的路径和 sheet，连接失败也不会影响 SQLite 批次。
+            excel_path = str(session.excel_path or "")
+            sheet_name = str(session.excel_sheet_name or "")
+            binding_id = excel_path
+        if not excel_path:
+            return None
+
+        fields_by_record: dict[int, set[str]] = {}
+        unmatched_changed: set[int] = set()
+        for change in changes:
+            record_id = int(change["record_id"])
+            fields_by_record.setdefault(record_id, set()).add(str(change["field"]))
+            if str(change.get("old_unmatched") or "") != str(change.get("new_unmatched") or ""):
+                unmatched_changed.add(record_id)
+
+        items: list[dict] = []
+        field_to_excel = {"qth": "qth", "device": "device", "antenna": "antenna",
+                          "power": "power"}
+        for record_id, fields in fields_by_record.items():
+            checkin = self.repo.get_checkin(record_id)
+            if checkin is None or checkin.session_id != session_id:
+                continue
+            updates = {
+                field_to_excel[field]: getattr(checkin, f"{field}_standard", "")
+                for field in fields
+            }
+            if record_id in unmatched_changed:
+                updates["unmatched"] = checkin.unmatched
+            items.append({
+                "checkin_id": checkin.id,
+                "row": checkin.excel_row,
+                "sequence": checkin.sequence_no,
+                "callsign": checkin.callsign,
+                "updates": updates,
+            })
+        if not items:
+            return None
+        return {
+            "batch": True,
+            "batch_id": batch_id,
+            "binding_id": binding_id,
+            "excel_path": excel_path,
+            "sheet_name": sheet_name,
+            "items": items,
+        }
+
+    def apply_completion_suggestions(self, selected: list[dict],
+                                     session_id: int | None = None) -> dict:
+        """原子应用预览中选中的建议，再异步批量同步 Excel。"""
+        session = self.repo.get_session(session_id) if session_id else self.current_session()
+        if session is None:
+            return {"ok": False, "message": "未选择本地场次"}
+        if not selected:
+            return {"ok": False, "message": "尚未勾选任何补全项"}
+
+        prepared: list[dict] = []
+        initial_unmatched: dict[int, str] = {}
+        final_unmatched: dict[int, str] = {}
+        seen: set[tuple[int, str]] = set()
+        selected_groups: set[tuple[int, str]] = set()
+        for raw in selected:
+            try:
+                record_id = int(raw["record_id"])
+            except (KeyError, TypeError, ValueError):
+                return {"ok": False, "message": "补全建议缺少有效记录编号，请重新生成"}
+            field = str(raw.get("field") or "")
+            if field not in ("qth", "device", "antenna", "power"):
+                return {"ok": False, "message": "补全建议包含不支持的字段，请重新生成"}
+            key = (record_id, field)
+            if key in seen:
+                return {"ok": False, "message": "同一记录字段被重复选中"}
+            seen.add(key)
+            choice_group = str(raw.get("choice_group") or "").strip()
+            group_key = (record_id, choice_group)
+            if choice_group and group_key in selected_groups:
+                return {
+                    "ok": False,
+                    "message": "同一段未识别原文被同时解释成多个字段，请只保留一个候选",
+                }
+            if choice_group:
+                selected_groups.add(group_key)
+            checkin = self.repo.get_checkin(record_id)
+            if checkin is None or checkin.session_id != session.id:
+                return {"ok": False, "message": "补全记录已变化，请重新生成建议"}
+            snapshot_unmatched = str(raw.get("old_unmatched") or "").strip()
+            if record_id in initial_unmatched and initial_unmatched[record_id] != snapshot_unmatched:
+                return {"ok": False, "message": "补全快照不一致，请重新生成建议"}
+            initial_unmatched[record_id] = snapshot_unmatched
+            final_unmatched.setdefault(record_id, snapshot_unmatched)
+            new_value = str(raw.get("proposed_value") or "").strip()
+            if not new_value:
+                return {"ok": False, "message": "补全值不能为空"}
+            prepared.append({
+                "record_id": record_id,
+                "field": field,
+                "old_value": str(raw.get("old_value") or "").strip(),
+                "new_value": new_value,
+                "old_unmatched": snapshot_unmatched,
+                "source_type": str(raw.get("source_type") or "manual_review"),
+                "source_detail": str(raw.get("source_detail") or ""),
+                "confidence": int(raw.get("confidence") or 0),
+                "candidate_id": str(raw.get("candidate_id") or ""),
+                "choice_group": choice_group,
+                "evidence": str(raw.get("evidence") or "").strip(),
+                "evidence_token_start": raw.get("evidence_token_start"),
+                "evidence_token_end": raw.get("evidence_token_end"),
+                "miit_article_id": str(raw.get("miit_article_id") or ""),
+                "miit_sync_run_id": str(raw.get("miit_sync_run_id") or ""),
+            })
+        # token 区间相对于 old_unmatched 快照，按起点倒序删除；没有区间的
+        # 旧版/人工建议继续使用兼容的单次字符串消费。
+        by_record: dict[int, list[dict]] = {}
+        for change in prepared:
+            by_record.setdefault(int(change["record_id"]), []).append(change)
+        for record_id, changes in by_record.items():
+            current = final_unmatched[record_id]
+            ranged: list[dict] = []
+            fallback: list[dict] = []
+            for change in changes:
+                start, end = change.get("evidence_token_start"), change.get("evidence_token_end")
+                if start is None or end is None:
+                    fallback.append(change)
+                else:
+                    ranged.append(change)
+            for change in sorted(
+                    ranged,
+                    key=lambda item: int(item.get("evidence_token_start") or 0),
+                    reverse=True):
+                current = _remove_unmatched_span(
+                    current, change.get("evidence_token_start"), change.get("evidence_token_end"))
+            for change in fallback:
+                evidence = str(change.get("evidence") or "").strip()
+                if evidence:
+                    current = _remove_unmatched_value(current, evidence)
+            final_unmatched[record_id] = current
+        for change in prepared:
+            change["new_unmatched"] = final_unmatched[int(change["record_id"])]
+
+        batch_id = f"{datetime.now():%Y%m%d%H%M%S}-{uuid.uuid4().hex[:8]}"
+        try:
+            changed_ids = self.repo.apply_completion_batch(
+                session.id, batch_id, prepared)
+        except ValueError as exc:
+            return {"ok": False, "message": str(exc)}
+        except Exception:  # noqa: BLE001
+            app_log.exception("completion batch apply failed")
+            return {"ok": False, "message": "资料补全保存失败，数据库未应用该批次"}
+
+        callsigns = {self.repo.get_checkin(record_id).callsign for record_id in changed_ids
+                     if self.repo.get_checkin(record_id) is not None}
+        for callsign in callsigns:
+            self.repo.rebuild_profiles_for(callsign)
+            self.repo.rebuild_station(callsign)
+        self._invalidate_runtime_caches()
+        self.refresh_observed_device_aliases()
+        excel_task = self._build_completion_excel_task(session.id, batch_id, prepared)
+        self.repo.update_completion_excel_status(
+            batch_id, "pending" if excel_task else "not_required",
+        )
+        return {
+            "ok": True,
+            "batch_id": batch_id,
+            "change_count": len(prepared),
+            "record_count": len(changed_ids),
+            "excel_task": excel_task,
+            "message": (
+                f"已补全 {len(changed_ids)} 条记录、{len(prepared)} 个字段"
+                + ("，Excel 正在后台批量保存" if excel_task else "，SQLite 已安全保存")
+            ),
+        }
+
+    def apply_completion_batch(self, session_id: int, selections: list[dict]) -> dict:
+        """计划中的批次 API 名称；保持旧的参数顺序兼容。"""
+        return self.apply_completion_suggestions(selections, session_id)
+
+    def undo_last_completion(self, session_id: int | None = None) -> dict:
+        session = self.repo.get_session(session_id) if session_id else self.current_session()
+        if session is None:
+            return {"ok": False, "message": "未选择本地场次"}
+        result = self.repo.undo_last_completion_batch(session.id)
+        if not result.get("ok"):
+            return result
+        actions = result.get("actions") or []
+        callsigns = set()
+        for record_id in result.get("record_ids") or []:
+            checkin = self.repo.get_checkin(record_id)
+            if checkin is not None:
+                callsigns.add(checkin.callsign)
+        for callsign in callsigns:
+            self.repo.rebuild_profiles_for(callsign)
+            self.repo.rebuild_station(callsign)
+        self._invalidate_runtime_caches()
+        self.refresh_observed_device_aliases()
+        excel_changes = [{
+            "record_id": action["record_id"],
+            "field": action["field_name"],
+            "old_unmatched": action["new_unmatched"],
+            "new_unmatched": action["old_unmatched"],
+        } for action in actions]
+        excel_task = self._build_completion_excel_task(
+            session.id, str(result["batch_id"]), excel_changes)
+        self.repo.update_completion_excel_status(
+            str(result["batch_id"]), "pending" if excel_task else "not_required",
+        )
+        result["excel_task"] = excel_task
+        result["message"] = (
+            f"已撤销上一批资料补全（{result['change_count']} 个字段）"
+            + ("，Excel 正在后台恢复" if excel_task else "")
+        )
+        return result
+
+    def undo_last_completion_batch(self, session_id: int) -> dict:
+        """计划中的安全撤销 API 名称；只撤销指定本地场次最后一批。"""
+        return self.undo_last_completion(session_id)
+
     # ---------- 解析与提交 ----------
     def parse(self, text: str) -> ParseResult:
         return self.parser.parse(text)
+
+    def full_qth(self, value: str, raw: str = "") -> str:
+        """将可确认的 QTH 输出为完整省/市/区县名称。
+
+        Parser 仍保留短标准值以兼容历史画像和低层调用；进入点名记录时，
+        commit() 会用这里的结果作为新的标准值。raw 优先用于保留“大学城、
+        牛首山、6楼”等行政区划之后的现场细节。
+        """
+        for candidate in (raw, value):
+            if self.qth_place_service is not None:
+                try:
+                    place = self.qth_place_service.resolve(candidate)
+                except Exception:  # noqa: BLE001
+                    place = None
+                if place:
+                    canonical = _norm(place.get("canonical_qth"))
+                    if canonical:
+                        return canonical
+            expanded = full_qth_candidate(candidate, self.region)
+            if expanded:
+                return expanded
+        return _norm(value)
+
+    def search_qth_places(self, query: str, limit: int = 8) -> list[dict]:
+        """本地道路/地标检索；不会隐式访问网络。"""
+        if self.qth_place_service is None:
+            return []
+        try:
+            return self.qth_place_service.search(query, limit=limit)
+        except Exception:  # noqa: BLE001
+            return []
+
+    def qth_place_sync_queries(self, limit: int = 5) -> list[str]:
+        """返回可供后台地点源缓存的历史 QTH 原文。
+
+        只挑明显的道路/学校/车站/门牌等地点文本；行政区缩写和纯行政区
+        不上传。是否联网由设置中的地点包地址或天地图 Key 决定。
+        """
+        rows = self.repo.as_dict_rows(
+            """SELECT qth_raw, qth_standard FROM checkins
+               WHERE is_deleted=0 AND TRIM(qth_raw)<>''
+               ORDER BY updated_at DESC, id DESC LIMIT 500"""
+        )
+        markers = ("路", "街", "道", "巷", "号", "站", "机场", "大学",
+                   "校园", "门", "镇", "桥", "园", "广场", "小区")
+        values: list[str] = []
+        for row in rows:
+            raw = _norm(row.get("qth_raw"))
+            standard = _norm(row.get("qth_standard"))
+            if len(raw) < 2 or not any(marker in raw for marker in markers):
+                continue
+            if raw == standard and standard.startswith(("江苏省", "浙江省", "安徽省")):
+                # 已经是完整行政链且没有新的地点尾部，不需要重复查询。
+                continue
+            if raw not in values:
+                values.append(raw)
+            if len(values) >= max(0, min(int(limit), 50)):
+                break
+        return values
+
+    def refresh_qth_place_catalog(self) -> dict:
+        """地点包 worker 完成后刷新主线程连接和解析缓存。"""
+        if self.qth_place_service is None:
+            try:
+                self.qth_place_catalog = QthPlaceCatalog(self.settings.qth_place_catalog_path)
+                self.qth_place_service = QthPlaceService(self.qth_place_catalog)
+                self.parser.qth_norm.set_places(self.qth_place_service)
+                self.completion_engine.place_resolver = self.qth_place_service
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "message": f"地点库打开失败：{exc}"}
+        else:
+            try:
+                self.qth_place_catalog.reopen()
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "message": f"地点库刷新失败：{exc}"}
+        self._invalidate_runtime_caches()
+        return {"ok": True, "status": self.qth_place_service.status()}
+
+    def import_qth_place_pack(self, path: str, *, source: str = "pack") -> dict:
+        """导入本地 QTH 地点包，成功后立即可用于离线补全。"""
+        if self.qth_place_service is None:
+            return {"ok": False, "message": "本地地点库不可用"}
+        try:
+            count = self.qth_place_service.import_pack(path, source=source)
+            return {"ok": True, "count": count,
+                    "status": self.qth_place_service.status()}
+        except Exception as exc:  # noqa: BLE001
+            app_log.warning("QTH place pack import failed: %s", exc)
+            return {"ok": False, "message": f"地点包导入失败：{exc}"}
+
+    def qth_place_status(self) -> dict:
+        if self.qth_place_service is None:
+            return {"path": str(self.settings.qth_place_catalog_path), "count": 0,
+                    "message": "地点库不可用"}
+        try:
+            return self.qth_place_service.status()
+        except Exception as exc:  # noqa: BLE001
+            return {"path": str(self.settings.qth_place_catalog_path), "count": 0,
+                    "message": str(exc)}
+
+    def list_completion_batches(self, session_id: int | None = None,
+                                limit: int = 100) -> list[dict]:
+        return self.repo.list_completion_batches(session_id, limit=limit)
+
+    def completion_batch_details(self, batch_id: str) -> list[dict]:
+        return self.repo.completion_batch_details(batch_id)
 
     def accept_history(self, result: ParseResult) -> ParseResult:
         """Tab：接受历史建议（仅补缺失字段），进入提交 payload（任务书第二阶段 #1/#2）。"""
@@ -358,19 +829,17 @@ class AppService:
         }
 
     def commit(self, result: ParseResult, *, save_excel: bool | None = None) -> dict:
-        """确认一条记录：SQLite COMMIT 成功后再写 Excel。
+        """确认一条记录，先安全提交 SQLite，再按调用契约处理 Excel。
 
-        Excel 写入走状态机（任务书第一阶段 #9/#10/#11）：
-        写内存(written) → Save(persisted) → 失败则 DB 保持 error/pending。
+        ``save_excel=False`` 是快速点名专用路径：不连接、不读取、不写入
+        Excel COM，记录保存到 SQLite 后由场后导出处理。其它调用仍支持旧的
+        Excel 状态机：写内存(written) → Save(persisted)；失败则数据库保留
+        error/pending 状态，绝不把未持久化内容标成已同步。
 
-        ``save_excel`` 只控制本次调用是否立即 Save：
-        - ``None``：沿用设置项 ``excel_auto_save``（服务层默认行为）；
-        - ``False``：只写入当前 Excel 内存并标记 ``written``，由 UI 的空闲
-          保存计时器或手动“补同步”统一 Save；
-        - ``True``：本次立即 Save。
-
-        SQLite 永远先提交；延迟 Save 只会让记录短暂保持 ``written``，不会把
-        未持久化的 Excel 数据误标为 ``persisted``。
+        ``save_excel`` 的含义：
+        - ``None``：沿用设置项 ``excel_auto_save``（服务层兼容行为）；
+        - ``False``：只提交 SQLite，返回 ``excel_state=deferred``；
+        - ``True``：连接已存在时立即写入并保存 Excel。
         """
         if not result.callsign.value:
             return {"ok": False, "message": "缺少呼号，无法提交"}
@@ -383,13 +852,18 @@ class AppService:
             app_log.info("auto-created session #%d %s", session.id, session.name)
 
         f = result.fields()
+        qth_value = f["qth"].value
+        # 只有本次实际输入了 QTH 才自动展开。Tab 接受的历史值保持其原有
+        # 画像写法，避免把“历史只在显式接受后进入提交”变成隐式迁移。
+        if f["qth"].raw:
+            qth_value = self.full_qth(qth_value, f["qth"].raw)
         c = Checkin(
             session_id=session.id,
             # sequence_no 由 add_checkin_with_seq 在分配锁内原子分配（P1-1）
             sequence_no=0,
             checkin_time=datetime.now().isoformat(timespec="seconds"),
             callsign=result.callsign.value,
-            qth_raw=f["qth"].raw or f["qth"].value, qth_standard=f["qth"].value,
+            qth_raw=f["qth"].raw or f["qth"].value, qth_standard=qth_value,
             device_raw=f["device"].raw or f["device"].value, device_standard=f["device"].value,
             antenna_raw=f["antenna"].raw or f["antenna"].value, antenna_standard=f["antenna"].value,
             power_raw=f["power"].raw or f["power"].value, power_standard=f["power"].value,
@@ -405,11 +879,27 @@ class AppService:
         self.repo.rebuild_station(c.callsign)
         self.repo.rebuild_profiles_for(c.callsign)
         self._invalidate_runtime_caches()
+        self._add_observed_device_evidence(c.device_raw, c.device_standard)
+        # 用户已经确认并提交的道路/门牌/地标是安全的本地学习样本；行政
+        # 区缩写本身不写入地点库，避免把 njxw 这类已有区划别名伪装成道路。
+        qth_raw = _norm(f["qth"].raw)
+        if (self.qth_place_service is not None and qth_raw and qth_value
+                and any(marker in qth_raw for marker in
+                        ("路", "街", "道", "巷", "号", "站", "机场", "大学", "校园", "门", "镇"))):
+            try:
+                self.qth_place_service.learn(qth_raw, qth_value)
+            except Exception as exc:  # noqa: BLE001
+                app_log.debug("QTH place learning skipped: %s", exc)
         app_log.info("committed #%d %s", c.sequence_no, c.callsign)
 
-        # --- Excel：先写入内存；是否立即 Save 由调用方/设置决定 ---
+        # --- Excel：快速点名明确不进入 COM 热路径 ---
+        # ``save_excel=False`` 是 UI 的快速录入契约：只提交 SQLite，既不
+        # 连接 Excel，也不写入 Excel 内存。这样 Excel 卡顿/弹窗/锁文件都
+        # 不会阻塞输入，更不会因为半写状态让用户误以为记录丢失。
         excel_ok, excel_msg, excel_row, excel_state = True, "未连接 Excel", None, "pending"
-        if self.excel.sheet is not None:
+        if save_excel is False:
+            excel_msg, excel_state = "已写入 SQLite，等待场后导出", "deferred"
+        elif self.excel.sheet is not None:
             should_save = (bool(self.settings.get("excel_auto_save", True))
                            if save_excel is None else bool(save_excel))
             now = datetime.now().isoformat(timespec="seconds")
@@ -446,6 +936,64 @@ class AppService:
             del self._freq_cache
         self.parser.invalidate_caches()
 
+    def _rebuild_observed_device_aliases(self) -> None:
+        """把观察证据折叠成唯一的临时设备缩写映射。
+
+        观察索引只允许“一个缩写 → 一个已经存在的标准设备值”。同一
+        缩写若对应多个标准值，则不自动解析，仍可由用户在词典页明确
+        指定；这条边界对未核准型号尤其重要。
+        """
+        reserved = set(self.store.device)
+        aliases: dict[str, str] = {}
+        for alias, values in self._observed_device_evidence.items():
+            if alias in reserved or not values:
+                continue
+            ranked = values.most_common()
+            if len(ranked) == 1 or ranked[0][1] > ranked[1][1]:
+                aliases[alias] = ranked[0][0]
+        self._observed_device_aliases = aliases
+        self.parser.set_observed_device_aliases(aliases)
+        self.completion_engine.set_observed_device_aliases(aliases)
+
+    def _add_observed_device_evidence(self, raw: str, standard: str) -> None:
+        """增量加入一条已保存记录，不扫描全表，避免连续点名卡顿。"""
+        standard = _norm(standard)
+        if not standard:
+            return
+        for alias in device_model_abbreviations(raw, standard):
+            # 标准值本身就是裸型号时，不需要建立“m8268 -> m8268”这种
+            # 无意义映射；标准值带品牌时仍会得到 m8268 -> 品牌+型号。
+            if alias == standard.strip().lower():
+                continue
+            self._observed_device_evidence.setdefault(alias, Counter())[standard] += 1
+        self._rebuild_observed_device_aliases()
+
+    def refresh_observed_device_aliases(self) -> dict[str, str]:
+        """从当前本地记录重建观察缩写索引并返回安全映射。
+
+        该方法只读主 SQLite，适合在导入/365dt 后台任务完成回调中调用；
+        快速提交路径使用 ``_add_observed_device_evidence`` 的增量版本。
+        """
+        rows = self.repo.as_dict_rows(
+            """SELECT device_raw, device_standard, COUNT(*) AS use_count
+               FROM checkins
+               WHERE is_deleted=0 AND TRIM(device_standard)!=''
+               GROUP BY device_raw, device_standard"""
+        )
+        evidence: dict[str, Counter[str]] = defaultdict(Counter)
+        for row in rows:
+            standard = _norm(row.get("device_standard"))
+            if not standard:
+                continue
+            for alias in device_model_abbreviations(
+                    row.get("device_raw", ""), standard):
+                if alias == standard.strip().lower():
+                    continue
+                evidence[alias][standard] += int(row.get("use_count") or 1)
+        self._observed_device_evidence = dict(evidence)
+        self._rebuild_observed_device_aliases()
+        return dict(self._observed_device_aliases)
+
     def undo_last(self, *, sync_excel: bool = True) -> dict:
         """撤销本场最后一条有效记录。
 
@@ -467,6 +1015,7 @@ class AppService:
         self.repo.rebuild_station(last.callsign)
         self.repo.rebuild_profiles_for(last.callsign)
         self._invalidate_runtime_caches()
+        self.refresh_observed_device_aliases()
         excel_msg = "未连接 Excel"
         if self.excel.sheet is not None and sync_excel:
             excel_ok, excel_msg = self.excel_resync()
@@ -688,10 +1237,14 @@ class AppService:
 
     # ---------- 导入 ----------
     def import_excel_files(self, paths: list[str]) -> dict:
-        return self.excel_provider.import_files([Path(p) for p in paths], self.standardizer)
+        result = self.excel_provider.import_files([Path(p) for p in paths], self.standardizer)
+        self.refresh_observed_device_aliases()
+        return result
 
     def import_excel_folder(self, folder: str) -> dict:
-        return self.excel_provider.import_folder(Path(folder), self.standardizer)
+        result = self.excel_provider.import_folder(Path(folder), self.standardizer)
+        self.refresh_observed_device_aliases()
+        return result
 
     def raw_imports(self) -> list:
         return self.repo.list_raw_imports()
@@ -703,7 +1256,9 @@ class AppService:
             return {"ok": False, "message": "同步正在进行，请稍候"}
         self._sync_in_progress = True
         try:
-            return self.sync_service.sync_once(progress)
+            result = self.sync_service.sync_once(progress)
+            self.refresh_observed_device_aliases()
+            return result
         finally:
             self._sync_in_progress = False
 
@@ -754,6 +1309,7 @@ class AppService:
         self.parser.region = self.region
         self.parser.qth_norm.region = self.region
         self.standardizer.qth_norm.region = self.region
+        self.completion_engine.region = self.region
         self.parser.invalidate_caches()
 
     def apply_runtime_settings(self) -> None:
@@ -782,40 +1338,38 @@ class AppService:
         self.repo.set_alias(kind, alias, standard, **extra)
         self.store.reload()
         self.parser.invalidate_caches()
+        if kind == "device":
+            # 手工词典优先级最高；同时从观察索引移除同名临时候选，
+            # 避免补全列表同时出现“缩写”和“历史缩写”两条。
+            self._rebuild_observed_device_aliases()
 
     def delete_alias(self, kind: str, alias: str) -> None:
         self.repo.delete_alias(kind, alias)
         self.store.reload()
         self.parser.invalidate_caches()
+        if kind == "device":
+            # 删除手工别名后恢复仍然有效的历史唯一映射。
+            self._rebuild_observed_device_aliases()
 
-    # ---------- 从导入历史自动生成词典建议（人工确认，不自动写死） ----------
+    # ---------- 从历史/导入记录自动生成词典建议（人工确认，不自动写死） ----------
     def suggest_aliases_from_imports(self, min_count: int = 2, limit: int = 100) -> list[dict]:
-        """扫描 365dt / Excel 导入历史，从「原始值→标准值」推导别名建议。
+        """扫描本地、365dt、Excel 记录，从「原始值→标准值」推导别名建议。
 
-        例：device_raw「八重洲 FT-1907R」→ 建议 ft1907r → YAESU FT-1907R
+        例：device_raw「摩托罗拉 GM 338」→ 建议 gm338 → 摩托罗拉 GM 338
             qth_standard「盐城」→ 建议 yc → 盐城（无冲突时）
-        只给「建议」，由用户在界面勾选后加入，绝不自动覆盖。
+        只给「建议」，由用户在界面勾选后加入，绝不自动覆盖；未核准
+        机型不需要也不会因为没有工信部记录而被丢弃。
         """
         rows = self.repo.as_dict_rows(
-            """SELECT device_raw, device_standard, qth_standard
+            """SELECT device_raw, device_standard, qth_standard, source
                FROM checkins
-               WHERE source IN ('365dt','excel_import') AND is_deleted=0""")
+               WHERE is_deleted=0""")
         dev: dict[str, dict[str, int]] = {}
         qth_std: dict[str, int] = {}
         for r in rows:
             raw, std = (r["device_raw"] or ""), (r["device_standard"] or "")
             if raw and std:
-                # 去掉标点/空格，剥离中英文品牌前缀，再取“字母开头 ≥3 位”代号：
-                # 八重洲 FT-857D → FT857D → ft857d
-                code = re.sub(r"[^A-Za-z0-9\u4e00-\u9fff]", "", raw)
-                code = re.sub(r"^[\u4e00-\u9fff]+", "", code)
-                low = code.lower()
-                for b in _BRANDS:
-                    if low.startswith(b) and len(code) > len(b):
-                        code = code[len(b):]
-                        break
-                for tok in re.findall(r"[A-Za-z][A-Za-z0-9]{2,11}", code):
-                    key = tok.lower()
+                for key in device_model_abbreviations(raw, std):
                     if key in self.store.device:  # 已有别名，跳过
                         continue
                     dev.setdefault(key, {})
@@ -826,7 +1380,12 @@ class AppService:
 
         out: list[dict] = []
         for key, stdmap in dev.items():
-            best, best_n = max(stdmap.items(), key=lambda kv: kv[1])
+            ranked = sorted(stdmap.items(), key=lambda kv: (-kv[1], kv[0]))
+            best, best_n = ranked[0]
+            if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
+                # 例如两个品牌都把“gm338”写成自己的型号时，不给出
+                # 看似确定的词典建议；用户可以在设备词典中手工指定。
+                continue
             if best_n >= min_count:
                 out.append({"kind": "device", "alias": key,
                             "standard": best, "count": best_n})
@@ -978,10 +1537,52 @@ class AppService:
             self.repo.rebuild_profiles_for(c.callsign)
             self.repo.rebuild_station(c.callsign)
         self._invalidate_runtime_caches()
+        if field == "device":
+            # 编辑设备属于低频操作，允许这里做一次完整重建，确保新确认
+            # 的非工信部型号缩写立即可用于下一条现场输入。
+            self.refresh_observed_device_aliases()
         return {"ok": True, "excel_msg": excel_msg, "excel_task": excel_task}
 
     def finish_deferred_excel_update(self, result: dict) -> tuple[bool, str]:
         """接收后台 Excel worker 结果，并在主线程安全更新同步状态。"""
+        if result.get("batch"):
+            item_results = result.get("items") or []
+            states: list[dict] = []
+            success = 0
+            for item in item_results:
+                try:
+                    checkin_id = int(item.get("checkin_id"))
+                except (TypeError, ValueError):
+                    continue
+                ok = bool(item.get("ok"))
+                if ok:
+                    success += 1
+                state = "persisted" if ok else (
+                    "conflict" if item.get("state") == "conflict" else "error")
+                states.append({
+                    "checkin_id": checkin_id,
+                    "status": state,
+                    "row": item.get("row"),
+                    "error": "" if ok else str(item.get("message") or "Excel 批量更新失败"),
+                })
+            if states:
+                self.repo.set_excel_states_atomic(states)
+            failed = len(states) - success
+            if not states:
+                self.repo.update_completion_excel_status(
+                    str(result.get("batch_id") or ""), "error", str(result.get("message") or ""),
+                )
+                return False, str(result.get("message") or "Excel 批量结果缺少记录状态")
+            if failed:
+                self.repo.update_completion_excel_status(
+                    str(result.get("batch_id") or ""), "partial",
+                    f"成功 {success} 条，失败/冲突 {failed} 条",
+                )
+                return False, f"批量保存完成 {success} 条，失败/冲突 {failed} 条；可点击“保存/补同步”重试"
+            self.repo.update_completion_excel_status(
+                str(result.get("batch_id") or ""), "persisted", "",
+            )
+            return True, f"已批量保存 {success} 条补全记录"
         try:
             checkin_id = int(result.get("checkin_id"))
         except (TypeError, ValueError):
@@ -1077,7 +1678,9 @@ class AppService:
         t = norm_key(token)
         if not t:
             return False
-        if t in self.store.qth or t in self.store.device:
+        if self.parser.resolve_device_token(token)[0]:
+            return True
+        if t in self.store.qth:
             return True
         if t in self.store.antenna or t in self.store.power:
             return True
@@ -1085,6 +1688,12 @@ class AppService:
             return True
         if self.repo.get_station(t.upper()):
             return True
+        if self.qth_place_service is not None:
+            try:
+                if self.qth_place_service.resolve(token):
+                    return True
+            except Exception:  # noqa: BLE001
+                pass
         return False
 
     def complete_callsign(self, token: str, limit: int = 8) -> list[tuple[str, str]]:
@@ -1107,10 +1716,18 @@ class AppService:
         t = (token or "").strip().lower()
         if not t:
             return []
+        # 设备型号允许在现场写成 UV-K5 / uv k5 / uv_k5；候选前缀比较
+        # 使用同一归一化键，避免搜索能命中但补全列表被标点挡掉。
+        device_query = t if any("\u4e00" <= ch <= "\u9fff" for ch in t) else (
+            re.sub(r"[^0-9a-z]", "", t) or t
+        )
         freq = self._value_frequency()
         out: list[tuple[str, str]] = []
         canon: dict[str, str] = {}  # value -> canonical（排序用；abbr 值映射回标准名）
         seen_label: set[str] = set()
+
+        def qth_value(value: str) -> str:
+            return self.full_qth(value)
 
         def add(label: str, value: str, canonical: str | None = None):
             if label and label not in seen_label:
@@ -1120,29 +1737,106 @@ class AppService:
 
         has_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in t)
         if has_cjk:
+            expanded = qth_value(t)
+            if expanded and norm_key(expanded) != norm_key(t):
+                add(expanded, expanded)
             for k, entries in self.region.by_name.items():
                 if k.startswith(t):
                     for e in entries[:1]:
-                        add(e.display, e.display)
+                        full = qth_value(e.display)
+                        add(full, full)
+            if self.qth_place_service is not None and len(t) >= 2:
+                try:
+                    places = self.qth_place_service.search(t, limit=max(3, min(limit, 8)))
+                except Exception:  # noqa: BLE001
+                    places = []
+                for place in places:
+                    canonical = str(place.get("canonical_qth") or "").strip()
+                    name = str(place.get("name") or "").strip()
+                    if canonical:
+                        label = f"{canonical}（地点：{name}）" if name else canonical
+                        add(label, canonical)
         else:
             # 该前缀精确命中的区划（层级优先：城市>区县），如 yz→扬州
             for e in self.region.resolve_initials(t):
-                add(f"{e.display}（{t}）", e.display)
+                full = qth_value(e.display)
+                add(f"{full}（{t}）", full)
             # 更长前缀键：nj → 南京玄武 / 南京栖霞…
             for k, entries in self.region.by_initials.items():
                 if k.startswith(t) and k != t:
                     for e in entries[:1]:
-                        add(f"{e.display}（{k}）", e.display)
+                        full = qth_value(e.display)
+                        add(f"{full}（{k}）", full)
             for k, a in self.store.qth.items():
                 if k.startswith(t):
-                    add(a.standard_value, a.standard_value)
+                    full = qth_value(a.standard_value)
+                    add(full, full)
         for kind in ("device", "antenna", "power"):
             d = {"device": self.store.device, "antenna": self.store.antenna,
                  "power": self.store.power}[kind]
+            prefix = device_query if kind == "device" else t
             for k, a in d.items():
-                if k.startswith(t):
+                if k.startswith(prefix):
                     # 插入缩写 key（如 id52），保证再次解析命中；预览区显示完整标准名
                     add(a.standard_value, k, canonical=a.standard_value)
+        # 未核准或旧型号不一定有工信部记录，但如果历史中已经明确
+        # 保存过“原始型号 → 标准设备”，就可以提供可审阅的临时缩写。
+        # 选择后仍替换为短 key，Parser 会用同一份内存索引解析它。
+        for abbreviation, standard in self._observed_device_aliases.items():
+            if abbreviation.startswith(device_query):
+                add(f"{standard}（历史缩写 {abbreviation}）",
+                    abbreviation, canonical=standard)
+        # 工信部资料库只提供本地候选。只有“像型号”或明确品牌检索时才查
+        # 资料库，避免用户输入南京/道路等 QTH 时每次按键都扫描型号库。
+        # 查询使用快速模式，不做几十万条记录的模糊全表评分。
+        miit_brands = (
+            "泉盛", "全易通", "摩托罗拉", "海能达", "宝锋", "八重洲",
+            "艾可慕", "建伍", "威泰克斯", "YAESU", "ICOM", "KENWOOD",
+        )
+        looks_like_model = bool(
+            re.fullmatch(r"[a-z0-9._-]+", t, re.I)
+            and re.search(r"[a-z]", t, re.I)
+            and re.search(r"\d", t)
+        )
+        looks_like_brand_search = any(brand.casefold() in t.casefold() for brand in miit_brands)
+        if self.miit_catalog is not None and len(t) >= 2 and (
+                looks_like_model or looks_like_brand_search):
+            try:
+                catalog_hits = self.miit_catalog.search(
+                    t, limit=max(3, min(limit, 12)), allow_fuzzy=False,
+                )
+            except TypeError:
+                # 兼容旧版资料库/测试替身；正式实现走上面的快速模式。
+                try:
+                    catalog_hits = self.miit_catalog.search(
+                        t, limit=max(3, min(limit, 12)),
+                    )
+                except Exception:  # noqa: BLE001
+                    catalog_hits = []
+            except Exception:  # noqa: BLE001
+                catalog_hits = []
+            for item in catalog_hits:
+                model = str(item.get("model") or "").strip()
+                standard = str(item.get("standard_name") or model).strip()
+                if not model:
+                    continue
+                detail = str(item.get("device_class") or "电台")
+                applicant = str(item.get("applicant") or "").strip()
+                suffix = f"；{applicant}" if applicant else ""
+                # 接受后直接写入可读规范值，而不是把裸型号（如 ``R6`` /
+                # ``PD780``）留在输入框。规范值仍由 Parser 再次校验，且
+                # 不会影响本地别名候选（k5/k6 等仍保留短键）。
+                add(f"{standard}（工信部{detail}{suffix}）", standard, canonical=standard)
+                for abbreviation in model_abbreviations(model):
+                    if (abbreviation == norm_key(model)
+                            or not abbreviation.startswith(device_query)):
+                        continue
+                    # 缩写只用于搜索和展示；接受后仍写入完整规范名。
+                    add(
+                        f"{standard}（缩写 {abbreviation}；工信部{detail}{suffix}）",
+                        standard,
+                        canonical=standard,
+                    )
         # P2：按**标准值**的历史使用频率排序（device/antenna/power 的 value 是缩写 key，
         # 频率表存的是标准值，直接用 value 查会永远为 0）
         out.sort(key=lambda item: -freq.get(canon.get(item[1], item[1]), 0))
@@ -1167,7 +1861,7 @@ class AppService:
         entry = None
         for entries in self.region.by_name.values():
             for e in entries:
-                if e.display == sv:
+                if e.display == sv or self.full_qth(e.display) == sv:
                     entry = e
                     break
             if entry:
@@ -1244,6 +1938,16 @@ class AppService:
         self._closed = True
         try:
             self.excel.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if self.miit_catalog is not None:
+                self.miit_catalog.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if self.qth_place_service is not None:
+                self.qth_place_service.close()
         except Exception:  # noqa: BLE001
             pass
         try:

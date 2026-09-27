@@ -16,6 +16,9 @@ build/
 dist/
 release/
 *.spec
+native/**/bin/
+native/**/obj/
+native/artifacts/
 
 # IDE
 .vscode/

@@ -89,21 +89,32 @@ class TestCrashRecovery(unittest.TestCase):
         finally:
             svc.close()
 
-    def test_clean_shutdown_resumes_last_local_session_without_prompt(self):
-        """正常退出后再次启动自动回到上次本地 active 场次，不弹恢复选择。"""
+    def test_clean_shutdown_defaults_to_first_local_session_without_prompt(self):
+        """正常退出后再次启动默认回到本地第一场，而不是上次停留的场次。"""
+        from unittest.mock import patch
         settings, _tmp = make_settings()
         from services.app_service import AppService
 
         svc = AppService(settings)
-        local = svc.create_session("本地场", "2026-08-14")
+        first = svc.create_session("第1场点名", "2026-08-14")
+        second = svc.create_session("第2场点名", "2026-08-14")
+        self.assertEqual(svc.current_session().id, second.id)
+        # 模拟该场次曾经绑定过工作簿；再次启动也不应隐式触发 COM 连接。
+        svc.repo.update_session(second.id, excel_path="C:/old/roster.xlsx",
+                                excel_sheet_name="点名表")
         self.assertTrue(svc.mark_clean_shutdown())
         svc.close()
 
         resumed = AppService(settings)
         try:
-            self.assertEqual(resumed.startup_sessions(), [])
+            with patch.object(resumed, "_apply_excel_binding") as apply_binding:
+                self.assertEqual(resumed.startup_sessions(), [])
+                selected = resumed.select_default_startup_session()
+            apply_binding.assert_not_called()
+            self.assertIsNotNone(selected)
             self.assertIsNotNone(resumed.current_session())
-            self.assertEqual(resumed.current_session().id, local.id)
+            self.assertEqual(resumed.current_session().id, first.id)
+            self.assertIsNone(resumed.excel.sheet)
         finally:
             resumed.close()
 

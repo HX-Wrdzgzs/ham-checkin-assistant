@@ -910,6 +910,292 @@ class Repository:
         ).fetchall()
         return {r["callsign"]: dict(r) for r in rows}
 
+    # ---------- 本场资料补全 / 工信部型号核准缓存 ----------
+    @staticmethod
+    def _device_query_key(value: str) -> str:
+        return (value or "").strip().lower().replace("-", "").replace(" ", "")
+
+    def cache_miit_device_results(self, query: str, results: list[dict]) -> int:
+        """缓存一次用户主动发起的型号核准查询；不保存服务端原始响应。"""
+        query_key = self._device_query_key(query)
+        if not query_key:
+            return 0
+        fetched_at = now_iso()
+        stored = 0
+        with self.conn:
+            for result in results:
+                model = str(result.get("model") or "").strip()
+                if not model:
+                    continue
+                self.conn.execute(
+                    """INSERT INTO miit_device_cache(
+                           query_key, model, standard_name, device_name, applicant,
+                           approval_code, cmiit_id, approved_at, valid_for, source_url, fetched_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(query_key, model, applicant, approval_code) DO UPDATE SET
+                         standard_name=excluded.standard_name,
+                         device_name=excluded.device_name,
+                         cmiit_id=excluded.cmiit_id,
+                         approved_at=excluded.approved_at,
+                         valid_for=excluded.valid_for,
+                         source_url=excluded.source_url,
+                         fetched_at=excluded.fetched_at""",
+                    (
+                        query_key,
+                        model,
+                        str(result.get("standard_name") or model).strip(),
+                        str(result.get("device_name") or "").strip(),
+                        str(result.get("applicant") or "").strip(),
+                        str(result.get("approval_code") or "").strip(),
+                        str(result.get("cmiit_id") or "").strip(),
+                        str(result.get("approved_at") or "").strip(),
+                        str(result.get("valid_for") or "").strip(),
+                        str(result.get("source_url") or "").strip(),
+                        fetched_at,
+                    ),
+                )
+                stored += 1
+        return stored
+
+    def find_miit_device_cache(self, query: str, limit: int = 3) -> list[dict]:
+        """按原查询词或规范化型号查本地缓存，离线也可生成审核建议。"""
+        query_key = self._device_query_key(query)
+        if not query_key:
+            return []
+        rows = self.conn.execute(
+            """SELECT * FROM miit_device_cache
+               WHERE query_key=?
+                  OR LOWER(REPLACE(REPLACE(model, '-', ''), ' ', ''))=?
+                  OR LOWER(REPLACE(REPLACE(standard_name, '-', ''), ' ', ''))=?
+               ORDER BY fetched_at DESC, approved_at DESC, id DESC
+               LIMIT ?""",
+            (query_key, query_key, query_key, max(1, min(int(limit), 10))),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def apply_completion_batch(self, session_id: int, batch_id: str,
+                               changes: list[dict]) -> list[int]:
+        """原子应用一批已审阅补全；任一快照过期则整批不写入。"""
+        if not batch_id or not changes:
+            return []
+        ids = [int(change["record_id"]) for change in changes]
+        if len(set((int(c["record_id"]), str(c["field"])) for c in changes)) != len(changes):
+            raise ValueError("同一记录字段在补全批次中重复")
+        placeholders = ",".join("?" * len(set(ids)))
+        rows = self.conn.execute(
+            f"SELECT * FROM checkins WHERE id IN ({placeholders}) AND is_deleted=0",
+            tuple(sorted(set(ids))),
+        ).fetchall()
+        by_id = {int(row["id"]): row for row in rows}
+        if len(by_id) != len(set(ids)):
+            raise ValueError("部分补全记录已不存在，请重新生成建议")
+
+        now = now_iso()
+        changed_ids: list[int] = []
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO completion_batches(
+                   batch_id, session_id, created_at, status, record_count, change_count,
+                   excel_status, excel_error)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (batch_id, session_id, now, "applied", 0, len(changes), "pending", ""),
+            )
+            for change in changes:
+                record_id = int(change["record_id"])
+                field = str(change["field"])
+                column = _FIELD_MAP.get(field)
+                if column is None:
+                    raise ValueError(f"不支持补全字段：{field}")
+                row = by_id[record_id]
+                if int(row["session_id"]) != int(session_id):
+                    raise ValueError("补全记录不属于当前场次")
+                old_value = str(change.get("old_value") or "").strip()
+                new_value = str(change.get("new_value") or "").strip()
+                old_unmatched = str(change.get("old_unmatched") or "").strip()
+                new_unmatched = str(change.get("new_unmatched") or "").strip()
+                if str(row[column] or "").strip() != old_value:
+                    raise ValueError(
+                        f"#{row['sequence_no']} {row['callsign']} 的{field}已变化，请重新生成建议"
+                    )
+                if str(row["unmatched"] or "").strip() != old_unmatched:
+                    raise ValueError(
+                        f"#{row['sequence_no']} {row['callsign']} 的未识别内容已变化，请重新生成建议"
+                    )
+                if not new_value or new_value == old_value:
+                    raise ValueError("补全值为空或没有变化")
+
+                self.conn.execute(
+                    f"""UPDATE checkins
+                        SET {column}=?, unmatched=?, excel_sync_status='pending',
+                            excel_synced=0, excel_last_error='', updated_at=?
+                        WHERE id=?""",
+                    (new_value, new_unmatched, now, record_id),
+                )
+                self.conn.execute(
+                    "INSERT INTO audit_log(record_id, field_name, old_value, new_value, changed_at) "
+                    "VALUES(?,?,?,?,?)",
+                    (record_id, field, old_value, new_value, now),
+                )
+                if new_unmatched != old_unmatched:
+                    self.conn.execute(
+                        "INSERT INTO audit_log(record_id, field_name, old_value, new_value, changed_at) "
+                        "VALUES(?,?,?,?,?)",
+                        (record_id, "unmatched", old_unmatched, new_unmatched, now),
+                    )
+                self.conn.execute(
+                    """INSERT INTO completion_log(
+                           batch_id, session_id, record_id, field_name,
+                           old_value, new_value, old_unmatched, new_unmatched,
+                           source_type, source_detail, confidence, status, created_at,
+                           candidate_id, choice_group, miit_article_id, miit_sync_run_id)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        batch_id,
+                        session_id,
+                        record_id,
+                        field,
+                        old_value,
+                        new_value,
+                        old_unmatched,
+                        new_unmatched,
+                        str(change.get("source_type") or "manual_review"),
+                        str(change.get("source_detail") or ""),
+                         max(0, min(int(change.get("confidence") or 0), 100)),
+                         "applied",
+                         now,
+                         str(change.get("candidate_id") or ""),
+                         str(change.get("choice_group") or ""),
+                         str(change.get("miit_article_id") or ""),
+                         str(change.get("miit_sync_run_id") or ""),
+                     ),
+                )
+                changed_ids.append(record_id)
+            self.conn.execute(
+                "UPDATE completion_batches SET record_count=? WHERE batch_id=?",
+                (len(set(changed_ids)), batch_id),
+            )
+        return list(dict.fromkeys(changed_ids))
+
+    def undo_last_completion_batch(self, session_id: int) -> dict:
+        """原子撤销当前场次最后一批补全；后续人工修改存在时拒绝覆盖。"""
+        head = self.conn.execute(
+            """SELECT batch_id FROM completion_log
+               WHERE session_id=? AND status='applied'
+               ORDER BY id DESC LIMIT 1""",
+            (session_id,),
+        ).fetchone()
+        if head is None:
+            return {"ok": False, "message": "当前场次没有可撤销的资料补全"}
+        batch_id = head["batch_id"]
+        actions = self.conn.execute(
+            """SELECT * FROM completion_log
+               WHERE session_id=? AND batch_id=? AND status='applied'
+               ORDER BY id""",
+            (session_id, batch_id),
+        ).fetchall()
+        record_ids = sorted({int(action["record_id"]) for action in actions})
+        placeholders = ",".join("?" * len(record_ids))
+        records = self.conn.execute(
+            f"SELECT * FROM checkins WHERE id IN ({placeholders}) AND is_deleted=0",
+            tuple(record_ids),
+        ).fetchall()
+        by_id = {int(row["id"]): row for row in records}
+        if len(by_id) != len(record_ids):
+            return {"ok": False, "message": "补全后的部分记录已不存在，未执行撤销"}
+
+        for action in actions:
+            row = by_id[int(action["record_id"])]
+            column = _FIELD_MAP[action["field_name"]]
+            if str(row[column] or "").strip() != str(action["new_value"] or "").strip():
+                return {
+                    "ok": False,
+                    "message": (
+                        f"#{row['sequence_no']} {row['callsign']} 已在补全后人工修改，"
+                        "为避免覆盖，整批未撤销"
+                    ),
+                }
+            if str(row["unmatched"] or "").strip() != str(action["new_unmatched"] or "").strip():
+                return {
+                    "ok": False,
+                    "message": (
+                        f"#{row['sequence_no']} {row['callsign']} 的未识别内容已变化，"
+                        "为避免覆盖，整批未撤销"
+                    ),
+                }
+
+        now = now_iso()
+        unmatched_done: set[int] = set()
+        with self.conn:
+            for action in actions:
+                record_id = int(action["record_id"])
+                column = _FIELD_MAP[action["field_name"]]
+                self.conn.execute(
+                    f"""UPDATE checkins
+                        SET {column}=?, unmatched=?, excel_sync_status='pending',
+                            excel_synced=0, excel_last_error='', updated_at=?
+                        WHERE id=?""",
+                    (action["old_value"], action["old_unmatched"], now, record_id),
+                )
+                self.conn.execute(
+                    "INSERT INTO audit_log(record_id, field_name, old_value, new_value, changed_at) "
+                    "VALUES(?,?,?,?,?)",
+                    (record_id, action["field_name"], action["new_value"],
+                     action["old_value"], now),
+                )
+                if (record_id not in unmatched_done
+                        and action["new_unmatched"] != action["old_unmatched"]):
+                    self.conn.execute(
+                        "INSERT INTO audit_log(record_id, field_name, old_value, new_value, changed_at) "
+                        "VALUES(?,?,?,?,?)",
+                        (record_id, "unmatched", action["new_unmatched"],
+                         action["old_unmatched"], now),
+                    )
+                    unmatched_done.add(record_id)
+            self.conn.execute(
+                """UPDATE completion_log SET status='reverted', reverted_at=?
+                   WHERE session_id=? AND batch_id=? AND status='applied'""",
+                (now, session_id, batch_id),
+            )
+            self.conn.execute(
+                """UPDATE completion_batches SET status='reverted', reverted_at=?,
+                   excel_status='pending' WHERE batch_id=?""",
+                (now, batch_id),
+            )
+        return {
+            "ok": True,
+            "batch_id": batch_id,
+            "record_ids": record_ids,
+            "change_count": len(actions),
+            "actions": [dict(action) for action in actions],
+        }
+
+    def update_completion_excel_status(self, batch_id: str, status: str,
+                                       error: str = "") -> None:
+        allowed = {"not_required", "pending", "persisted", "partial", "error"}
+        if status not in allowed:
+            status = "error"
+        with self.conn:
+            self.conn.execute(
+                "UPDATE completion_batches SET excel_status=?, excel_error=? WHERE batch_id=?",
+                (status, str(error or "")[:2000], batch_id),
+            )
+
+    def list_completion_batches(self, session_id: int | None = None,
+                                limit: int = 100) -> list[dict]:
+        sql = "SELECT * FROM completion_batches"
+        params: list = []
+        if session_id is not None:
+            sql += " WHERE session_id=?"
+            params.append(int(session_id))
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(max(1, min(int(limit), 500)))
+        return [dict(row) for row in self.conn.execute(sql, tuple(params)).fetchall()]
+
+    def completion_batch_details(self, batch_id: str) -> list[dict]:
+        return [dict(row) for row in self.conn.execute(
+            "SELECT * FROM completion_log WHERE batch_id=? ORDER BY id", (batch_id,)
+        ).fetchall()]
+
     # ---------- audit ----------
     def add_audit(self, record_id: int, field_name: str, old_value: str, new_value: str) -> None:
         with self.conn:

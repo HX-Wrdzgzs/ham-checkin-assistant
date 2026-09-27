@@ -4,8 +4,10 @@ from __future__ import annotations
 SOURCE_LABELS = {
     "input": "本次",
     "alias": "缩写",
+    "observed_alias": "历史缩写",
     "region": "区划",
     "rule": "规则",
+    "miit_catalog": "工信部型号",
     "history_recent": "历史最近",
     "history_frequent": "历史高频",
     "fuzzy": "模糊",

@@ -1,6 +1,6 @@
 """准备 GitHub Release 自动更新产物。
 
-输入必须是一次真实 PyInstaller 构建出的 EXE。脚本会生成稳定 ASCII 主资产
+输入必须是一次真实 Windows 构建出的 EXE（Native .NET 或旧版兼容 EXE）。脚本会生成稳定 ASCII 主资产
 ``release/HAM.exe``、旧客户端兼容副本 ``release/HAM点名助手.exe``、GitHub
 上传用的 ASCII 兼容副本 ``release/HAM-legacy.exe``、
 ``release/SHA256SUMS.txt``，并原子刷新 ``updates/latest.json``。

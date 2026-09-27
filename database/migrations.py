@@ -394,6 +394,84 @@ MIGRATIONS: dict[int, list] = {
         # 保留解析器未识别 token，供 Excel“未识别”列和后续人工整理使用。
         "ALTER TABLE checkins ADD COLUMN unmatched TEXT DEFAULT ''",
     ],
+    12: [
+        # 本场资料补全留痕：每个字段保存补全前后值、依据、置信度和批次，
+        # 从而支持整批撤销，也能区分“现场明确输入”和“整理阶段建议”。
+        """
+        CREATE TABLE IF NOT EXISTS completion_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id TEXT NOT NULL,
+            session_id INTEGER NOT NULL,
+            record_id INTEGER NOT NULL,
+            field_name TEXT NOT NULL CHECK(field_name IN ('qth','device','antenna','power')),
+            old_value TEXT DEFAULT '',
+            new_value TEXT NOT NULL,
+            old_unmatched TEXT DEFAULT '',
+            new_unmatched TEXT DEFAULT '',
+            source_type TEXT NOT NULL,
+            source_detail TEXT DEFAULT '',
+            confidence INTEGER DEFAULT 0 CHECK(confidence BETWEEN 0 AND 100),
+            status TEXT NOT NULL DEFAULT 'applied'
+                CHECK(status IN ('applied','reverted')),
+            created_at TEXT NOT NULL,
+            reverted_at TEXT,
+            FOREIGN KEY(session_id) REFERENCES sessions(id),
+            FOREIGN KEY(record_id) REFERENCES checkins(id)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_completion_session_batch "
+        "ON completion_log(session_id, batch_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_completion_record "
+        "ON completion_log(record_id, created_at)",
+        # 工信部型号核准查询只在用户主动查询时访问；结果缓存在本地，
+        # 后续整理可以离线复用，并保留查询时间和官方来源地址。
+        """
+        CREATE TABLE IF NOT EXISTS miit_device_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            query_key TEXT NOT NULL,
+            model TEXT NOT NULL,
+            standard_name TEXT DEFAULT '',
+            device_name TEXT DEFAULT '',
+            applicant TEXT DEFAULT '',
+            approval_code TEXT DEFAULT '',
+            cmiit_id TEXT DEFAULT '',
+            approved_at TEXT DEFAULT '',
+            valid_for TEXT DEFAULT '',
+            source_url TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            UNIQUE(query_key, model, applicant, approval_code)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_miit_cache_query "
+        "ON miit_device_cache(query_key, fetched_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_miit_cache_model "
+        "ON miit_device_cache(model)",
+    ],
+    13: [
+        # 补全批次元数据：一个批次可以包含多个记录/字段，Excel 状态独立留痕。
+        """
+        CREATE TABLE IF NOT EXISTS completion_batches (
+            batch_id TEXT PRIMARY KEY,
+            session_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'applied'
+                CHECK(status IN ('applied','reverted')),
+            record_count INTEGER DEFAULT 0,
+            change_count INTEGER DEFAULT 0,
+            excel_status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(excel_status IN ('not_required','pending','persisted','partial','error')),
+            excel_error TEXT DEFAULT '',
+            reverted_at TEXT,
+            FOREIGN KEY(session_id) REFERENCES sessions(id)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_completion_batches_session "
+        "ON completion_batches(session_id, created_at DESC)",
+        "ALTER TABLE completion_log ADD COLUMN candidate_id TEXT DEFAULT ''",
+        "ALTER TABLE completion_log ADD COLUMN choice_group TEXT DEFAULT ''",
+        "ALTER TABLE completion_log ADD COLUMN miit_article_id TEXT DEFAULT ''",
+        "ALTER TABLE completion_log ADD COLUMN miit_sync_run_id TEXT DEFAULT ''",
+    ],
 }
 
 

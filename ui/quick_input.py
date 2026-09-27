@@ -387,7 +387,9 @@ class QuickInputPanel(QWidget):
         for key in ("qth", "device", "antenna", "power"):
             f = fields[key]
             if f.value:
-                parts.append(f"{f.value} [{source_label(f.source)}]")
+                value = (self.service.full_qth(f.value, f.raw)
+                         if key == "qth" else f.value)
+                parts.append(f"{value} [{source_label(f.source)}]")
             elif f.candidates:
                 parts.append(f"{' / '.join(f.candidates[:2])} [候选]")
         # P2：明确显示未匹配 token，提示用户无法解析的内容
@@ -408,9 +410,11 @@ class QuickInputPanel(QWidget):
             if count:
                 hist_lines.append(f"历史：{count}次")
             if recent:
-                hist_lines.append("最近：" + " / ".join(recent))
+                hist_lines.append("最近：" + " / ".join(
+                    self.service.full_qth(value) for value in recent))
             if freq:
-                hist_lines.append("常用：" + " / ".join(freq))
+                hist_lines.append("常用：" + " / ".join(
+                    self.service.full_qth(value) for value in freq))
         self.history_lbl.setText("　".join(hist_lines))
 
         # 重复提示
@@ -424,7 +428,7 @@ class QuickInputPanel(QWidget):
                 if len(t) >= 16:
                     t = t[11:16]
                 self.dup_lbl.setText(
-                    f"本场已签到　上次 {t}　{dup.qth_standard or ''}　"
+                    f"本场已签到　上次 {t}　{self.service.full_qth(dup.qth_standard)}　"
                     f"{dup.device_standard or ''}　{dup.power_standard or ''}")
             else:
                 self.dup_lbl.setText("")
