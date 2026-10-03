@@ -54,6 +54,31 @@ public partial class MainView : UserControl, IDisposable
         }
     }
 
+    private void Root_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (SidebarColumn is null || BrandTextPanel is null)
+        {
+            return;
+        }
+
+        // Keep the navigation inside the client area when the user narrows
+        // the window.  The icon rail preserves every destination while the
+        // content area gets the space that the fixed-width labels used to
+        // consume.
+        var compact = ActualWidth < 1_080;
+        SidebarColumn.Width = new GridLength(compact ? 72 : 190);
+        BrandTextPanel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        WorkspaceLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        QuickNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        RecordsNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        CatalogNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        RecordingNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        SettingsNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        LocalStatusDetails.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        LocalStatusTitle.Text = compact ? "●" : "●  本地录入";
+        LocalStatusCard.Padding = compact ? new Thickness(8, 10, 8, 10) : new Thickness(11);
+    }
+
     private void Root_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         if (_viewModel is not null)
@@ -258,12 +283,7 @@ public partial class MainView : UserControl, IDisposable
 
     internal void SetPreviewRecordingData()
     {
-        ScreenComboBox.ItemsSource = new[]
-        {
-            new ScreenDevice(0, "主显示器", 0, 0, 1920, 1080, true),
-            new ScreenDevice(1, "副显示器", 1920, 0, 2560, 1440, false)
-        };
-        ScreenComboBox.SelectedIndex = 0;
+        RecordingTargetText.Text = "HAM 点名助手窗口 · 1180×760 · 仅录制软件窗口";
         MicrophoneComboBox.ItemsSource = new[]
         {
             new MicrophoneDevice(0, "麦克风阵列（预览设备）"),
@@ -272,11 +292,11 @@ public partial class MainView : UserControl, IDisposable
         MicrophoneComboBox.SelectedIndex = 0;
         RecordingPathBox.Text = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Downloads", "HAM点名助手录屏", "点名现场_20260925_213000.avi");
+            "Downloads", "HAM点名助手录屏", "点名现场_20260925_213000.mp4");
         MicrophoneLevelBar.Value = 0.42;
         MicrophoneStatusText.Text = "测试中 · 峰值 42% · 预览数据";
         RecordingStatusText.Text = "已准备";
-        RecordingStatsText.Text = "主显示器 1920×1080 · 10 FPS · 麦克风已选择";
+        RecordingStatsText.Text = "软件窗口 1180×760 · 10 FPS · 麦克风已选择 · MP4";
         StartRecordingButton.IsEnabled = true;
         PauseRecordingButton.IsEnabled = false;
         StopRecordingButton.IsEnabled = false;
@@ -299,18 +319,14 @@ public partial class MainView : UserControl, IDisposable
 
         try
         {
-            var screens = ScreenCapture.EnumerateScreens();
-            ScreenComboBox.ItemsSource = screens;
-            ScreenDevice? selectedScreen = null;
-            for (var index = 0; index < screens.Count; index++)
+            var window = Window.GetWindow(this);
+            if (window is null)
             {
-                if (screens[index].IsPrimary)
-                {
-                    selectedScreen = screens[index];
-                    break;
-                }
+                throw new InvalidOperationException("HAM 点名助手主窗口尚未创建。");
             }
-            ScreenComboBox.SelectedItem = selectedScreen ?? (screens.Count > 0 ? screens[0] : null);
+
+            var target = ScreenCapture.CreateTarget(window);
+            RecordingTargetText.Text = target.DisplayName;
 
             var microphones = MicrophoneCapture.EnumerateDevices();
             MicrophoneComboBox.ItemsSource = microphones;
@@ -414,8 +430,8 @@ public partial class MainView : UserControl, IDisposable
         var dialog = new SaveFileDialog
         {
             Title = "选择录屏输出文件",
-            Filter = "AVI 录屏文件 (*.avi)|*.avi|所有文件 (*.*)|*.*",
-            DefaultExt = ".avi",
+            Filter = "MP4 录屏文件 (*.mp4)|*.mp4|所有文件 (*.*)|*.*",
+            DefaultExt = ".mp4",
             AddExtension = true,
             FileName = Path.GetFileName(string.IsNullOrWhiteSpace(RecordingPathBox.Text)
                 ? GetDefaultRecordingPath()
@@ -429,9 +445,16 @@ public partial class MainView : UserControl, IDisposable
 
     private void StartRecording_Click(object sender, RoutedEventArgs e)
     {
-        if (ScreenComboBox.SelectedItem is not ScreenDevice screen)
+        RecordingTarget target;
+        try
         {
-            MessageBox.Show("请先选择要录制的显示器。", "无法开始录屏", MessageBoxButton.OK, MessageBoxImage.Warning);
+            target = ScreenCapture.CreateTarget(Window.GetWindow(this)
+                ?? throw new InvalidOperationException("HAM 点名助手主窗口尚未创建。"));
+            RecordingTargetText.Text = target.DisplayName;
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(exception.Message, "无法开始录制", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -439,9 +462,13 @@ public partial class MainView : UserControl, IDisposable
         var outputPath = string.IsNullOrWhiteSpace(RecordingPathBox.Text)
             ? GetDefaultRecordingPath()
             : RecordingPathBox.Text.Trim();
-        if (!outputPath.EndsWith(".avi", StringComparison.OrdinalIgnoreCase))
+        if (outputPath.EndsWith(".avi", StringComparison.OrdinalIgnoreCase))
         {
-            outputPath += ".avi";
+            outputPath = Path.ChangeExtension(outputPath, ".mp4");
+        }
+        else if (!outputPath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+        {
+            outputPath += ".mp4";
         }
 
         var includeMicrophone = IncludeMicrophoneCheckBox.IsChecked == true;
@@ -449,7 +476,7 @@ public partial class MainView : UserControl, IDisposable
         try
         {
             _recordingService.Start(new RecordingOptions(
-                screen, outputPath, includeMicrophone, microphoneId));
+                target, outputPath, includeMicrophone, microphoneId));
             RecordingPathBox.Text = outputPath;
             _recordingTimer.Start();
             UpdateRecordingControls();
@@ -535,7 +562,6 @@ public partial class MainView : UserControl, IDisposable
         PauseRecordingButton.IsEnabled = active && _recordingService.State is RecordingState.Recording or RecordingState.Paused;
         StopRecordingButton.IsEnabled = active;
         PauseRecordingButton.Content = paused ? "继续" : "暂停";
-        ScreenComboBox.IsEnabled = !active;
         IncludeMicrophoneCheckBox.IsEnabled = !active;
         MicrophoneComboBox.IsEnabled = IncludeMicrophoneCheckBox.IsChecked == true && !active;
         TestMicrophoneButton.IsEnabled = !active;
@@ -543,7 +569,7 @@ public partial class MainView : UserControl, IDisposable
 
     private static string GetDefaultRecordingPath() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        "Downloads", "HAM点名助手录屏", $"点名现场_{DateTime.Now:yyyyMMdd_HHmmss}.avi");
+        "Downloads", "HAM点名助手录屏", $"点名现场_{DateTime.Now:yyyyMMdd_HHmmss}.mp4");
 
     public void Dispose()
     {

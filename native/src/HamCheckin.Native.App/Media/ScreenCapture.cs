@@ -1,58 +1,103 @@
-using System.IO;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
-using FormsScreen = System.Windows.Forms.Screen;
+using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Interop;
 
 namespace HamCheckin.Native.App.Media;
 
+/// <summary>
+/// Captures the WPF application's client area. The target is the application
+/// window handle, never a monitor, so other desktop windows are not selected.
+/// </summary>
 internal static class ScreenCapture
 {
-    public static IReadOnlyList<ScreenDevice> EnumerateScreens()
-    {
-        var screens = FormsScreen.AllScreens;
-        return screens.Select((screen, index) => new ScreenDevice(
-                index,
-                string.IsNullOrWhiteSpace(screen.DeviceName) ? $"显示器 {index + 1}" : screen.DeviceName,
-                screen.Bounds.Left,
-                screen.Bounds.Top,
-                screen.Bounds.Width,
-                screen.Bounds.Height,
-                screen.Primary))
-            .ToArray();
-    }
+    private const uint PrintWindowRenderFullContent = 0x00000002;
 
-    public static byte[] CaptureJpeg(ScreenDevice device, int quality)
+    public static RecordingTarget CreateTarget(Window window)
     {
-        var screens = FormsScreen.AllScreens;
-        if (device.Index < 0 || device.Index >= screens.Length)
+        ArgumentNullException.ThrowIfNull(window);
+        var handle = new WindowInteropHelper(window).Handle;
+        if (handle == nint.Zero)
         {
-            throw new InvalidOperationException("录制目标显示器已断开或显示器列表已变化，请刷新后重试。");
+            throw new InvalidOperationException("HAM 点名助手窗口尚未创建，暂时不能开始录屏。");
         }
 
-        var bounds = screens[device.Index].Bounds;
-        using var bitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format24bppRgb);
-        using (var graphics = Graphics.FromImage(bitmap))
+        if (!GetClientRect(handle, out var clientRect))
         {
-            graphics.CompositingMode = CompositingMode.SourceCopy;
-            graphics.CopyFromScreen(
-                bounds.Left,
-                bounds.Top,
-                0,
-                0,
-                new Size(bounds.Width, bounds.Height),
-                CopyPixelOperation.SourceCopy);
+            throw new InvalidOperationException("无法读取 HAM 点名助手窗口尺寸。");
         }
 
-        using var stream = new MemoryStream();
-        var codec = ImageCodecInfo.GetImageEncoders()
-            .FirstOrDefault(item => item.FormatID == ImageFormat.Jpeg.Guid)
-            ?? throw new InvalidOperationException("Windows JPEG 编码器不可用，无法生成录屏帧。");
-        using var parameters = new EncoderParameters(1);
-        parameters.Param[0] = new EncoderParameter(
-            System.Drawing.Imaging.Encoder.Quality,
-            Math.Clamp(quality, 40, 95));
-        bitmap.Save(stream, codec, parameters);
-        return stream.ToArray();
+        var width = MakeEven(clientRect.Right - clientRect.Left);
+        var height = MakeEven(clientRect.Bottom - clientRect.Top);
+        if (width < 2 || height < 2)
+        {
+            throw new InvalidOperationException("HAM 点名助手窗口尺寸太小，无法开始录屏。");
+        }
+
+        return new RecordingTarget(handle, "HAM 点名助手窗口", width, height);
     }
+
+    /// <summary>Returns BGRX pixels for Media Foundation's RGB32 input type.</summary>
+    public static byte[] CaptureFrame(RecordingTarget target)
+    {
+        if (target.WindowHandle == nint.Zero || !IsWindow(target.WindowHandle))
+        {
+            throw new InvalidOperationException("HAM 点名助手窗口已关闭，无法继续录屏。");
+        }
+
+        using var bitmap = new Bitmap(target.Width, target.Height, PixelFormat.Format32bppRgb);
+        using var graphics = Graphics.FromImage(bitmap);
+        var deviceContext = graphics.GetHdc();
+        try
+        {
+            var captured = PrintWindow(target.WindowHandle, deviceContext, PrintWindowRenderFullContent);
+            if (!captured)
+            {
+                // Never fall back to a desktop DC: doing so could capture an
+                // unrelated window when the HAM window is covered.  A failed
+                // PrintWindow is a hard recording error instead.
+                throw new InvalidOperationException("Windows 无法只渲染 HAM 点名助手窗口画面。");
+            }
+        }
+        finally
+        {
+            graphics.ReleaseHdc(deviceContext);
+        }
+
+        var rectangle = new Rectangle(0, 0, target.Width, target.Height);
+        var data = bitmap.LockBits(rectangle, ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
+        try
+        {
+            var stride = Math.Abs(data.Stride);
+            var bytes = new byte[stride * target.Height];
+            Marshal.Copy(data.Scan0, bytes, 0, bytes.Length);
+            return bytes;
+        }
+        finally
+        {
+            bitmap.UnlockBits(data);
+        }
+    }
+
+    private static int MakeEven(int value) => Math.Max(2, value & ~1);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetClientRect(nint hWnd, out Rect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool IsWindow(nint hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool PrintWindow(nint hWnd, nint hdcBlt, uint flags);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
 }

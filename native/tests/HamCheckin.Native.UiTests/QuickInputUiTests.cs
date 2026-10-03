@@ -210,7 +210,7 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
     }
 
     [Fact]
-    public void RecordingPageExposesScreenMicrophoneAndControls()
+    public void RecordingPageExposesApplicationWindowTargetAndMicrophoneControls()
     {
         _fixture.Run(() =>
         {
@@ -229,12 +229,13 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             view.SetPreviewRecordingData();
             window.UpdateLayout();
 
-            Assert.NotNull(view.FindName("ScreenComboBox"));
+            Assert.Null(view.FindName("ScreenComboBox"));
+            Assert.Contains("仅录制软件窗口", ((TextBlock)view.FindName("RecordingTargetText")!).Text);
             Assert.NotNull(view.FindName("MicrophoneComboBox"));
             Assert.NotNull(view.FindName("TestMicrophoneButton"));
             Assert.NotNull(view.FindName("StartRecordingButton"));
             Assert.Equal("已准备", ((TextBlock)view.FindName("RecordingStatusText")!).Text);
-            Assert.Contains("1920×1080", ((TextBlock)view.FindName("RecordingStatsText")!).Text);
+            Assert.Contains("MP4", ((TextBlock)view.FindName("RecordingStatsText")!).Text);
 
             view.Dispose();
             window.Close();
@@ -242,27 +243,56 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
     }
 
     [Fact]
-    public void AviWriterCreatesTwoStreamFormatsAndAnIndex()
+    public void NarrowWindowCollapsesSidebarLabelsInsideClientBounds()
+    {
+        _fixture.Run(() =>
+        {
+            var view = new MainView { DataContext = MainViewModel.CreatePreview() };
+            var window = new Window
+            {
+                Width = 800,
+                Height = 600,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                Content = view
+            };
+
+            window.Show();
+            window.UpdateLayout();
+            view.UpdateLayout();
+
+            var sidebarColumn = (ColumnDefinition)view.FindName("SidebarColumn")!;
+            var sidebar = (Border)view.FindName("SidebarPanel")!;
+            Assert.Equal(72, sidebarColumn.ActualWidth);
+            Assert.Equal(Visibility.Collapsed, ((TextBlock)view.FindName("QuickNavLabel")!).Visibility);
+            Assert.True(sidebar.ActualWidth <= view.ActualWidth);
+            Assert.True(view.ActualWidth - sidebar.ActualWidth > 0);
+
+            view.Dispose();
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void Mp4WriterCreatesAnMp4ContainerWithH264Video()
     {
         var directory = Path.Combine(Path.GetTempPath(), "HAMCheckin.Native.UiTests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, "capture.avi");
+        var path = Path.Combine(directory, "capture.mp4");
         try
         {
-            using (var writer = new AviFileWriter(path, 320, 240, 10, 44_100))
+            using (var writer = new Mp4FileWriter(path, 320, 240, 10, 44_100, includeAudio: false))
             {
-                writer.WriteVideoFrame(new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 });
-                writer.WriteAudio(new byte[8]);
+                writer.WriteVideoFrame(new byte[320 * 240 * 4]);
                 writer.Complete();
             }
 
             var bytes = File.ReadAllBytes(path);
-            Assert.True(bytes.Length > 200);
-            Assert.Equal("RIFF", Encoding.ASCII.GetString(bytes, 0, 4));
-            Assert.Equal("AVI ", Encoding.ASCII.GetString(bytes, 8, 4));
-            Assert.Equal(2, CountFourCc(bytes, "strf"));
-            Assert.Equal(1, CountFourCc(bytes, "idx1"));
-            Assert.True(CountFourCc(bytes, "movi") >= 1);
+            Assert.True(bytes.Length > 1_000);
+            Assert.True(CountFourCc(bytes, "ftyp") >= 1);
+            Assert.True(CountFourCc(bytes, "moov") >= 1);
+            Assert.True(CountFourCc(bytes, "mdat") >= 1);
+            Assert.True(CountFourCc(bytes, "avc1") >= 1 || CountFourCc(bytes, "avcC") >= 1);
         }
         finally
         {
@@ -298,29 +328,47 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
     }
 
     [Fact]
-    public async Task ScreenOnlyRecordingCapturesFramesAndClosesAsAValidAvi()
+    public void ApplicationOnlyRecordingCapturesFramesAndClosesAsValidMp4()
     {
-        var screens = ScreenCapture.EnumerateScreens();
-        Assert.NotEmpty(screens);
-        var screen = screens[0];
         var directory = Path.Combine(Path.GetTempPath(), "HAMCheckin.Native.UiTests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, "screen-only.avi");
+        var path = Path.Combine(directory, "app-only.mp4");
         try
         {
-            using var service = new ScreenRecordingService();
-            service.Start(new RecordingOptions(screen!, path, IncludeMicrophone: false, MicrophoneId: null,
-                FramesPerSecond: 5, JpegQuality: 55));
-            await Task.Delay(700);
-            var result = await service.StopAsync();
+            _fixture.Run(() =>
+            {
+                var window = new Window
+                {
+                    Width = 640,
+                    Height = 480,
+                    WindowStyle = WindowStyle.None,
+                    ShowInTaskbar = false,
+                    Content = new MainView { DataContext = MainViewModel.CreatePreview() }
+                };
+                window.Show();
+                window.UpdateLayout();
+                var target = ScreenCapture.CreateTarget(window);
+                Assert.Equal("HAM 点名助手窗口", target.Name);
 
-            Assert.NotNull(result);
-            Assert.True(result!.VideoFrames > 0);
-            Assert.True(File.Exists(path));
-            var bytes = File.ReadAllBytes(path);
-            Assert.Equal("RIFF", Encoding.ASCII.GetString(bytes, 0, 4));
-            Assert.True(CountFourCc(bytes, "00dc") >= 1);
-            Assert.Equal(1, CountFourCc(bytes, "idx1"));
+                using var service = new ScreenRecordingService();
+                var stateMessage = string.Empty;
+                service.StateChanged += (_, state) => stateMessage = state.Message;
+                service.Start(new RecordingOptions(target, path, IncludeMicrophone: false, MicrophoneId: null,
+                    FramesPerSecond: 5));
+                Assert.True(
+                    WaitForVideoFrame(service, TimeSpan.FromSeconds(5)),
+                    $"等待窗口录制器生成第一帧超时；状态={service.State}，视频帧={service.VideoFrames}，文件={service.OutputPath}" );
+                var result = service.StopAsync().GetAwaiter().GetResult();
+
+                Assert.True(result is not null, stateMessage);
+                Assert.True(result!.VideoFrames > 0);
+                Assert.True(File.Exists(path));
+                var bytes = File.ReadAllBytes(path);
+                Assert.True(CountFourCc(bytes, "ftyp") >= 1);
+                Assert.True(CountFourCc(bytes, "moov") >= 1);
+                Assert.True(CountFourCc(bytes, "mdat") >= 1);
+                window.Close();
+            });
         }
         finally
         {
@@ -329,38 +377,80 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
     }
 
     [Fact]
-    public async Task ScreenAndMicrophoneRecordingWritesVideoAndPcmStreams()
+    public void ApplicationAndMicrophoneRecordingWritesVideoAndAacStreams()
     {
-        var screens = ScreenCapture.EnumerateScreens();
         var microphones = MicrophoneCapture.EnumerateDevices();
-        if (screens.Count == 0 || microphones.Count == 0)
+        if (microphones.Count == 0)
         {
-            throw Xunit.Sdk.SkipException.ForSkip("当前 Windows 会话缺少显示器或麦克风，未执行双流录制测试。");
+            throw Xunit.Sdk.SkipException.ForSkip("当前 Windows 会话没有可用麦克风，未执行双流录制测试。");
         }
 
         var directory = Path.Combine(Path.GetTempPath(), "HAMCheckin.Native.UiTests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, "screen-and-microphone.avi");
+        var path = Path.Combine(directory, "app-and-microphone.mp4");
         try
         {
-            using var service = new ScreenRecordingService();
-            service.Start(new RecordingOptions(screens[0], path, IncludeMicrophone: true,
-                MicrophoneId: microphones[0].Id, FramesPerSecond: 5, JpegQuality: 55));
-            await Task.Delay(900);
-            var result = await service.StopAsync();
+            _fixture.Run(() =>
+            {
+                var window = new Window
+                {
+                    Width = 640,
+                    Height = 480,
+                    WindowStyle = WindowStyle.None,
+                    ShowInTaskbar = false,
+                    Content = new MainView { DataContext = MainViewModel.CreatePreview() }
+                };
+                window.Show();
+                window.UpdateLayout();
+                var target = ScreenCapture.CreateTarget(window);
+                using var service = new ScreenRecordingService();
+                var stateMessage = string.Empty;
+                service.StateChanged += (_, state) => stateMessage = state.Message;
+                service.Start(new RecordingOptions(target, path, IncludeMicrophone: true,
+                    MicrophoneId: microphones[0].Id, FramesPerSecond: 5));
+                Assert.True(
+                    WaitForVideoFrame(service, TimeSpan.FromSeconds(5)),
+                    $"等待窗口录制器生成第一帧超时；状态={service.State}，视频帧={service.VideoFrames}，文件={service.OutputPath}" );
+                var result = service.StopAsync().GetAwaiter().GetResult();
 
-            Assert.NotNull(result);
-            Assert.True(result!.VideoFrames > 0);
-            Assert.True(result.AudioBytes > 0);
-            var bytes = File.ReadAllBytes(path);
-            Assert.True(CountFourCc(bytes, "00dc") >= 1);
-            Assert.True(CountFourCc(bytes, "01wb") >= 1);
-            Assert.Equal(1, CountFourCc(bytes, "idx1"));
+                Assert.True(result is not null, stateMessage);
+                Assert.True(result!.VideoFrames > 0);
+                Assert.True(result.AudioBytes > 0);
+                var bytes = File.ReadAllBytes(path);
+                Assert.True(CountFourCc(bytes, "ftyp") >= 1);
+                Assert.True(CountFourCc(bytes, "moov") >= 1);
+                Assert.True(CountFourCc(bytes, "mdat") >= 1);
+                Assert.True(CountFourCc(bytes, "mp4a") >= 1 || CountFourCc(bytes, "esds") >= 1);
+                window.Close();
+            });
         }
         finally
         {
             if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private static bool WaitForVideoFrame(ScreenRecordingService service, TimeSpan timeout)
+    {
+        var dispatcher = Dispatcher.CurrentDispatcher;
+        var nestedFrame = new DispatcherFrame();
+        var deadline = DateTime.UtcNow + timeout;
+        var timer = new DispatcherTimer(
+            TimeSpan.FromMilliseconds(10),
+            DispatcherPriority.Background,
+            (_, _) =>
+            {
+                if (service.VideoFrames > 0 || DateTime.UtcNow >= deadline)
+                {
+                    nestedFrame.Continue = false;
+                }
+            },
+            dispatcher);
+
+        timer.Start();
+        Dispatcher.PushFrame(nestedFrame);
+        timer.Stop();
+        return service.VideoFrames > 0;
     }
 
     private static int CountFourCc(byte[] bytes, string value)

@@ -1,16 +1,12 @@
 namespace HamCheckin.Native.App.Media;
 
-public sealed record ScreenDevice(
-    int Index,
+public sealed record RecordingTarget(
+    nint WindowHandle,
     string Name,
-    int Left,
-    int Top,
     int Width,
-    int Height,
-    bool IsPrimary)
+    int Height)
 {
-    public string DisplayName =>
-        $"{Name} · {Width}×{Height}{(IsPrimary ? " · 主显示器" : string.Empty)}";
+    public string DisplayName => $"{Name} · {Width}×{Height} · 仅录制软件窗口";
 }
 
 public sealed record MicrophoneDevice(int Id, string Name)
@@ -19,12 +15,11 @@ public sealed record MicrophoneDevice(int Id, string Name)
 }
 
 public sealed record RecordingOptions(
-    ScreenDevice Screen,
+    RecordingTarget Target,
     string OutputPath,
     bool IncludeMicrophone,
     int? MicrophoneId,
     int FramesPerSecond = 10,
-    int JpegQuality = 72,
     int SampleRate = 44100);
 
 public enum RecordingState

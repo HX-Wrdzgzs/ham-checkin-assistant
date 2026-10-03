@@ -1,9 +1,11 @@
+using System.Collections.Concurrent;
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace HamCheckin.Native.App.Media;
 
 /// <summary>
-/// Coordinates screen frames, microphone PCM and the AVI writer.  The service
+/// Coordinates application-window frames, microphone PCM and the MP4 writer. The service
 /// deliberately keeps all capture work off the WPF dispatcher thread.
 /// </summary>
 public sealed class ScreenRecordingService : IDisposable
@@ -11,7 +13,7 @@ public sealed class ScreenRecordingService : IDisposable
     private readonly object _gate = new();
     private CancellationTokenSource? _captureCancellation;
     private Task? _captureTask;
-    private AviFileWriter? _writer;
+    private Mp4FileWriter? _writer;
     private MicrophoneCapture? _microphone;
     private RecordingOptions? _options;
     private DateTimeOffset _startedAt;
@@ -21,6 +23,7 @@ public sealed class ScreenRecordingService : IDisposable
     private long _lastVideoFrames;
     private long _lastAudioBytes;
     private string _lastOutputPath = string.Empty;
+    private readonly ConcurrentQueue<byte[]> _pendingAudio = new();
 
     public event EventHandler<RecordingStateChangedEventArgs>? StateChanged;
     public event EventHandler<MicrophoneLevelEventArgs>? LevelChanged;
@@ -69,11 +72,9 @@ public sealed class ScreenRecordingService : IDisposable
         ArgumentNullException.ThrowIfNull(options);
         var normalized = options with
         {
-            FramesPerSecond = Math.Clamp(options.FramesPerSecond, 1, 30),
-            JpegQuality = Math.Clamp(options.JpegQuality, 40, 95)
+            FramesPerSecond = Math.Clamp(options.FramesPerSecond, 1, 30)
         };
 
-        AviFileWriter? writer = null;
         MicrophoneCapture? microphone = null;
         CancellationTokenSource? cancellation = null;
         Exception? failure = null;
@@ -88,14 +89,6 @@ public sealed class ScreenRecordingService : IDisposable
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(normalized.OutputPath))!);
-                writer = new AviFileWriter(
-                    normalized.OutputPath,
-                    normalized.Screen.Width,
-                    normalized.Screen.Height,
-                    normalized.FramesPerSecond,
-                    normalized.SampleRate);
-                _writer = writer;
-
                 if (normalized.IncludeMicrophone)
                 {
                     if (normalized.MicrophoneId is not { } microphoneId)
@@ -119,8 +112,18 @@ public sealed class ScreenRecordingService : IDisposable
                 _failureMessage = string.Empty;
                 Interlocked.Exchange(ref _lastVideoFrames, 0);
                 Interlocked.Exchange(ref _lastAudioBytes, 0);
+                while (_pendingAudio.TryDequeue(out _))
+                {
+                }
                 _state = RecordingState.Recording;
-                _captureTask = Task.Run(() => CaptureLoopAsync(cancellation.Token));
+                // The writer is created and used by this one long-running
+                // worker.  Media Foundation's sink writer is not reliably
+                // callable through a WPF STA-created RCW from another thread.
+                _captureTask = Task.Factory.StartNew(
+                    () => CaptureLoop(normalized, cancellation.Token),
+                    cancellation.Token,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
             }
             catch (Exception exception)
             {
@@ -132,7 +135,7 @@ public sealed class ScreenRecordingService : IDisposable
 
         if (failure is not null)
         {
-            DisposeResources(writer, microphone, cancellation);
+            DisposeResources(microphone, cancellation);
             lock (_gate)
             {
                 _writer = null;
@@ -207,7 +210,6 @@ public sealed class ScreenRecordingService : IDisposable
             }
         }
 
-        AviFileWriter? writer;
         MicrophoneCapture? microphone;
         CancellationTokenSource? cancellation;
         RecordingOptions? options;
@@ -217,7 +219,6 @@ public sealed class ScreenRecordingService : IDisposable
             // Detach resources before stopping WinMM.  A microphone callback may
             // need the service lock, so it must never be stopped while this lock
             // is held.
-            writer = _writer;
             microphone = _microphone;
             cancellation = _captureCancellation;
             options = _options;
@@ -229,31 +230,37 @@ public sealed class ScreenRecordingService : IDisposable
             _options = null;
         }
 
+        // Stop WinMM outside the service lock.  The callback also takes this
+        // lock to enqueue PCM, so holding it here can deadlock shutdown.
+        if (microphone is not null)
+        {
+            microphone.Stop();
+            microphone.AudioData -= Microphone_AudioData;
+            microphone.LevelChanged -= Microphone_LevelChanged;
+        }
+
         RecordingResult? result = null;
         Exception? failure = null;
         try
         {
-            if (microphone is not null)
+            if (captureFailed)
             {
-                microphone.Stop();
-                microphone.AudioData -= Microphone_AudioData;
-                microphone.LevelChanged -= Microphone_LevelChanged;
+                throw new InvalidOperationException(
+                    string.IsNullOrWhiteSpace(failureMessage)
+                        ? "屏幕采集失败。"
+                        : failureMessage);
             }
 
-            if (writer is not null)
+            var videoFrames = Interlocked.Read(ref _lastVideoFrames);
+            var audioBytes = Interlocked.Read(ref _lastAudioBytes);
+            if (options is not null && videoFrames > 0)
             {
-                writer.Complete();
-                Interlocked.Exchange(ref _lastVideoFrames, writer.VideoFrames);
-                Interlocked.Exchange(ref _lastAudioBytes, writer.AudioBytes);
-                if (options is not null)
-                {
-                    result = new RecordingResult(
-                        options.OutputPath,
-                        DateTimeOffset.Now - startedAt,
-                        writer.VideoFrames,
-                        writer.AudioBytes,
-                        "AVI / MJPEG 视频 + PCM 音频");
-                }
+                result = new RecordingResult(
+                    options.OutputPath,
+                    DateTimeOffset.Now - startedAt,
+                    videoFrames,
+                    audioBytes,
+                    "MP4 / H.264 视频 + AAC 音频");
             }
         }
         catch (Exception exception)
@@ -262,7 +269,7 @@ public sealed class ScreenRecordingService : IDisposable
         }
         finally
         {
-            DisposeResources(writer, microphone, cancellation);
+            DisposeResources(microphone, cancellation);
         }
 
         var finalState = failure is null && !captureFailed && result is not null
@@ -298,43 +305,96 @@ public sealed class ScreenRecordingService : IDisposable
         }
     }
 
-    private async Task CaptureLoopAsync(CancellationToken cancellationToken)
+    private void CaptureLoop(RecordingOptions options, CancellationToken cancellationToken)
     {
-        var options = _options ?? throw new InvalidOperationException("录制参数不存在。");
         var delay = TimeSpan.FromMilliseconds(1000d / options.FramesPerSecond);
+        Mp4FileWriter? writer = null;
+        var initializeResult = CoInitializeEx(nint.Zero, 0x0);
         try
         {
-            while (true)
+            writer = new Mp4FileWriter(
+                options.OutputPath,
+                options.Target.Width,
+                options.Target.Height,
+                options.FramesPerSecond,
+                options.SampleRate,
+                options.IncludeMicrophone);
+
+            lock (_gate)
             {
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                _writer = writer;
+            }
+
+            while (!cancellationToken.WaitHandle.WaitOne(delay))
+            {
                 if (State != RecordingState.Recording)
                 {
                     continue;
                 }
 
-                var jpeg = ScreenCapture.CaptureJpeg(options.Screen, options.JpegQuality);
+                var frame = ScreenCapture.CaptureFrame(options.Target);
                 lock (_gate)
                 {
                     if (_state == RecordingState.Recording)
                     {
-                        _writer?.WriteVideoFrame(jpeg);
+                        writer.WriteVideoFrame(frame);
+                        DrainPendingAudioLocked(writer);
                     }
                 }
             }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // 正常停止路径。
+
+            lock (_gate)
+            {
+                DrainPendingAudioLocked(writer);
+                writer.Complete();
+            }
         }
         catch (Exception exception)
         {
+            var message = exception.Message;
             lock (_gate)
             {
-                _failureMessage = exception.Message;
+                _failureMessage = message;
                 _state = RecordingState.Failed;
             }
 
-            PublishState(RecordingState.Failed, $"屏幕采集失败：{exception.Message}");
+            PublishState(RecordingState.Failed, $"屏幕采集失败：{message}");
+        }
+        finally
+        {
+            if (writer is not null)
+            {
+                Interlocked.Exchange(ref _lastVideoFrames, writer.VideoFrames);
+                Interlocked.Exchange(ref _lastAudioBytes, writer.AudioBytes);
+                try
+                {
+                    writer.Dispose();
+                }
+                catch (Exception exception)
+                {
+                    lock (_gate)
+                    {
+                        if (_state is not RecordingState.Failed)
+                        {
+                            _failureMessage = exception.Message;
+                            _state = RecordingState.Failed;
+                        }
+                    }
+                }
+
+                lock (_gate)
+                {
+                    if (ReferenceEquals(_writer, writer))
+                    {
+                        _writer = null;
+                    }
+                }
+            }
+
+            if (initializeResult >= 0)
+            {
+                CoUninitialize();
+            }
         }
     }
 
@@ -344,8 +404,16 @@ public sealed class ScreenRecordingService : IDisposable
         {
             if (_state == RecordingState.Recording)
             {
-                _writer?.WriteAudio(data.ToArray());
+                _pendingAudio.Enqueue(data.ToArray());
             }
+        }
+    }
+
+    private void DrainPendingAudioLocked(Mp4FileWriter writer)
+    {
+        while (_pendingAudio.TryDequeue(out var pcm))
+        {
+            writer.WriteAudio(pcm);
         }
     }
 
@@ -356,7 +424,6 @@ public sealed class ScreenRecordingService : IDisposable
         StateChanged?.Invoke(this, new RecordingStateChangedEventArgs(state, message, result));
 
     private static void DisposeResources(
-        AviFileWriter? writer,
         MicrophoneCapture? microphone,
         CancellationTokenSource? cancellation)
     {
@@ -372,7 +439,12 @@ public sealed class ScreenRecordingService : IDisposable
             }
 
             cancellation?.Dispose();
-            writer?.Dispose();
         }
     }
+
+    [DllImport("ole32.dll")]
+    private static extern int CoInitializeEx(nint reserved, uint coInit);
+
+    [DllImport("ole32.dll")]
+    private static extern void CoUninitialize();
 }
