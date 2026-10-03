@@ -208,8 +208,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         IsReady = true;
         timer.Stop();
         StatusMessage = legacyImport.Imported
-            ? $"{legacyImport.Message} 本地录入已就绪；Excel 不在启动和录入热路径中"
-            : "本地录入已就绪；Excel 不在启动和录入热路径中";
+            ? $"{legacyImport.Message} 本地录入已就绪"
+            : "本地录入已就绪";
         TaskSummary = "资料库后台加载中 · 可继续点名";
         _catalogCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _ = LoadCatalogInBackgroundAsync(_catalogCancellation.Token);
@@ -423,7 +423,6 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         ShortcutBindings.Add(new("quick-window", "呼出/隐藏快速小窗", "Ctrl+Space", "全局", "主窗口、小窗共享当前场次", true));
         ShortcutBindings.Add(new("focus-input", "聚焦快速输入框", "Ctrl+L", "软件内", "选中当前输入", false));
         ShortcutBindings.Add(new("submit", "提交当前录入", "Enter", "快速输入", "保存 SQLite 后清空并聚焦", false));
-        ShortcutBindings.Add(new("accept-suggestion", "接受当前建议", "Tab", "快速输入", "套用建议但不抢焦点", false));
         ShortcutBindings.Add(new("clear", "清空当前输入", "Esc", "快速输入", "失败时不自动清空", false));
         ShortcutBindings.Add(new("undo", "撤销上一条记录", "Ctrl+Shift+Z", "软件内", "撤销最近一次安全操作", false));
         ShortcutBindings.Add(new("edit-cell", "打开所选单元格编辑器", "F2", "本场记录", "Enter 也可打开", false));
@@ -772,7 +771,6 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         viewModel.Checkins.Add(new(36, 1, 36, "21:58", "BI4VLG", "龙蟠中路338号", "海能达 PD-780G", "橡胶天线", "4W", "", "local", "BI4VLG PD780G 4W 龙蟠中路338号", "hnd", "2026-09-25T21:58:00+08:00"));
         viewModel.Checkins.Add(new(35, 1, 35, "21:54", "BA4VWI", "南京市鼓楼区", "宝锋 UV-5RH", "原装天线", "8W", "", "local", "BA4VWI 5RH Y 8W NJGL", "", "2026-09-25T21:54:00+08:00"));
         viewModel.Checkins.Add(new(34, 1, 34, "21:50", "BA4VXR", "江苏省南京市江宁区", "摩托罗拉 R6", "原装天线", "5W", "", "local", "BA4VXR R6 Y 5W NJJN", "njbbxq", "2026-09-25T21:50:00+08:00"));
-        viewModel.SetInputText("BA4RLL QYT6900 5W YZ YZ");
         viewModel.SearchCatalog();
         return viewModel;
     }

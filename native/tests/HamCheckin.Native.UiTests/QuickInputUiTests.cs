@@ -24,6 +24,7 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
         _fixture.Run(() =>
         {
             var viewModel = MainViewModel.CreatePreview();
+            viewModel.SetInputText(Original);
             var window = new Window
             {
                 Width = 1440,
@@ -60,6 +61,7 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
         _fixture.Run(() =>
         {
             var viewModel = MainViewModel.CreatePreview();
+            viewModel.SetInputText(Original);
             var main = new Window
             {
                 Width = 1100,
@@ -159,11 +161,13 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             var developer = (TextBlock)window.FindName("DeveloperText")!;
             var status = (TextBlock)window.FindName("StatusText")!;
             var check = (Button)window.FindName("CheckButton")!;
+            var sponsor = (Button)window.FindName("SponsorButton")!;
 
-            Assert.Equal("1.0.0", version.Text);
+            Assert.Equal("1.0.1", version.Text);
             Assert.Equal("开发者：BA4THG（HX-Wrdzgzs）", developer.Text);
             Assert.Contains("当前已是最新", status.Text);
             Assert.True(check.IsEnabled);
+            Assert.Equal("赞助开发", sponsor.Content);
 
             window.Close();
         });

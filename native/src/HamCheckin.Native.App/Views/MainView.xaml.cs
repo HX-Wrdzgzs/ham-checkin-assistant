@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,6 +11,7 @@ using HamCheckin.Native.App.Media;
 using HamCheckin.Native.App.ViewModels;
 using HamCheckin.Native.Core;
 using HamCheckin.Native.Core.Parsing;
+using HamCheckin.Native.Core.Updates;
 using Microsoft.Win32;
 
 namespace HamCheckin.Native.App.Views;
@@ -222,10 +224,6 @@ public partial class MainView : UserControl, IDisposable
         if (MatchesShortcut(e, "export"))
         {
             _viewModel.ExportCommand.Execute(null); e.Handled = true; return;
-        }
-        if (MatchesShortcut(e, "accept-suggestion") && InputBox.IsKeyboardFocusWithin)
-        {
-            ApplySuggestion_Click(this, new RoutedEventArgs()); e.Handled = true; return;
         }
         if (MatchesShortcut(e, "submit") && InputBox.IsKeyboardFocusWithin)
         {
@@ -672,6 +670,22 @@ public partial class MainView : UserControl, IDisposable
         window.ShowDialog();
     }
 
+    private void OpenSponsor_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(NativeVersion.SponsorUrl) { UseShellExecute = true });
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                $"无法打开赞助页面：{exception.Message}",
+                "赞助开发",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+    }
+
     private void ToggleQuickWindow()
     {
         if (_viewModel is null) return;
@@ -713,13 +727,6 @@ public partial class MainView : UserControl, IDisposable
     {
         var gesture = _viewModel?.GetShortcut(actionKey)?.Gesture;
         return gesture is not null && ShortcutGesture.Matches(gesture, e);
-    }
-
-    private void ApplySuggestion_Click(object sender, RoutedEventArgs e)
-    {
-        _viewModel?.SetInputText("BA4RLL QYT6900 5W YZ YZ");
-        InputBox.Focus();
-        InputBox.CaretIndex = InputBox.Text.Length;
     }
 
     private async void DownloadProvince_Click(object sender, RoutedEventArgs e)

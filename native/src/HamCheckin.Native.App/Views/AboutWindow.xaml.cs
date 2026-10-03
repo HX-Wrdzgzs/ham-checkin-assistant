@@ -26,7 +26,7 @@ public partial class AboutWindow : Window, IDisposable
 
     public void SetPreviewState()
     {
-        StatusText.Text = "云端版本：1.0.0（当前已是最新）";
+        StatusText.Text = $"云端版本：{NativeVersion.Current}（当前已是最新）";
         ReleaseNotesText.Text = "稳定版\n\n· Native WPF / .NET 10\n· SQLite 现场提交\n· Excel 后台导出\n· 本地资料库和 SHA-256 更新校验";
         CheckButton.IsEnabled = true;
         DownloadButton.IsEnabled = false;
@@ -149,6 +149,18 @@ public partial class AboutWindow : Window, IDisposable
         catch (Exception exception)
         {
             StatusText.Text = $"无法打开 Release 页面：{exception.Message}";
+        }
+    }
+
+    private void OpenSponsorButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(NativeVersion.SponsorUrl) { UseShellExecute = true });
+        }
+        catch (Exception exception)
+        {
+            StatusText.Text = $"无法打开赞助页面：{exception.Message}";
         }
     }
 

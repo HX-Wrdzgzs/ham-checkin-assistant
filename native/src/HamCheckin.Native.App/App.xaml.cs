@@ -14,11 +14,18 @@ namespace HamCheckin.Native.App;
 public partial class App : Application
 {
     private Mutex? _singleInstance;
+    private bool _ownsSingleInstance;
     private MainViewModel? _viewModel;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        if (string.Equals(Environment.GetEnvironmentVariable("HAM_CHECKIN_NATIVE_UI_TEST"), "1", StringComparison.Ordinal))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            return;
+        }
 
         try
         {
@@ -95,11 +102,14 @@ public partial class App : Application
         _singleInstance = new Mutex(true, "Local\\HAMCheckinAssistant_Native", out var created);
         if (!created)
         {
+            _singleInstance.Dispose();
+            _singleInstance = null;
             MessageBox.Show("HAM 点名助手已经在运行。", "HAM 点名助手",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown(0);
             return;
         }
+        _ownsSingleInstance = true;
 
         _viewModel = new MainViewModel();
         var window = new MainWindow { DataContext = _viewModel };
@@ -123,8 +133,13 @@ public partial class App : Application
         {
             _viewModel.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
-        _singleInstance?.ReleaseMutex();
+        if (_ownsSingleInstance)
+        {
+            _singleInstance?.ReleaseMutex();
+            _ownsSingleInstance = false;
+        }
         _singleInstance?.Dispose();
+        _singleInstance = null;
         base.OnExit(e);
     }
 

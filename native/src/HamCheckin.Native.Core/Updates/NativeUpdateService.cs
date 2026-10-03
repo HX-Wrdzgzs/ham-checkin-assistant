@@ -8,8 +8,10 @@ namespace HamCheckin.Native.Core.Updates;
 
 public static class NativeVersion
 {
-    public const string Current = "1.0.0";
+    public const string Current = "1.0.1";
     public const string Repository = "HX-Wrdzgzs/ham-checkin-assistant";
+    public const string SponsorUrl =
+        "https://www.ifdian.net/a/wrdzgzs?utm_source=copylink&utm_medium=link";
     public const string StableApiUrl =
         "https://api.github.com/repos/HX-Wrdzgzs/ham-checkin-assistant/releases/latest";
     public const string StableManifestUrl =

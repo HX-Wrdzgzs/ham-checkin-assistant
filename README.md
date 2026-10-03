@@ -5,9 +5,9 @@ Windows 本地点名辅助程序：通过**缩写 + 规则解析 + SQLite 历史
 
 **核心点名功能纯本地，无任何 AI / LLM / 语音识别依赖，断网可用；可选的 QTH 后台联网同步需要用户自行配置数据源。**
 
-当前稳定版本：**Native 1.0.0**（C# / .NET 10 / WPF / SQLite）。旧 Python 版 **0.9.4** 仍作为兼容代码保留，Native 版不依赖 Python、Qt 或 Excel COM。
+当前稳定版本：**Native 1.0.1**（C# / .NET 10 / WPF / SQLite）。旧 Python 版 **0.9.4** 仍作为兼容代码保留，Native 版不依赖 Python、Qt 或 Excel COM。
 
-Native 1.0.0 首次启动会检测 `%LOCALAPPDATA%\\HAM点名助手\\data\\ham_checkin.db`。如果存在旧版 Python 数据库，程序会先在 `backup\\legacy-python-*.db` 生成备份，再只读导入场次和签到；旧数据库不会被删除或覆盖。设置页的“关于 / 检查更新”只在用户点击后访问 GitHub Release，启动和快速录入不会联网。
+Native 1.0.1 首次启动会检测 `%LOCALAPPDATA%\\HAM点名助手\\data\\ham_checkin.db`。如果存在旧版 Python 数据库，程序会先在 `backup\\legacy-python-*.db` 生成备份，再只读导入场次和签到；旧数据库不会被删除或覆盖。设置页的“关于 / 检查更新”只在用户点击后访问 GitHub Release，启动和快速录入不会联网。
 
 ## 功能
 
@@ -17,8 +17,7 @@ Native 1.0.0 首次启动会检测 `%LOCALAPPDATA%\\HAM点名助手\\data\\ham_c
 - 未识别 token 不丢弃：先写入 SQLite 的 `unmatched` 字段；Native 新导出固定九列，不把未识别原文塞进 Excel
 - 拼音缩写：`njqx`→南京栖霞，`ahwh`→安徽芜湖；重名（如 `gl`）给出候选必须选择
 - QTH 地点库：行政区缩写离线展开；道路、学校、车站和地标可导入或在后台同步；唯一精确命中才自动补齐省/市/区，同名地点保留候选
-- 历史建议：输入呼号自动给出「最近一次 / 最常用」建议，**`Tab` 接受，绝不自动提交**
-  （Enter 只提交本次显式输入；历史建议必须显式接受后才进入提交）
+- 快速录入：只解析当前输入原文；不会用历史数据覆盖当前输入，Enter 只提交本次显式输入
 - 模糊匹配：错拼/多一字少一字给出候选；只有 `top1 >= high` 且与 `top2` 分差足够才自动接受
 - SQLite 主数据库：快速点名先 COMMIT SQLite，不连接/读取/写入 Excel；场后导出或显式同步不影响点名数据
 - **Excel 绑定是场次级的**：每个场次记录自己的工作簿/工作表；切换场次断开旧绑定；
