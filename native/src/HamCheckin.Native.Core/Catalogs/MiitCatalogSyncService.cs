@@ -215,6 +215,9 @@ public sealed class MiitCatalogSyncService : IAsyncDisposable
             await CompleteRunAsync(connection, report, cancellationToken).ConfigureAwait(false);
             await CheckpointWalAsync(connection, cancellationToken).ConfigureAwait(false);
             await connection.CloseAsync().ConfigureAwait(false);
+            // CloseAsync 将连接状态置为 Closed，但 Windows 下 SQLite 的文件句柄
+            // 仍可能由连接对象持有；原子替换前必须释放底层句柄。
+            await connection.DisposeAsync().ConfigureAwait(false);
             await ReplaceFormalCatalogAsync().ConfigureAwait(false);
             var message = full
                 ? "完整同步完成，已原子替换正式电台型号库"
@@ -224,13 +227,26 @@ public sealed class MiitCatalogSyncService : IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
-            await MarkRunAsync(connection, report, "cancelled", "用户取消；断点已保留", CancellationToken.None).ConfigureAwait(false);
+            if (connection.State == System.Data.ConnectionState.Open)
+            {
+                await MarkRunAsync(connection, report, "cancelled", "用户取消；断点已保留", CancellationToken.None).ConfigureAwait(false);
+            }
             Report(progress, report, "cancelled", "已取消，上一份正式库继续可用；可点击继续");
             throw;
         }
         catch (Exception exception)
         {
-            await MarkRunAsync(connection, report, "failed", exception.Message, CancellationToken.None).ConfigureAwait(false);
+            if (connection.State == System.Data.ConnectionState.Open)
+            {
+                try
+                {
+                    await MarkRunAsync(connection, report, "failed", exception.Message, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception markException)
+                {
+                    exception = new AggregateException("同步失败，且无法写入失败状态。", exception, markException);
+                }
+            }
             Report(progress, report, "failed", exception.Message);
             throw;
         }
@@ -389,7 +405,9 @@ public sealed class MiitCatalogSyncService : IAsyncDisposable
             DataSource = path,
             Mode = SqliteOpenMode.ReadWriteCreate,
             Cache = SqliteCacheMode.Shared,
-            Pooling = true
+            // 同步结束后会原子替换这个临时数据库；不能把连接放回池中，
+            // 否则 Windows 仍可能保留文件句柄并阻止 File.Move/File.Replace。
+            Pooling = false
         }.ToString());
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         return connection;
