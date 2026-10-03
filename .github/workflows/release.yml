@@ -53,6 +53,8 @@ jobs:
 
       - name: Build and test Native solution
         shell: pwsh
+        env:
+          HAM_CHECKIN_NATIVE_UI_TEST: "1"
         run: |
           dotnet restore native/HamCheckin.Native.sln
           dotnet restore native/src/HamCheckin.Native.App/HamCheckin.Native.App.csproj -r win-x64
