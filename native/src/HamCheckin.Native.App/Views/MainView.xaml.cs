@@ -1,16 +1,20 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 using HamCheckin.Native.App.Infrastructure;
+using HamCheckin.Native.App.Media;
 using HamCheckin.Native.App.ViewModels;
 using HamCheckin.Native.Core;
 using HamCheckin.Native.Core.Parsing;
+using Microsoft.Win32;
 
 namespace HamCheckin.Native.App.Views;
 
-public partial class MainView : UserControl
+public partial class MainView : UserControl, IDisposable
 {
     private const string InputOrigin = "main-input";
     private MainViewModel? _viewModel;
@@ -18,6 +22,10 @@ public partial class MainView : UserControl
     private bool _synchronizingInput;
     private bool _imeComposing;
     private long _appliedInputRevision;
+    private readonly ScreenRecordingService _recordingService = new();
+    private readonly DispatcherTimer _recordingTimer;
+    private MicrophoneCapture? _microphoneTest;
+    private bool _recordingDevicesLoaded;
 
     public MainView()
     {
@@ -25,6 +33,10 @@ public partial class MainView : UserControl
         TextCompositionManager.AddPreviewTextInputStartHandler(InputBox, InputBox_TextInputStart);
         TextCompositionManager.AddPreviewTextInputUpdateHandler(InputBox, InputBox_TextInputUpdate);
         TextCompositionManager.AddTextInputHandler(InputBox, InputBox_TextInput);
+        _recordingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _recordingTimer.Tick += RecordingTimer_Tick;
+        _recordingService.StateChanged += RecordingService_StateChanged;
+        _recordingService.LevelChanged += RecordingService_LevelChanged;
     }
 
     private void Root_Loaded(object sender, RoutedEventArgs e)
@@ -32,6 +44,11 @@ public partial class MainView : UserControl
         if (!System.ComponentModel.DesignerProperties.GetIsInDesignMode(this))
         {
             SyncInputBox(_viewModel?.InputDraft, moveCaretToEnd: false);
+            if (!_recordingDevicesLoaded)
+            {
+                RefreshRecordingDevices();
+                _recordingDevicesLoaded = true;
+            }
             InputBox.Focus();
             Keyboard.Focus(InputBox);
         }
@@ -210,7 +227,7 @@ public partial class MainView : UserControl
 
     public void ShowPage(string pageName)
     {
-        var pages = new[] { QuickPage, RecordsPage, CatalogPage, SettingsPage };
+        var pages = new[] { QuickPage, RecordsPage, CatalogPage, RecordingPage, SettingsPage };
         foreach (var page in pages)
         {
             page.Visibility = string.Equals(page.Tag as string, pageName, StringComparison.Ordinal)
@@ -239,10 +256,303 @@ public partial class MainView : UserControl
         Keyboard.Focus(InputBox);
     }
 
+    internal void SetPreviewRecordingData()
+    {
+        ScreenComboBox.ItemsSource = new[]
+        {
+            new ScreenDevice(0, "主显示器", 0, 0, 1920, 1080, true),
+            new ScreenDevice(1, "副显示器", 1920, 0, 2560, 1440, false)
+        };
+        ScreenComboBox.SelectedIndex = 0;
+        MicrophoneComboBox.ItemsSource = new[]
+        {
+            new MicrophoneDevice(0, "麦克风阵列（预览设备）"),
+            new MicrophoneDevice(1, "USB 无线电台麦克风（预览设备）")
+        };
+        MicrophoneComboBox.SelectedIndex = 0;
+        RecordingPathBox.Text = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "Downloads", "HAM点名助手录屏", "点名现场_20260925_213000.avi");
+        MicrophoneLevelBar.Value = 0.42;
+        MicrophoneStatusText.Text = "测试中 · 峰值 42% · 预览数据";
+        RecordingStatusText.Text = "已准备";
+        RecordingStatsText.Text = "主显示器 1920×1080 · 10 FPS · 麦克风已选择";
+        StartRecordingButton.IsEnabled = true;
+        PauseRecordingButton.IsEnabled = false;
+        StopRecordingButton.IsEnabled = false;
+    }
+
     private void SelectNav(string page)
     {
         if (page == "Quick") QuickNav.IsChecked = true;
         else ShowPage(page);
+    }
+
+    private void RefreshRecordingDevices_Click(object sender, RoutedEventArgs e) => RefreshRecordingDevices();
+
+    private void RefreshRecordingDevices()
+    {
+        if (_recordingService.IsActive)
+        {
+            return;
+        }
+
+        try
+        {
+            var screens = ScreenCapture.EnumerateScreens();
+            ScreenComboBox.ItemsSource = screens;
+            ScreenDevice? selectedScreen = null;
+            for (var index = 0; index < screens.Count; index++)
+            {
+                if (screens[index].IsPrimary)
+                {
+                    selectedScreen = screens[index];
+                    break;
+                }
+            }
+            ScreenComboBox.SelectedItem = selectedScreen ?? (screens.Count > 0 ? screens[0] : null);
+
+            var microphones = MicrophoneCapture.EnumerateDevices();
+            MicrophoneComboBox.ItemsSource = microphones;
+            if (MicrophoneComboBox.SelectedIndex < 0)
+            {
+                MicrophoneComboBox.SelectedIndex = 0;
+            }
+
+            MicrophoneStatusText.Text = microphones.Count == 0
+                ? "未发现 Windows 麦克风设备；可以关闭麦克风后录制屏幕。"
+                : $"已发现 {microphones.Count} 个输入设备；点击“测试麦克风”查看峰值。";
+        }
+        catch (Exception exception)
+        {
+            MicrophoneStatusText.Text = $"设备枚举失败：{exception.Message}";
+        }
+
+        if (string.IsNullOrWhiteSpace(RecordingPathBox.Text))
+        {
+            RecordingPathBox.Text = GetDefaultRecordingPath();
+        }
+    }
+
+    private void IncludeMicrophoneChanged(object sender, RoutedEventArgs e)
+    {
+        if (MicrophoneComboBox is not null)
+        {
+            MicrophoneComboBox.IsEnabled = IncludeMicrophoneCheckBox.IsChecked == true && !_recordingService.IsActive;
+        }
+    }
+
+    private void TestMicrophone_Click(object sender, RoutedEventArgs e)
+    {
+        if (_microphoneTest is not null)
+        {
+            StopMicrophoneTest();
+            return;
+        }
+
+        if (MicrophoneComboBox.SelectedItem is not MicrophoneDevice microphone)
+        {
+            MicrophoneStatusText.Text = "请先选择一个麦克风输入设备。";
+            return;
+        }
+
+        try
+        {
+            _microphoneTest = new MicrophoneCapture(microphone.Id);
+            _microphoneTest.LevelChanged += MicrophoneTest_LevelChanged;
+            _microphoneTest.Start();
+            TestMicrophoneButton.Content = "停止测试";
+            MicrophoneStatusText.Text = $"测试中：{microphone.Name} · 请对着麦克风说话或轻敲设备。";
+        }
+        catch (Exception exception)
+        {
+            StopMicrophoneTest();
+            MicrophoneStatusText.Text = $"麦克风测试失败：{exception.Message}";
+        }
+    }
+
+    private void MicrophoneTest_LevelChanged(object? sender, MicrophoneLevelEventArgs e)
+    {
+        Dispatcher.BeginInvoke(DispatcherPriority.DataBind, new Action(() =>
+        {
+            MicrophoneLevelBar.Value = e.Level;
+            MicrophoneStatusText.Text = $"测试中 · 峰值 {(int)(e.Level * 100)}%";
+        }));
+    }
+
+    private void StopMicrophoneTest()
+    {
+        if (_microphoneTest is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _microphoneTest.LevelChanged -= MicrophoneTest_LevelChanged;
+            _microphoneTest.Dispose();
+        }
+        catch (Exception exception)
+        {
+            MicrophoneStatusText.Text = $"麦克风已停止，但清理时出现提示：{exception.Message}";
+        }
+        finally
+        {
+            _microphoneTest = null;
+            TestMicrophoneButton.Content = "测试麦克风";
+            MicrophoneLevelBar.Value = 0;
+        }
+    }
+
+    private void BrowseRecordingPath_Click(object sender, RoutedEventArgs e)
+    {
+        if (_recordingService.IsActive)
+        {
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "选择录屏输出文件",
+            Filter = "AVI 录屏文件 (*.avi)|*.avi|所有文件 (*.*)|*.*",
+            DefaultExt = ".avi",
+            AddExtension = true,
+            FileName = Path.GetFileName(string.IsNullOrWhiteSpace(RecordingPathBox.Text)
+                ? GetDefaultRecordingPath()
+                : RecordingPathBox.Text)
+        };
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true)
+        {
+            RecordingPathBox.Text = dialog.FileName;
+        }
+    }
+
+    private void StartRecording_Click(object sender, RoutedEventArgs e)
+    {
+        if (ScreenComboBox.SelectedItem is not ScreenDevice screen)
+        {
+            MessageBox.Show("请先选择要录制的显示器。", "无法开始录屏", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        StopMicrophoneTest();
+        var outputPath = string.IsNullOrWhiteSpace(RecordingPathBox.Text)
+            ? GetDefaultRecordingPath()
+            : RecordingPathBox.Text.Trim();
+        if (!outputPath.EndsWith(".avi", StringComparison.OrdinalIgnoreCase))
+        {
+            outputPath += ".avi";
+        }
+
+        var includeMicrophone = IncludeMicrophoneCheckBox.IsChecked == true;
+        var microphoneId = (MicrophoneComboBox.SelectedItem as MicrophoneDevice)?.Id;
+        try
+        {
+            _recordingService.Start(new RecordingOptions(
+                screen, outputPath, includeMicrophone, microphoneId));
+            RecordingPathBox.Text = outputPath;
+            _recordingTimer.Start();
+            UpdateRecordingControls();
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(exception.Message, "无法开始录屏", MessageBoxButton.OK, MessageBoxImage.Warning);
+            UpdateRecordingControls();
+        }
+    }
+
+    private void PauseRecording_Click(object sender, RoutedEventArgs e)
+    {
+        _recordingService.TogglePause();
+        UpdateRecordingControls();
+    }
+
+    private async void StopRecording_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _recordingService.StopAsync();
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(exception.Message, "录屏收尾失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _recordingTimer.Stop();
+            UpdateRecordingControls();
+        }
+    }
+
+    private void RecordingService_StateChanged(object? sender, RecordingStateChangedEventArgs e)
+    {
+        void Apply()
+        {
+            RecordingStatusText.Text = e.Message;
+            if (e.Result is not null)
+            {
+                RecordingPathBox.Text = e.Result.OutputPath;
+                RecordingStatsText.Text = $"时长 {e.Result.Duration:hh\\:mm\\:ss} · 视频帧 {e.Result.VideoFrames} · 音频 {e.Result.AudioBytes / 1024d:0.0} KB";
+            }
+            UpdateRecordingControls();
+            if (e.State is RecordingState.Completed or RecordingState.Failed)
+            {
+                _recordingTimer.Stop();
+            }
+        }
+
+        if (Dispatcher.CheckAccess()) Apply();
+        else Dispatcher.BeginInvoke(DispatcherPriority.DataBind, new Action(Apply));
+    }
+
+    private void RecordingService_LevelChanged(object? sender, MicrophoneLevelEventArgs e)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(DispatcherPriority.DataBind, new Action(() => RecordingService_LevelChanged(sender, e)));
+            return;
+        }
+
+        MicrophoneLevelBar.Value = e.Level;
+        MicrophoneStatusText.Text = $"录制中 · 峰值 {(int)(e.Level * 100)}%";
+    }
+
+    private void RecordingTimer_Tick(object? sender, EventArgs e)
+    {
+        if (!_recordingService.IsActive)
+        {
+            return;
+        }
+
+        RecordingStatsText.Text = $"时长 {_recordingService.Elapsed:hh\\:mm\\:ss} · 视频帧 {_recordingService.VideoFrames} · 音频 {_recordingService.AudioBytes / 1024d:0.0} KB";
+    }
+
+    private void UpdateRecordingControls()
+    {
+        var active = _recordingService.IsActive;
+        var paused = _recordingService.State == RecordingState.Paused;
+        StartRecordingButton.IsEnabled = !active;
+        PauseRecordingButton.IsEnabled = active && _recordingService.State is RecordingState.Recording or RecordingState.Paused;
+        StopRecordingButton.IsEnabled = active;
+        PauseRecordingButton.Content = paused ? "继续" : "暂停";
+        ScreenComboBox.IsEnabled = !active;
+        IncludeMicrophoneCheckBox.IsEnabled = !active;
+        MicrophoneComboBox.IsEnabled = IncludeMicrophoneCheckBox.IsChecked == true && !active;
+        TestMicrophoneButton.IsEnabled = !active;
+    }
+
+    private static string GetDefaultRecordingPath() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        "Downloads", "HAM点名助手录屏", $"点名现场_{DateTime.Now:yyyyMMdd_HHmmss}.avi");
+
+    public void Dispose()
+    {
+        StopMicrophoneTest();
+        _recordingTimer.Stop();
+        _recordingService.StateChanged -= RecordingService_StateChanged;
+        _recordingService.LevelChanged -= RecordingService_LevelChanged;
+        _recordingService.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     private void ViewModel_ParseUpdated(object? sender, EventArgs e)

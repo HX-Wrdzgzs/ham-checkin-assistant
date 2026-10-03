@@ -33,6 +33,7 @@ internal static class PreviewRenderer
         RenderMain(Path.Combine(outputDirectory, "07-快捷键设置.png"), viewModel, "Settings", 1180, 760);
         RenderAbout(Path.Combine(outputDirectory, "08-关于-版本-更新.png"));
         RenderSessionEditor(Path.Combine(outputDirectory, "09-编辑场次信息-修正版.png"));
+        RenderRecordingPage(Path.Combine(outputDirectory, "10-录屏与麦克风.png"), viewModel);
     }
 
     public static void Render(string outputPath, int width = 1440, int height = 900)
@@ -103,6 +104,20 @@ internal static class PreviewRenderer
         FlushRender(window);
         SaveWindowContent(outputPath, window, 560, 500);
         window.Close();
+    }
+
+    private static void RenderRecordingPage(string outputPath, MainViewModel viewModel)
+    {
+        var view = new MainView { DataContext = viewModel, Width = 1180, Height = 760 };
+        var host = CreateHost(view, 1180, 760);
+        host.Show();
+        host.UpdateLayout();
+        view.ShowPage("Recording");
+        view.SetPreviewRecordingData();
+        host.UpdateLayout();
+        FlushRender(host);
+        SaveVisual(outputPath, view, 1180, 760);
+        host.Close();
     }
 
     private static Window CreateHost(FrameworkElement content, int width, int height) => new()

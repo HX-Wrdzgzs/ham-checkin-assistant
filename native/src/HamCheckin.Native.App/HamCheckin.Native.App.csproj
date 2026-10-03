@@ -3,6 +3,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>HamCheckin.Native.App</RootNamespace>
     <AssemblyName>HAM点名助手</AssemblyName>
     <ApplicationIcon>..\..\..\assets\icon.ico</ApplicationIcon>
@@ -21,6 +22,8 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
   <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
     <ProjectReference Include="..\HamCheckin.Native.Core\HamCheckin.Native.Core.csproj" />
   </ItemGroup>
 </Project>

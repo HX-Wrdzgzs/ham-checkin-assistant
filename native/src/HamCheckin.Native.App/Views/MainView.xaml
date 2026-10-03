@@ -40,6 +40,9 @@
                     <RadioButton GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Catalog" Checked="Nav_Checked">
                         <StackPanel Orientation="Horizontal"><TextBlock Text="◫" Width="25"/><TextBlock Text="资料库"/></StackPanel>
                     </RadioButton>
+                    <RadioButton GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Recording" Checked="Nav_Checked">
+                        <StackPanel Orientation="Horizontal"><TextBlock Text="●" Width="25"/><TextBlock Text="录屏 / 麦克风"/></StackPanel>
+                    </RadioButton>
                     <RadioButton GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Settings" Checked="Nav_Checked">
                         <StackPanel Orientation="Horizontal"><TextBlock Text="⚙" Width="25"/><TextBlock Text="设置"/></StackPanel>
                     </RadioButton>
@@ -173,6 +176,61 @@
                             <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><TextBlock Text="地点包" FontSize="15" FontWeight="Bold"/><TextBlock Grid.Row="1" Text="{Binding LocationStatus}" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,10" TextWrapping="Wrap"/><Grid Grid.Row="2"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><WrapPanel Margin="0,0,0,8"><Button Style="{StaticResource BaseButton}" Content="下载全省" Margin="0,0,6,0" Click="DownloadProvince_Click"/><Button Style="{StaticResource BaseButton}" Content="更新已安装" Click="UpdatePlaces_Click"/></WrapPanel><TreeView Grid.Row="1" ItemsSource="{Binding QthPackages}"><TreeView.ItemContainerStyle><Style TargetType="TreeViewItem"><Setter Property="IsExpanded" Value="True"/></Style></TreeView.ItemContainerStyle><TreeView.Resources><HierarchicalDataTemplate DataType="{x:Type local:QthPackageNode}" ItemsSource="{Binding Children}"><StackPanel Orientation="Horizontal"><TextBlock Text="{Binding Name}"/><TextBlock Text="  ·  " Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Status}" Foreground="{StaticResource AccentBrush}"/><TextBlock Foreground="{StaticResource MutedBrush}"><Run Text="  "/><Run Text="{Binding Detail}"/></TextBlock></StackPanel></HierarchicalDataTemplate></TreeView.Resources></TreeView></Grid></Grid>
                         </Border>
                     </Grid>
+                </Grid>
+
+                <Grid x:Name="RecordingPage" Tag="Recording" Visibility="Collapsed">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel>
+                            <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="录屏与麦克风" FontSize="20" FontWeight="Bold"/>
+                                    <TextBlock Text="选择显示器和麦克风后录制现场操作。录制任务在后台运行，不会阻塞点名输入，也不会启动 Excel。" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="1.15*"/><ColumnDefinition Width="0.85*"/></Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource CardBorder}" Padding="15" Margin="0,0,10,0">
+                                    <StackPanel>
+                                        <TextBlock Text="录制输入" FontSize="15" FontWeight="Bold"/>
+                                        <TextBlock Text="录制显示器" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,12,0,4"/>
+                                        <ComboBox x:Name="ScreenComboBox" DisplayMemberPath="DisplayName" Height="36" AutomationProperties.AutomationId="recording-screen"/>
+                                        <CheckBox x:Name="IncludeMicrophoneCheckBox" Content="同时录制麦克风" IsChecked="True" Margin="0,12,0,5" Checked="IncludeMicrophoneChanged" Unchecked="IncludeMicrophoneChanged"/>
+                                        <ComboBox x:Name="MicrophoneComboBox" DisplayMemberPath="DisplayName" Height="36" AutomationProperties.AutomationId="recording-microphone"/>
+                                        <WrapPanel Margin="0,9,0,0">
+                                            <Button Style="{StaticResource BaseButton}" Content="刷新设备" Click="RefreshRecordingDevices_Click" Margin="0,0,6,0"/>
+                                            <Button x:Name="TestMicrophoneButton" Style="{StaticResource BaseButton}" Content="测试麦克风" Click="TestMicrophone_Click" AutomationProperties.AutomationId="test-microphone"/>
+                                        </WrapPanel>
+                                        <ProgressBar x:Name="MicrophoneLevelBar" Height="8" Maximum="1" Value="0" Margin="0,12,0,4"/>
+                                        <TextBlock x:Name="MicrophoneStatusText" Text="尚未测试麦克风" FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                        <TextBlock Text="输出文件" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,13,0,4"/>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <TextBox x:Name="RecordingPathBox" Height="36" IsReadOnly="True" Style="{StaticResource InputTextBox}"/>
+                                            <Button Grid.Column="1" Style="{StaticResource BaseButton}" Content="选择…" Margin="7,0,0,0" Click="BrowseRecordingPath_Click"/>
+                                        </Grid>
+                                        <TextBlock Text="AVI / MJPEG 视频 + PCM 音频；录屏结束后可用 VLC、PotPlayer 等播放器打开。" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border Grid.Column="1" Style="{StaticResource CardBorder}" Padding="15">
+                                    <StackPanel>
+                                        <TextBlock Text="录制状态" FontSize="15" FontWeight="Bold"/>
+                                        <TextBlock x:Name="RecordingStatusText" Text="未开始" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Margin="0,14,0,4" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="RecordingStatsText" Text="等待开始" FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                        <WrapPanel Margin="0,18,0,0">
+                                            <Button x:Name="StartRecordingButton" Style="{StaticResource PrimaryButton}" Content="开始录屏" Click="StartRecording_Click" AutomationProperties.AutomationId="start-recording"/>
+                                            <Button x:Name="PauseRecordingButton" Style="{StaticResource BaseButton}" Content="暂停" IsEnabled="False" Click="PauseRecording_Click" Margin="7,0,0,0" AutomationProperties.AutomationId="pause-recording"/>
+                                            <Button x:Name="StopRecordingButton" Style="{StaticResource BaseButton}" Content="停止并保存" IsEnabled="False" Click="StopRecording_Click" Margin="7,0,0,0" AutomationProperties.AutomationId="stop-recording"/>
+                                        </WrapPanel>
+                                        <Border Background="{StaticResource WarningSoftBrush}" CornerRadius="8" Padding="10" Margin="0,18,0,0">
+                                            <TextBlock Text="隐私提示：录屏会捕获所选显示器上的全部内容；开始前请确认没有不应记录的窗口、账号或密钥。" FontSize="11" Foreground="#8A5A00" TextWrapping="Wrap"/>
+                                        </Border>
+                                        <TextBlock Text="麦克风调试" FontSize="13" FontWeight="SemiBold" Margin="0,18,0,4"/>
+                                        <TextBlock Text="测试按钮会打开所选输入设备并显示实时峰值；再次点击即可停止测试。正式录屏使用同一设备。" FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </StackPanel>
+                    </ScrollViewer>
                 </Grid>
 
                 <Grid x:Name="SettingsPage" Tag="Settings" Visibility="Collapsed">

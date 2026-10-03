@@ -17,11 +17,16 @@ public partial class MainWindow : Window, IDisposable
         DataContextChanged += MainWindow_DataContextChanged;
         SourceInitialized += (_, _) => WindowsBackdrop.Apply(this);
         SourceInitialized += MainWindow_SourceInitialized;
-        Closed += (_, _) => _globalHotkey.Dispose();
+        Closed += (_, _) =>
+        {
+            ContentView.Dispose();
+            _globalHotkey.Dispose();
+        };
     }
 
     public void Dispose()
     {
+        ContentView.Dispose();
         _globalHotkey.Dispose();
         GC.SuppressFinalize(this);
     }
