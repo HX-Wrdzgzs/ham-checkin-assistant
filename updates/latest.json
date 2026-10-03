@@ -4,5 +4,6 @@
     "html_url":  "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/v1.0.4",
     "download_url":  "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v1.0.4/HAM.exe",
     "asset_name":  "HAM.exe",
-    "sha256":  "01d93a09baa50db1ce9de3356cd31522548b331ed392f62f4b1644e70a16f7ae"
+    "sha256":  "01d93a09baa50db1ce9de3356cd31522548b331ed392f62f4b1644e70a16f7ae",
+    "release_notes":  "(2026-10-03)`n`n### 发布环境修复`n`n- 针对托管 GitHub Actions 没有稳定交互式桌面和音频设备的问题，CI 中明确跳过依赖真实桌面/媒体设备的录屏和麦克风测试，避免环境限制误判为产品代码失败。`n- 本地 Windows UI 测试仍保留真实窗口录制、MP4 封装和麦克风测试；托管 CI 只过滤无法在无交互桌面环境中可靠执行的媒体测试。`n- 版本号、关于页、设置页、文件版本和程序集版本统一更新为 `1.0.4`。"
 }
