@@ -5,9 +5,9 @@ Windows 本地点名辅助程序：通过**缩写 + 规则解析 + SQLite 历史
 
 **核心点名功能纯本地，无任何 AI / LLM / 语音识别依赖，断网可用；可选的 QTH 后台联网同步需要用户自行配置数据源。**
 
-当前稳定版本：**Native 1.0.4**（C# / .NET 10 / WPF / SQLite）。旧 Python 版 **0.9.4** 仍作为兼容代码保留，Native 版不依赖 Python、Qt 或 Excel COM。
+当前稳定版本：**Native 1.0.5**（C# / .NET 10 / WPF / SQLite）。旧 Python 版 **0.9.4** 仍作为兼容代码保留，Native 版不依赖 Python、Qt 或 Excel COM。
 
-Native 1.0.4 首次启动会检测 `%LOCALAPPDATA%\\HAM点名助手\\data\\ham_checkin.db`。如果存在旧版 Python 数据库，程序会先在 `backup\\legacy-python-*.db` 生成备份，再只读导入场次和签到；旧数据库不会被删除或覆盖。设置页的“关于 / 检查更新”只在用户点击后访问 GitHub Release，启动和快速录入不会联网。
+Native 1.0.5 首次启动会检测 `%LOCALAPPDATA%\\HAM点名助手\\data\\ham_checkin.db`。如果存在旧版 Python 数据库，程序会先在 `backup\\legacy-python-*.db` 生成备份，再只读导入场次和签到；旧数据库不会被删除或覆盖。设置页的“关于 / 检查更新”只在用户点击后访问 GitHub Release，启动和快速录入不会联网。
 
 ## 功能
 
