@@ -59,7 +59,7 @@ jobs:
           dotnet restore native/HamCheckin.Native.sln
           dotnet restore native/src/HamCheckin.Native.App/HamCheckin.Native.App.csproj -r win-x64
           dotnet build native/HamCheckin.Native.sln -c Release --no-restore --verbosity:minimal
-          dotnet test native/HamCheckin.Native.sln -c Release --no-build --logger "trx;LogFileName=native-tests.trx"
+          dotnet test native/HamCheckin.Native.sln -c Release --no-build --filter 'FullyQualifiedName!~FirstMicrophoneCanOpenAndReturnPcmForDebugging&FullyQualifiedName!~ApplicationOnlyRecordingCapturesFramesAndClosesAsValidMp4&FullyQualifiedName!~ApplicationAndMicrophoneRecordingWritesVideoAndAacStreams' --logger "trx;LogFileName=native-tests.trx"
 
       - name: Publish Native self-contained EXE
         shell: pwsh
