@@ -112,7 +112,7 @@ jobs:
         run: |
           Copy-Item updates/latest.json "$env:RUNNER_TEMP/latest.json"
           git fetch origin main
-          git checkout -B main origin/main
+          git checkout -B main origin/main --force
           New-Item -ItemType Directory -Force updates | Out-Null
           Copy-Item "$env:RUNNER_TEMP/latest.json" updates/latest.json
           git config user.name "github-actions[bot]"
@@ -130,7 +130,7 @@ jobs:
           # 旧客户端的备用 URL 指向这个过渡分支。至少在它们升级到新版
           # （改读 main）之前，每次正式 Release 都同步同一份真实 SHA256 清单。
           git fetch origin codex/ham-checkin-release
-          git checkout -B codex/ham-checkin-release origin/codex/ham-checkin-release
+          git checkout -B codex/ham-checkin-release origin/codex/ham-checkin-release --force
           New-Item -ItemType Directory -Force updates | Out-Null
           Copy-Item "$env:RUNNER_TEMP/latest.json" updates/latest.json
           git config user.name "github-actions[bot]"
