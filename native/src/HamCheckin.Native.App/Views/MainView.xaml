@@ -213,7 +213,7 @@
                                     <TextBlock Text="输出文件（MP4）" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,13,0,4"/>
                                     <Grid MinWidth="0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="0"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBox x:Name="RecordingPathBox" Height="36" IsReadOnly="True" FontSize="12" Padding="10,6" VerticalContentAlignment="Center" Style="{StaticResource InputTextBox}"/>
+                                        <TextBox x:Name="RecordingPathBox" Height="36" IsReadOnly="True" FontSize="12" Padding="10,6" VerticalContentAlignment="Center" Style="{StaticResource InputTextBox}" AutomationProperties.AutomationId="recording-output-path"/>
                                         <Button Grid.Column="1" Style="{StaticResource BaseButton}" Content="选择…" Margin="7,0,0,0" Click="BrowseRecordingPath_Click"/>
                                     </Grid>
                                 </StackPanel>
@@ -221,7 +221,7 @@
                             <Border Style="{StaticResource CardBorder}" Padding="15">
                                 <StackPanel>
                                     <TextBlock Text="录制状态" FontSize="15" FontWeight="Bold"/>
-                                    <TextBlock x:Name="RecordingStatusText" Text="未开始" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Margin="0,14,0,4" TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="RecordingStatusText" Text="未开始" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Margin="0,14,0,4" TextWrapping="Wrap" AutomationProperties.AutomationId="recording-status"/>
                                     <TextBlock x:Name="RecordingStatsText" Text="等待开始" FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                                     <WrapPanel Margin="0,18,0,0">
                                         <Button x:Name="StartRecordingButton" Style="{StaticResource PrimaryButton}" Content="开始录制 MP4" Click="StartRecording_Click" AutomationProperties.AutomationId="start-recording"/>

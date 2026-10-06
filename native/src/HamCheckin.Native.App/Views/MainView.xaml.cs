@@ -648,9 +648,18 @@ public partial class MainView : UserControl, IDisposable
         TestMicrophoneButton.IsEnabled = !active && hasMicrophone;
     }
 
-    private static string GetDefaultRecordingPath() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        "Downloads", "HAM点名助手录屏", $"点名现场_{DateTime.Now:yyyyMMdd_HHmmss}.mp4");
+    private static string GetDefaultRecordingPath()
+    {
+        // The test-only override keeps published black-box recordings inside
+        // their isolated artifact directory. Normal users always retain the
+        // Downloads default and never see this environment variable.
+        var testRoot = Environment.GetEnvironmentVariable("HAM_TEST_RECORDING_ROOT");
+        var directory = string.IsNullOrWhiteSpace(testRoot)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Downloads", "HAM点名助手录屏")
+            : Path.Combine(Path.GetFullPath(testRoot), "recordings");
+        return Path.Combine(directory, $"点名现场_{DateTime.Now:yyyyMMdd_HHmmss}.mp4");
+    }
 
     public void Dispose()
     {
