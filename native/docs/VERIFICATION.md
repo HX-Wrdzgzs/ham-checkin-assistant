@@ -2,14 +2,14 @@
 
 ## 1.0.15 当前候选验证（2026-10-06）
 
-本节是当前源代码和 1.0.15-r16 候选包的最新证据；下方的 1.0.14-r15 内容保留为历史记录，不能与本候选混用。
+本节是当前源代码和 1.0.15-r17 候选包的最新证据；下方的 1.0.14-r15 内容保留为历史记录，不能与本候选混用。
 
 | 检查 | 实际结果 |
 |---|---:|
 | Native 核心自动化测试 | PASS，185 / 185；`artifacts/test-results/1.0.15-core/core-1.0.15.trx` |
 | WPF UI 自动化测试 | PASS，29 / 29；`artifacts/test-results/1.0.15-ui/ui-1.0.15.trx`；包含主窗口/小窗前中尾部编辑、双窗口同步、IME 元数据、录屏 MP4 与麦克风、响应式按钮边界 |
-| 发布 EXE 真实启动与键盘黑盒 | PASS；发布后的 1.0.15 单文件 EXE `WaitForInputIdle=true`、保持运行 8 秒、隔离数据库创建成功；主窗口和快速小窗前/中/尾部编辑均保持后缀；`artifacts/published-blackbox-1.0.15-r16/report.json` |
-| 1.0.15 自包含候选 EXE | PASS；文件版本 `1.0.15.0`，78,645,652 bytes；SHA-256 `B264D6C6594AF2FFBAB4DD22CF38CFFA211D68BC3930D1442B19CA5B756F4D03`；候选目录为 `Downloads\\HAM点名助手-HX-HAM-1.0.15-r16-候选` |
+| 发布 EXE 真实启动与键盘黑盒 | PASS；发布后的 1.0.15 单文件 EXE `WaitForInputIdle=true`、保持运行 8 秒、隔离数据库创建成功；主窗口和快速小窗前/中/尾部编辑均保持后缀；`artifacts/published-blackbox-1.0.15-r17/report.json` |
+| 1.0.15 自包含候选 EXE | PASS；文件版本 `1.0.15.0`，78,645,642 bytes；SHA-256 `0C922692236B4D074B5363228F7A7704B87B5F2448549C5CE619F8CA0C74943D`；候选目录为 `Downloads\\HAM点名助手-HX-HAM-1.0.15-r17-候选` |
 | 全国行政区 ASCII 别名审计 | PASS；4,762 个唯一 ASCII 别名，0 个失败 |
 | 行政区歧义审计 | PASS；269 个真实碰撞，0 个错误强行解析；`鼓楼区`、`栖霞区`、`东乡`保留候选并要求选择 |
 | 重名行政区规范化 | PASS；临夏市、楚雄市、阿克苏市等不再输出重复的“省+市+同名市” |
@@ -17,7 +17,7 @@
 | 视频样例识别审计 | PASS；`7900`、`jsycxs`、`山东qcd`、`广东省汕头市m507`、`bh8` 样例均按当前规则得到结果；完整机器结果见候选包 `识别准确性审计.json` |
 | 候选包校验清单 | PASS；`SHA256SUMS.txt` 与候选 EXE 当前哈希一致 |
 
-当前候选包中的正式证据文件：`artifacts/candidate-1.0.15-r16/输入与核心测试.trx`、`WPF黑盒测试.trx`、`发布包黑盒测试.json`、`识别准确性审计.json` 和 `SHA256SUMS.txt`。
+当前候选包中的正式证据文件：`artifacts/candidate-1.0.15-r17/输入与核心测试.trx`、`WPF黑盒测试.trx`、`发布包黑盒测试.json`、`识别准确性审计.json` 和 `SHA256SUMS.txt`。
 
 当前仍未宣称完成的项目：真实微软拼音现场操作、用户可见的 Microsoft Excel 修复提示流程、长时间录屏稳定性、真实 GitHub Release 资产下载，以及用户生产库迁移。它们必须在现场或真实发布通道验证，不能由本地隔离测试替代。
 
