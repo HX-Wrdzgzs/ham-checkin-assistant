@@ -111,6 +111,15 @@ public sealed class FieldParserTests
     }
 
     [Fact]
+    public void IncompleteCallsignIsNeverResolvedAsQthByCatalog()
+    {
+        var snapshot = CatalogLoader.CreateBuiltIn();
+
+        Assert.Null(snapshot.ResolveQthInput("BH8"));
+        Assert.Null(snapshot.ResolveQthInput("bh8"));
+    }
+
+    [Fact]
     public void EveryUniqueNationwideAsciiCityAliasExpands()
     {
         var snapshot = CatalogLoader.CreateBuiltIn();

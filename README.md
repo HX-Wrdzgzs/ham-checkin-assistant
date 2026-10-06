@@ -5,9 +5,9 @@ Windows 本地点名辅助程序：通过**缩写 + 规则解析 + SQLite 历史
 
 **核心点名功能纯本地，无任何 AI / LLM / 语音识别依赖，断网可用；可选的 QTH 后台联网同步需要用户自行配置数据源。**
 
-当前候选版本：**Native 1.0.16**（C# / .NET 10 / WPF / SQLite）。旧 Python 版 **0.9.4** 仍作为兼容代码保留，Native 版不依赖 Python、Qt 或 Excel COM。
+当前候选版本：**Native 1.0.17**（C# / .NET 10 / WPF / SQLite）。旧 Python 版 **0.9.4** 仍作为兼容代码保留，Native 版不依赖 Python、Qt 或 Excel COM。
 
-Native 1.0.16 将原生数据写入 `%LOCALAPPDATA%\\HAM点名助手\\data\\ham_checkin_native.db`；旧版 Python 数据库仍是同目录的 `ham_checkin.db`。如果存在旧版 Python 数据库，程序会先在 `backup\\legacy-python-*.db` 生成备份，再只读导入场次和签到；旧数据库不会被删除或覆盖。程序启动即在后台检查 GitHub Release，快速录入仍不等待网络；设置页的“关于 / 检查更新”可手动重试。
+Native 1.0.17 将原生数据写入 `%LOCALAPPDATA%\\HAM点名助手\\data\\ham_checkin_native.db`；旧版 Python 数据库仍是同目录的 `ham_checkin.db`。如果存在旧版 Python 数据库，程序会先在 `backup\\legacy-python-*.db` 生成备份，再只读导入场次和签到；旧数据库不会被删除或覆盖。程序启动即在后台检查 GitHub Release，快速录入仍不等待网络；设置页的“关于 / 检查更新”可手动重试。
 
 ## 功能
 
@@ -39,7 +39,7 @@ Native 1.0.16 将原生数据写入 `%LOCALAPPDATA%\\HAM点名助手\\data\\ham_
 
 ![HAM 点名助手使用流程](docs/usage-flow.svg)
 
-### 1. Native 1.0.16 第一次使用
+### 1. Native 1.0.17 第一次使用
 
 Native 版启动后直接进入“快速点名”，不要求先生成画像、不打开历史画像页，也不自动连接 Excel。全国行政区和已验证的本地设备别名先可用，其余资料在后台加载。
 
@@ -81,7 +81,7 @@ Space 模式专门照顾只录呼号的高频点名：输入一个有效呼号�
 
 ### 3.1 设备缩写的两条来源
 
-> 兼容说明：本节中“历史数据 → 生成词典建议”等入口属于旧 Python 版。Native 1.0.16 目前通过“资料库”的本地型号搜索、内置现场别名和字段编辑器完成同一类操作，不在输入热路径访问网络。
+> 兼容说明：本节中“历史数据 → 生成词典建议”等入口属于旧 Python 版。Native 1.0.17 目前通过“资料库”的本地型号搜索、内置现场别名和字段编辑器完成同一类操作，不在输入热路径访问网络。
 
 设备是否被工信部型号核准，不决定它能不能参加点名。程序把设备缩写分成两类：
 

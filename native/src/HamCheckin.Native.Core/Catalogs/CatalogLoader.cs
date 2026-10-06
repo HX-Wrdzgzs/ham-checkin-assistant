@@ -1,14 +1,13 @@
 using System.Diagnostics;
 using HamCheckin.Native.Core.Parsing;
+using HamCheckin.Native.Core.Storage;
 using Microsoft.Data.Sqlite;
 
 namespace HamCheckin.Native.Core.Catalogs;
 
 public static class CatalogLoader
 {
-    public static string DefaultDataRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "HAM点名助手", "data");
+    public static string DefaultDataRoot => AppPaths.DataRoot;
 
     public static CatalogSnapshot CreateBuiltIn()
     {

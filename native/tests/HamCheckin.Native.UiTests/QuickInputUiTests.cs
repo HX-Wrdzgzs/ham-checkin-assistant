@@ -258,6 +258,41 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
     }
 
     [Fact]
+    public void PreviewStillParsesWhenImeMetadataArrivesBeforeTextChange()
+    {
+        _fixture.Run(() =>
+        {
+            var viewModel = MainViewModel.CreatePreview();
+            var view = new MainView { DataContext = viewModel };
+            var window = new Window
+            {
+                Width = 1_440,
+                Height = 900,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                Content = view
+            };
+            window.Show();
+            window.UpdateLayout();
+
+            var input = (TextBox)view.FindName("InputBox")!;
+            input.Focus();
+            viewModel.SetImeCompositionState("main-input", true);
+            input.Text = "BA4AAA NJXW PD780 4.2M 5W";
+
+            Assert.Equal("江苏省南京市玄武区", viewModel.Qth);
+            Assert.Equal("海能达 PD-780", viewModel.Device);
+            Assert.Equal("4.2米玻璃钢", viewModel.Antenna);
+            Assert.Equal("5W", viewModel.Power);
+            Assert.Empty(viewModel.Unmatched);
+
+            viewModel.SetImeCompositionState("main-input", false);
+            view.Dispose();
+            window.Close();
+        });
+    }
+
+    [Fact]
     public void QuickWindowKeepsSuffixWhenEditingTheFrontOfTheLine()
     {
         _fixture.Run(() =>
@@ -674,7 +709,7 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             var check = (Button)window.FindName("CheckButton")!;
             var sponsor = (Button)window.FindName("SponsorButton")!;
 
-            Assert.Equal("1.0.16", version.Text);
+            Assert.Equal("1.0.17", version.Text);
             Assert.Equal("开发者：BA4THG（HX-Wrdzgzs）", developer.Text);
             Assert.Contains("当前已是最新", status.Text);
             Assert.Contains("本地候选版", notes.Text);
@@ -1282,7 +1317,7 @@ public sealed class WpfDispatcherFixture : IDisposable
 internal sealed class UpdateProbeHandler : HttpMessageHandler
 {
     private const string ManifestDownload =
-        "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v1.0.16/HAM.exe";
+        "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v1.0.17/HAM.exe";
 
     public List<string> Requests { get; } = new();
 
@@ -1300,7 +1335,7 @@ internal sealed class UpdateProbeHandler : HttpMessageHandler
 
         if (url == NativeVersion.StableManifestUrl)
         {
-            var json = $"{{\"version\":\"1.0.16\",\"tag_name\":\"v1.0.16\",\"download_url\":\"{ManifestDownload}\",\"sha256\":\"{new string('a', 64)}\"}}";
+            var json = $"{{\"version\":\"1.0.17\",\"tag_name\":\"v1.0.17\",\"download_url\":\"{ManifestDownload}\",\"sha256\":\"{new string('a', 64)}\"}}";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json")

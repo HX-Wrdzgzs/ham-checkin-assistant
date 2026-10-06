@@ -1,6 +1,7 @@
 using HamCheckin.Native.Core;
 using HamCheckin.Native.Core.Catalogs;
 using HamCheckin.Native.Core.Parsing;
+using HamCheckin.Native.Core.Storage;
 using Microsoft.Data.Sqlite;
 
 namespace HamCheckin.Native.Tests;
@@ -56,6 +57,20 @@ public sealed class CatalogLoaderTests : IDisposable
 
         Assert.Contains(candidates, item => item.StandardName == "泉盛 UV-K1");
         Assert.DoesNotContain(candidates, item => item.StandardName == "泉盛 TK11");
+    }
+
+    [Fact]
+    public void DefaultDataRootFollowsConfiguredAppPaths()
+    {
+        AppPaths.ConfigureDataRoot(_root);
+        try
+        {
+            Assert.Equal(Path.Combine(Path.GetFullPath(_root), "data"), CatalogLoader.DefaultDataRoot);
+        }
+        finally
+        {
+            AppPaths.ConfigureDataRoot(null);
+        }
     }
 
     private void CreateLegacyAliases()

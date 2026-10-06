@@ -726,13 +726,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(InputText));
         OnPropertyChanged(nameof(InputRevision));
         OnPropertyChanged(nameof(InputDraft));
-        // Do not parse or publish candidates while an IME composition is still
-        // being assembled.  The committed TextInput event produces the final
-        // snapshot and parses once, without writing anything back to TextBox.
-        if (!e.Snapshot.IsImeComposing)
-        {
-            ParseInput(e.Snapshot.Text, e.Snapshot.Revision);
-        }
+        // The parser only updates the preview and never writes back to the
+        // focused TextBox.  Parsing every text revision is therefore safe and
+        // important for native Unicode/IME paths where WPF can report a
+        // TextChanged event before a matching TextInput completion event.  If
+        // we suppress parsing while IsImeComposing is true and that completion
+        // notification is absent, the raw text visibly changes while the
+        // parsed fields stay stale/empty and submission remains disabled.
+        ParseInput(e.Snapshot.Text, e.Snapshot.Revision);
         InputDraftChanged?.Invoke(this, e);
     }
 

@@ -187,6 +187,15 @@ public sealed class CatalogSnapshot
     public QthCandidate? ResolveQthInput(string token)
     {
         var normalized = token?.Trim() ?? string.Empty;
+        // A three-character prefix such as “BH8” is an incomplete callsign,
+        // not a location alias. Keep this guard in the catalog layer rather
+        // than relying only on InputParser so field editors, suggestions and
+        // future callers cannot turn it into “广西壮族自治区北海市”.
+        if (TextNormalizer.LooksLikeIncompleteCallsign(normalized))
+        {
+            return null;
+        }
+
         var direct = ResolveQth(normalized);
         if (direct is not null)
         {
