@@ -23,7 +23,7 @@
 - [1440×900 实际 XAML 效果图](docs/native-ui-actual.png)
 - [960×680 窄窗实际 XAML 效果图](docs/native-ui-narrow.png)
 - [早期概念效果图](docs/native-ui-concept.png)
-- 关于 / 版本 / 更新效果图：见 `%USERPROFILE%\Downloads\HAM点名助手-UI效果图-1.0.17-r22\08-关于-版本-更新.png`
+- 关于 / 版本 / 更新效果图：见 `%USERPROFILE%\Downloads\HAM点名助手-UI效果图-1.0.17-r24\08-关于-版本-更新.png`
 - [架构与完整替换边界](docs/ARCHITECTURE.md)
 - [本机验证记录](docs/VERIFICATION.md)
 - [用户现场验收流程](docs/ACCEPTANCE-TEST.md)
@@ -43,7 +43,7 @@ $dotnet10 = "$env:USERPROFILE\.codex\dotnet10\dotnet.exe"
 生成真实 WPF 效果图（不显示窗口、不控制鼠标键盘）：
 
 ```powershell
-& $dotnet10 run --project .\native\src\HamCheckin.Native.App -c Release --no-build -- --render-ui-set "$env:USERPROFILE\Downloads\HAM点名助手-UI效果图-1.0.17-r22"
+& $dotnet10 run --project .\native\src\HamCheckin.Native.App -c Release --no-build -- --render-ui-set "$env:USERPROFILE\Downloads\HAM点名助手-UI效果图-1.0.17-r24"
 ```
 
 本次 r15 候选版效果图固定输出十张：快速点名、窄窗口、独立小窗、QTH 字段修正、设备资料库、地点包省市树、快捷键设置、关于/版本/更新、编辑场次信息、录屏与麦克风。
