@@ -288,6 +288,23 @@ public partial class MainView : UserControl, IDisposable
 
     public void ShowPage(string pageName)
     {
+        if (NavigationPanel is not null && QuickPage is not null)
+        {
+            var navigation = NavigationPanel.Children
+                .OfType<RadioButton>()
+                .FirstOrDefault(radio => string.Equals(
+                    radio.Tag as string, pageName, StringComparison.Ordinal));
+            if (navigation is not null && navigation.IsChecked != true)
+            {
+                // Keep keyboard navigation, preview rendering and direct page
+                // selection consistent with the visible sidebar state. Setting
+                // IsChecked raises Nav_Checked once; the recursive call then
+                // reaches the actual page switch below.
+                navigation.IsChecked = true;
+                return;
+            }
+        }
+
         var pageChanged = !string.Equals(_lastShownPage, pageName, StringComparison.Ordinal);
         _lastShownPage = pageName;
         var pages = new[] { QuickPage, RecordsPage, CatalogPage, RecordingPage, SettingsPage };
@@ -342,8 +359,7 @@ public partial class MainView : UserControl, IDisposable
 
     private void SelectNav(string page)
     {
-        if (page == "Quick") QuickNav.IsChecked = true;
-        else ShowPage(page);
+        ShowPage(page);
     }
 
     private void RefreshRecordingDevices_Click(object sender, RoutedEventArgs e) => RefreshRecordingDevices();

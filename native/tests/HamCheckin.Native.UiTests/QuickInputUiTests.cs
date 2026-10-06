@@ -879,6 +879,44 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
     }
 
     [Fact]
+    public void DirectPageSelectionKeepsSidebarSelectionInSync()
+    {
+        _fixture.Run(() =>
+        {
+            var view = new MainView { DataContext = MainViewModel.CreatePreview() };
+            var window = new Window
+            {
+                Width = 1_180,
+                Height = 760,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                Content = view
+            };
+
+            window.Show();
+            window.UpdateLayout();
+
+            view.ShowPage("Settings");
+            view.UpdateLayout();
+            var navigation = ((StackPanel)view.FindName("NavigationPanel")!).Children
+                .OfType<RadioButton>()
+                .ToDictionary(radio => (string)radio.Tag!, radio => radio);
+            Assert.True(navigation["Settings"].IsChecked);
+            Assert.False(navigation["Quick"].IsChecked);
+            Assert.Equal(Visibility.Visible, ((Grid)view.FindName("SettingsPage")!).Visibility);
+
+            view.ShowPage("Quick");
+            view.UpdateLayout();
+            Assert.True(navigation["Quick"].IsChecked);
+            Assert.False(navigation["Settings"].IsChecked);
+            Assert.Equal(Visibility.Visible, ((Grid)view.FindName("QuickPage")!).Visibility);
+
+            view.Dispose();
+            window.Close();
+        });
+    }
+
+    [Fact]
     public void HeaderActionsStayInsideClientBoundsAcrossSupportedWindowWidths()
     {
         _fixture.Run(() =>
