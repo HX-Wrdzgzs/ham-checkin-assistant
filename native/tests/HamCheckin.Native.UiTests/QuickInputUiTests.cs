@@ -709,10 +709,11 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             var check = (Button)window.FindName("CheckButton")!;
             var sponsor = (Button)window.FindName("SponsorButton")!;
 
-            Assert.Equal("1.0.17", version.Text);
+            Assert.Equal("1.0.18", version.Text);
             Assert.Equal("开发者：BA4THG（HX-Wrdzgzs）", developer.Text);
             Assert.Contains("当前已是最新", status.Text);
             Assert.Contains("本地候选版", notes.Text);
+            Assert.Contains("未知尾缀单独保留待修正", notes.Text);
             Assert.True(check.IsEnabled);
             Assert.Equal("赞助开发", sponsor.Content);
 

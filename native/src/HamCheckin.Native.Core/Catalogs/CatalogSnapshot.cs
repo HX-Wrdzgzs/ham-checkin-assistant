@@ -346,12 +346,17 @@ public sealed class CatalogSnapshot
             }
 
             var suffix = normalized[canonicalKey.Length..];
-            return candidate with
+            // 只有中文地点后缀才属于 QTH。字母/数字尾巴可能是天线、
+            // 设备或用户尚未收录的现场缩写；不能把它静默拼进 QTH。
+            if (IsSafePlaceSuffix(suffix))
             {
-                Canonical = candidate.Canonical + suffix,
-                Kind = "place_suffix",
-                Priority = candidate.Priority - 1
-            };
+                return candidate with
+                {
+                    Canonical = candidate.Canonical + suffix,
+                    Kind = "place_suffix",
+                    Priority = candidate.Priority - 1
+                };
+            }
         }
 
         // 中文现场输入常省略“省、市、区”字样，例如“南京鼓楼”“南京市鼓楼中山路”。
@@ -424,9 +429,15 @@ public sealed class CatalogSnapshot
         if (bestDistrict.Candidate is not null)
         {
             var suffix = normalized[(bestDistrict.Index + bestDistrict.Key.Length)..];
-            return suffix.Length == 0
-                ? NormalizeCandidate(bestDistrict.Candidate)
-                : AppendSuffix(bestDistrict.Candidate, suffix);
+            if (suffix.Length == 0)
+            {
+                return NormalizeCandidate(bestDistrict.Candidate);
+            }
+
+            if (IsSafePlaceSuffix(suffix))
+            {
+                return AppendSuffix(bestDistrict.Candidate, suffix);
+            }
         }
 
         // “省/自治区 + 城市”的常用简写，例如“宁夏银川”“山西晋中”。
@@ -450,9 +461,15 @@ public sealed class CatalogSnapshot
             var bestProvinceCity = provinceCityMatches[0];
             var suffix = normalized[(bestProvinceCity.City!.Value.Index
                 + bestProvinceCity.City.Value.Key.Length)..];
-            return suffix.Length == 0
-                ? NormalizeCandidate(bestProvinceCity.Candidate)
-                : AppendSuffix(bestProvinceCity.Candidate, suffix);
+            if (suffix.Length == 0)
+            {
+                return NormalizeCandidate(bestProvinceCity.Candidate);
+            }
+
+            if (IsSafePlaceSuffix(suffix))
+            {
+                return AppendSuffix(bestProvinceCity.Candidate, suffix);
+            }
         }
 
         // 只有城市前缀时也补出省、市，但要求城市名称位于输入开头，
@@ -474,40 +491,111 @@ public sealed class CatalogSnapshot
         {
             var bestCity = cityMatches[0];
             var suffix = normalized[bestCity.Match!.Value.Key.Length..];
-            return suffix.Length == 0
-                ? NormalizeCandidate(bestCity.Candidate)
-                : AppendSuffix(bestCity.Candidate, suffix);
-        }
+            if (suffix.Length == 0)
+            {
+                return NormalizeCandidate(bestCity.Candidate);
+            }
 
-        // 录屏中出现过“山东qcd”这类现场自定义缩写：省份是明确的，
-        // 但后半段没有足够证据对应某个城市。不能把它猜成青岛、齐河等
-        // 任意地点，也不能因为混有字母就把整段扔进设备/未识别；保留为
-        // QTH 原文，交给字段编辑器继续修正。
-        var rawAdministrativePrefix = candidates
-            .Where(static item => IsAdministrativeRegion(item))
-            .SelectMany(candidate => RegionKeys(candidate.Province)
-                .Concat(RegionKeys(candidate.City))
-                .Select(key => (Candidate: candidate, Key: key)))
-            .Where(item => item.Key.Length > 0
-                && normalized.StartsWith(item.Key, StringComparison.Ordinal)
-                && normalized.Length > item.Key.Length)
-            .Where(item => normalized[item.Key.Length..].Any(static character =>
-                char.IsAsciiLetterOrDigit(character)))
-            .OrderByDescending(static item => item.Key.Length)
-            .ThenByDescending(static item => item.Candidate.Priority)
-            .FirstOrDefault();
-        if (rawAdministrativePrefix.Candidate is not null)
-        {
-            return new QthCandidate(
-                normalized,
-                rawAdministrativePrefix.Candidate.Province,
-                rawAdministrativePrefix.Candidate.City,
-                rawAdministrativePrefix.Candidate.District,
-                "raw_admin_prefix",
-                Math.Max(0, rawAdministrativePrefix.Candidate.Priority - 100));
+            if (IsSafePlaceSuffix(suffix))
+            {
+                return AppendSuffix(bestCity.Candidate, suffix);
+            }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Splits a Chinese administrative prefix followed by an unknown ASCII
+    /// suffix, for example “山东qcd” or “广东省汕头市m507”. The prefix is
+    /// returned as the most specific administrative value that is proven by
+    /// the local catalog; the suffix remains a separate token so the parser
+    /// can expose it as pending correction or recognize it as an antenna or
+    /// device alias. Unknown text is never silently folded into QTH.
+    /// </summary>
+    public bool TrySplitAdministrativePrefix(
+        string token,
+        out QthCandidate candidate,
+        out string suffix)
+    {
+        candidate = null!;
+        suffix = string.Empty;
+
+        var normalized = TextNormalizer.NormalizeKey(token);
+        if (normalized.Length < 3)
+        {
+            return false;
+        }
+
+        var prefixLength = 0;
+        while (prefixLength < normalized.Length
+            && normalized[prefixLength] is >= '\u3400' and <= '\u9fff')
+        {
+            prefixLength++;
+        }
+
+        if (prefixLength < 2 || prefixLength == normalized.Length)
+        {
+            return false;
+        }
+
+        var prefix = normalized[..prefixLength];
+        var asciiSuffix = normalized[prefixLength..];
+        if (asciiSuffix.Length == 0
+            || asciiSuffix.Any(static character => !char.IsAsciiLetterOrDigit(character)))
+        {
+            return false;
+        }
+
+        // A complete local alias wins over prefix splitting. This keeps a
+        // future user-defined alias such as “山东qcd” authoritative.
+        if (ResolveQthInput(normalized) is not null)
+        {
+            return false;
+        }
+
+        var exactPrefixCandidates = _allQthCandidates
+            .Where(static item => IsAdministrativeRegion(item))
+            .Where(item => RegionKeys(item.Canonical)
+                .Contains(prefix, StringComparer.Ordinal))
+            .Select(NormalizeCandidate)
+            .DistinctBy(static item => item.Canonical, StringComparer.Ordinal)
+            .ToArray();
+
+        if (exactPrefixCandidates.Length == 1)
+        {
+            candidate = exactPrefixCandidates[0];
+            suffix = asciiSuffix;
+            return true;
+        }
+
+        // The built-in national snapshot may have district rows but no
+        // standalone province row. In that case a unique province prefix is
+        // still known, while its city is not. Keep that useful fact without
+        // inventing a city.
+        var provinceNames = _allQthCandidates
+            .Where(static item => IsAdministrativeRegion(item))
+            .Select(static item => item.Province)
+            .Where(static province => !string.IsNullOrWhiteSpace(province))
+            .Distinct(StringComparer.Ordinal)
+            .Where(province => RegionKeys(province)
+                .Contains(prefix, StringComparer.Ordinal))
+            .ToArray();
+
+        if (provinceNames.Length != 1)
+        {
+            return false;
+        }
+
+        candidate = new QthCandidate(
+            provinceNames[0],
+            provinceNames[0],
+            string.Empty,
+            string.Empty,
+            "admin_prefix_partial",
+            600);
+        suffix = asciiSuffix;
+        return true;
     }
 
     /// <summary>
@@ -742,8 +830,14 @@ public sealed class CatalogSnapshot
         || candidate.Kind.Contains("行政", StringComparison.Ordinal);
 
     private static bool IsSafePlaceSuffix(string suffix) =>
-        suffix.Length > 0 && TextNormalizer.ContainsCjk(suffix)
-        && suffix[0] is >= '\u3400' and <= '\u9fff';
+        suffix.Length > 0
+        && TextNormalizer.ContainsCjk(suffix)
+        && suffix[0] is >= '\u3400' and <= '\u9fff'
+        // Numeric address tails such as “中山路169号” are valid. ASCII
+        // letters are deliberately excluded so “汕头市m507” is split and
+        // the unknown model/antenna token remains visible for correction.
+        && suffix.All(static character =>
+            character is >= '\u3400' and <= '\u9fff' || char.IsAsciiDigit(character));
 
     private static QthCandidate AppendSuffix(QthCandidate candidate, string suffix)
     {

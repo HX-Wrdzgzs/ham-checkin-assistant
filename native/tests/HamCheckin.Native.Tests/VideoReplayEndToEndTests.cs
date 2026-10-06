@@ -90,6 +90,14 @@ public sealed class VideoReplayEndToEndTests
             "10-04 20:10:00",
             "bh4gbn 上海徐汇 73ham",
             "BH4GBN", "上海市徐汇区", "73HAM", "", "", "", ""),
+        new(
+            "10-04 20:20:00",
+            "ba4ilg 山东qcd ht",
+            "BA4ILG", "山东省", "HT", "", "", "", "qcd"),
+        new(
+            "10-04 20:25:00",
+            "ba4vfw 广东省汕头市m507 kt8900d 25w",
+            "BA4VFW", "广东省汕头市", "KT-8900D", "", "25W", "", "m507"),
     };
 
     [Fact]

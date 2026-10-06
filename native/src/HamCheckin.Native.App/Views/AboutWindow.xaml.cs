@@ -27,7 +27,13 @@ public partial class AboutWindow : Window, IDisposable
     public void SetPreviewState()
     {
         StatusText.Text = $"云端版本：{NativeVersion.Current}（当前已是最新）";
-        ReleaseNotesText.Text = "本地候选版\n\n· Native WPF / .NET 10\n· SQLite 现场提交\n· Excel 后台导出\n· 本地资料库和 SHA-256 更新校验";
+        ReleaseNotesText.Text = "1.0.18 本地候选版更新内容\n\n"
+            + "· 修复主窗口和快捷小窗在前部/中部修改时覆盖后缀的问题\n"
+            + "· 解析结果只显示预览，不回写正在输入的原文\n"
+            + "· 扩展全国省、市、区县缩写；未知尾缀单独保留待修正，不擅自猜测\n"
+            + "· 增加视频样例回归：7900、jsycxs、bh8、山东qcd、广东省汕头市m507\n"
+            + "· 启动后后台检查更新，输入热路径不连接 Excel 或联网资料库\n"
+            + "· 保持 C# / WPF / .NET 10 自包含发布和 MP4 软件窗口录屏能力";
         CheckButton.IsEnabled = true;
         DownloadButton.IsEnabled = false;
     }

@@ -27,14 +27,31 @@ public sealed class InputParser
     public ParseResult Parse(string? input)
     {
         var rawText = input?.Trim() ?? string.Empty;
-        var tokens = TextNormalizer.Tokenize(rawText);
-        if (tokens.Count == 0)
+        var catalog = _catalogAccessor();
+        var tokenParts = new List<(string Text, bool IsAdministrativePrefix)>(8);
+        foreach (var token in TextNormalizer.Tokenize(rawText))
+        {
+            if (catalog.TrySplitAdministrativePrefix(token, out var prefix, out var suffix))
+            {
+                tokenParts.Add((prefix.Canonical, true));
+                tokenParts.Add((suffix, false));
+            }
+            else
+            {
+                tokenParts.Add((token, false));
+            }
+        }
+
+        var tokens = tokenParts.Select(static part => part.Text).ToArray();
+        var administrativePrefixTokens = tokenParts
+            .Select(static part => part.IsAdministrativePrefix)
+            .ToArray();
+        if (tokens.Length == 0)
         {
             return ParseResult.Empty with { RawText = rawText };
         }
 
-        var catalog = _catalogAccessor();
-        var consumed = new bool[tokens.Count];
+        var consumed = new bool[tokens.Length];
         var callsign = ParseField.Empty;
         var qth = ParseField.Empty;
         var device = ParseField.Empty;
@@ -46,7 +63,7 @@ public sealed class InputParser
         var deferredAntenna = new List<(int Index, string Value)>();
         var qthSuggestions = new List<string>();
 
-        for (var index = 0; index < tokens.Count; index++)
+        for (var index = 0; index < tokens.Length; index++)
         {
             if (!TextNormalizer.IsCallsign(tokens[index]))
             {
@@ -60,9 +77,9 @@ public sealed class InputParser
         }
 
         // 先识别由空格拆开的品牌/型号或型号组合，例如 “QYT 6900”。
-        for (var length = Math.Min(3, tokens.Count); length >= 2 && device.Value.Length == 0; length--)
+        for (var length = Math.Min(3, tokens.Length); length >= 2 && device.Value.Length == 0; length--)
         {
-            for (var start = 0; start + length <= tokens.Count; start++)
+            for (var start = 0; start + length <= tokens.Length; start++)
             {
                 if (Enumerable.Range(start, length).Any(index => consumed[index]))
                 {
@@ -85,7 +102,7 @@ public sealed class InputParser
             }
         }
 
-        for (var index = 0; index < tokens.Count; index++)
+        for (var index = 0; index < tokens.Length; index++)
         {
             if (consumed[index])
             {
@@ -169,13 +186,20 @@ public sealed class InputParser
 
             if (qthResolved is not null && qth.Value.Length == 0)
             {
-                qth = new ParseField(qthResolved.Canonical, "全国地点库", 1.0, token);
+                var isPartialAdministrativePrefix = administrativePrefixTokens[index];
+                qth = new ParseField(
+                    qthResolved.Canonical,
+                    isPartialAdministrativePrefix
+                        ? "全国行政区库（尾部待补全）"
+                        : "全国地点库",
+                    isPartialAdministrativePrefix ? 0.75 : 1.0,
+                    token);
                 consumed[index] = true;
             }
         }
 
         // 先保留明确的中文地点原文，避免 “yz 湖北” 被错误解析为扬州。
-        for (var index = 0; index < tokens.Count && qth.Value.Length == 0; index++)
+        for (var index = 0; index < tokens.Length && qth.Value.Length == 0; index++)
         {
             var token = tokens[index];
             if (consumed[index] || ambiguous.Contains(index)
@@ -238,7 +262,7 @@ public sealed class InputParser
         }
 
         // 未命中的字母数字组合仍保留到设备列，绝不因资料库缺失而丢数据。
-        for (var index = 0; index < tokens.Count && device.Value.Length == 0; index++)
+        for (var index = 0; index < tokens.Length && device.Value.Length == 0; index++)
         {
             if (consumed[index] || !TextNormalizer.LooksLikeDevice(tokens[index])
                 || (index == 0 && callsign.Value.Length == 0

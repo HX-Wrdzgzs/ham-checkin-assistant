@@ -443,25 +443,38 @@ public sealed class ParserTests
     }
 
     [Fact]
-    public void VideoVisibleUnknownProvinceAbbreviationStaysInQthInsteadOfBeingDropped()
+    public void VideoVisibleUnknownProvinceAbbreviationStaysPendingInsteadOfBeingGuessed()
     {
         // 2026-10-04 录屏中可读到的“山东qcd”。qcd 的含义没有足够的
-        // 行政区证据，不能猜成青岛或其他城市，但省份前缀明确，所以应
-        // 保留在 QTH 原文中，方便后续字段编辑，而不是落到设备或未识别。
+        // 行政区证据，不能猜成青岛或其他城市。省级前缀可以规范化，
+        // 但未知尾巴必须进入待修正，不能伪装成完整 QTH。
         var result = _parser.Parse("ba4ilg 山东qcd ht");
 
         Assert.Equal("BA4ILG", result.Callsign.Value);
-        Assert.Equal("山东qcd", result.Qth.Value);
+        Assert.Equal("山东省", result.Qth.Value);
+        Assert.Equal("全国行政区库（尾部待补全）", result.Qth.Source);
         Assert.Equal("HT", result.Device.Value);
-        Assert.Empty(result.Unmatched);
+        Assert.Equal("qcd", result.UnmatchedText);
     }
 
     [Fact]
-    public void VideoVisibleChineseQthWithAttachedSuffixIsNotLost()
+    public void VideoVisibleChineseQthWithAttachedSuffixKeepsTheSuffixPending()
     {
         var result = _parser.Parse("ba4vfw 广东省汕头市m507 kt8900d 25w");
 
-        Assert.Equal("广东省汕头市m507", result.Qth.Value);
+        Assert.Equal("广东省汕头市", result.Qth.Value);
+        Assert.Equal("KT-8900D", result.Device.Value);
+        Assert.Equal("25W", result.Power.Value);
+        Assert.Equal("m507", result.UnmatchedText);
+    }
+
+    [Fact]
+    public void KnownAntennaAfterChineseQthPrefixIsStillRecognized()
+    {
+        var result = _parser.Parse("ba4aaa 广东省汕头市sgm507 kt8900d 25w");
+
+        Assert.Equal("广东省汕头市", result.Qth.Value);
+        Assert.Equal("SGM507", result.Antenna.Value);
         Assert.Equal("KT-8900D", result.Device.Value);
         Assert.Equal("25W", result.Power.Value);
         Assert.Empty(result.Unmatched);
