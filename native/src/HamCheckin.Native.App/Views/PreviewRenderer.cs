@@ -22,7 +22,8 @@ internal static class PreviewRenderer
         viewModel.AnimationsEnabled = false;
         RenderMain(Path.Combine(outputDirectory, "01-快速点名-1440x900.png"), viewModel, "Quick", 1440, 900);
         RenderMain(Path.Combine(outputDirectory, "02-快速点名-800x600.png"), viewModel, "Quick", 800, 600);
-        RenderQuickWindow(Path.Combine(outputDirectory, "03-独立快速小窗.png"), viewModel);
+        RenderQuickWindow(Path.Combine(outputDirectory, "03-独立快速小窗.png"), viewModel, 560, 280);
+        RenderQuickWindow(Path.Combine(outputDirectory, "03b-独立快速小窗-最小尺寸.png"), viewModel, 420, 190);
         RenderFieldEditor(Path.Combine(outputDirectory, "04-QTH字段编辑-未识别修正.png"), viewModel);
         viewModel.CatalogQuery = "pd780";
         viewModel.SearchCatalogCommand.Execute(null);
@@ -58,13 +59,13 @@ internal static class PreviewRenderer
         host.Close();
     }
 
-    private static void RenderQuickWindow(string outputPath, MainViewModel viewModel)
+    private static void RenderQuickWindow(string outputPath, MainViewModel viewModel, int width, int height)
     {
-        var window = new QuickWindow { DataContext = viewModel, Width = 560, Height = 280 };
+        var window = new QuickWindow { DataContext = viewModel, Width = width, Height = height };
         window.Show();
         window.UpdateLayout();
         FlushRender(window);
-        SaveWindowContent(outputPath, window, 560, 280);
+        SaveWindowContent(outputPath, window, width, height);
         // QuickWindow 的真实关闭行为是隐藏，以便保留未提交文字；效果图渲染结束时也使用隐藏，避免 Closing 事件拦截后续渲染。
         window.Hide();
     }
