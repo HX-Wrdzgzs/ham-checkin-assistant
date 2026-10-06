@@ -20,6 +20,7 @@ internal static class PreviewRenderer
         Directory.CreateDirectory(outputDirectory);
         var viewModel = MainViewModel.CreatePreview();
         viewModel.AnimationsEnabled = false;
+        viewModel.SetInputText("BA4RLL 1907 NJQX 4.2M 25W");
         RenderMain(Path.Combine(outputDirectory, "01-快速点名-1440x900.png"), viewModel, "Quick", 1440, 900);
         RenderMain(Path.Combine(outputDirectory, "02-快速点名-800x600.png"), viewModel, "Quick", 800, 600);
         RenderQuickWindow(Path.Combine(outputDirectory, "03-独立快速小窗.png"), viewModel, 560, 280);
@@ -41,6 +42,7 @@ internal static class PreviewRenderer
     {
         var viewModel = MainViewModel.CreatePreview();
         viewModel.AnimationsEnabled = false;
+        viewModel.SetInputText("BA4RLL 1907 NJQX 4.2M 25W");
         RenderMain(outputPath, viewModel, "Quick", width, height);
     }
 
