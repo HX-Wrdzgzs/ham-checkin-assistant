@@ -18,9 +18,9 @@
 | 短设备查询回归 | PASS；`k1` 不再吸附无关的 `TK11`，`pd780`、`r6`、`k5`、`k6` 仍有正确候选 |
 | 视频样例识别审计 | PASS（保守保留未知尾缀）；`7900`、`jsycxs`、`bh8` 完整识别；`山东qcd` 得到 `山东省` + 待修正 `qcd`，`广东省汕头市m507` 得到完整已知 QTH + 待修正 `m507`，没有擅自猜城市或吞掉尾缀；完整机器结果见黑盒 `report.json` |
 | 录屏默认安全回归 | PASS；真实 WPF 客户区抓帧使用 `PW_CLIENTONLY + PW_RENDERFULLCONTENT`，不回退到桌面；默认麦克风为 Off，录屏目标明确为软件窗口，输出为 MP4；`artifacts/test-results/continued-ui-recording-2/ui-recording-2.trx` |
-| 发布 EXE 实际录屏黑盒 | PASS；离线和联网发布 EXE 均实际点击开始/停止，隔离目录生成可读 MP4；离线 98,663 bytes、联网 114,437 bytes，均含 `ftyp`、`moov`、`mdat`；结果见两个黑盒 `report.json` 的 `recordingArtifact` |
+| 发布 EXE 实际录屏黑盒 | PASS；离线和联网发布 EXE 均实际点击开始/停止，隔离目录生成可读 MP4；离线 98,593 bytes、联网 132,783 bytes，均含 `ftyp`、`moov`、`mdat`；结果见两个黑盒 `report.json` 的 `recordingArtifact` |
 | WPF 效果图渲染 | PASS；1.0.19-r28 自包含发布物实际输出 10 张真实控件效果图，含 800×600 窄窗、关于/版本页和录屏/麦克风页；目录为 `artifacts/published-ui-effects-1.0.19-r28-final-commit` |
-| 侧边栏与页面同步 | PASS；设置页/快速点名页切换后选中状态一致；新增 UI 回归测试包含在 31 / 31 中 |
+| 侧边栏与页面同步 | PASS；设置页/快速点名页切换后选中状态一致；新增 UI 回归测试包含在 32 / 32 中 |
 | 候选包校验清单 | PASS；`SHA256SUMS.txt` 与候选 EXE 当前哈希一致 |
 | NativeUpdateService 真实更新链路 | PASS（稳定 v1.0.5）；项目自己的更新服务在 GitHub API 403 时回退到 `main/updates/latest.json`，既有 SHA-256 下载/拒绝测试通过；1.0.19-r28 在线启动实际显示已检查更新；候选版尚未创建远程 Release |
 
