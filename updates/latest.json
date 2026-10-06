@@ -1,9 +1,9 @@
 {
-  "version": "0.9.4",
-  "tag_name": "v0.9.4",
-  "html_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/v0.9.4",
-  "download_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v0.9.4/HAM.exe",
+  "version": "1.0.5",
+  "tag_name": "v1.0.5",
+  "html_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/tag/v1.0.5",
+  "download_url": "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v1.0.5/HAM.exe",
   "asset_name": "HAM.exe",
-  "sha256": "3fded59437d1fb7ac221b7ca553cdd326d99ab83c925ede25c37fce66c6306dc",
-  "release_notes": "本版本改进现场设备与天线识别、未识别内容保留、快速点名和 Excel 后台保存；同时完善单文件 EXE、运行数据目录迁移与 GitHub 自动更新兼容性。"
+  "sha256": "0ea3ec654b63ba5ed5144249807da19410aff0d80c761ddb49ce284e1a16d7c7",
+  "release_notes": "(2026-10-03)\n\n### 发布链路修复\n\n- 修复 Release 工作流同步稳定和兼容更新清单时，工作区已有 `updates/latest.json` 导致普通 checkout 被拒绝、随后推送非 fast-forward 的问题。\n- 发布清单切换分支时使用明确的强制 checkout；只作用于 GitHub Actions 的临时工作区，不影响用户数据。\n- 版本号、关于页、设置页、文件版本和程序集版本统一更新为 `1.0.5`。"
 }
