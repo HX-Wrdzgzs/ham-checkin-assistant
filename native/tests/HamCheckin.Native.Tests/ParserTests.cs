@@ -50,6 +50,7 @@ public sealed class ParserTests
     [InlineData("ba4aaa 南京市鼓楼中山路169号 pd780 1.8米玻璃钢 5w", "江苏省南京市鼓楼区中山路169号", "海能达 PD-780", "1.8米玻璃钢", "5W")]
     [InlineData("ba4aaa njjbxq p6620 车苗 25w", "江苏省南京市江北新区", "摩托罗拉 P6620", "车载苗子", "25W")]
     [InlineData("ba4aaa ft-400xd 车苗 南通汽车东站 满", "江苏省南通市汽车东站", "八重洲 FTM-400XD", "车载苗子", "满")]
+    [InlineData("ba4aaa 1907 njqx 4.2m 25w", "江苏省南京市栖霞区", "YAESU FT-1907R", "4.2米玻璃钢", "25W")]
     public void GoldenCasesAreDeterministic(
         string input,
         string qth,

@@ -48,7 +48,7 @@ public static class CatalogLoader
             ("bfuv5r", "宝峰 UV-5R"),
             ("ic705", "ICOM IC-705"), ("icom705", "ICOM IC-705"),
             ("id52", "ICOM ID-52"), ("icomid52plus", "ICOM ID-52 PLUS"),
-            ("ft1907r", "YAESU FT-1907R"), ("1907r", "YAESU FT-1907R"),
+            ("ft1907r", "YAESU FT-1907R"), ("1907r", "YAESU FT-1907R"), ("1907", "YAESU FT-1907R"),
             ("ft70d", "YAESU FT-70DR"), ("ft70dr", "YAESU FT-70DR"),
             ("ft5dr", "YAESU FT-5DR"), ("5dr", "YAESU FT-5DR"),
             // 录屏中的 ft-400xd 省略了型号中的 M；八重洲官方型号为 FTM-400XD。
