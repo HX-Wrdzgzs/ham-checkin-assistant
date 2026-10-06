@@ -24,6 +24,7 @@ public sealed class ScreenRecordingService : IDisposable
     private long _lastAudioBytes;
     private string _lastOutputPath = string.Empty;
     private readonly ConcurrentQueue<byte[]> _pendingAudio = new();
+    private Task<RecordingResult?>? _stopTask;
 
     public event EventHandler<RecordingStateChangedEventArgs>? StateChanged;
     public event EventHandler<MicrophoneLevelEventArgs>? LevelChanged;
@@ -65,13 +66,24 @@ public sealed class ScreenRecordingService : IDisposable
 
     public long VideoFrames => _writer?.VideoFrames ?? Interlocked.Read(ref _lastVideoFrames);
     public long AudioBytes => _writer?.AudioBytes ?? Interlocked.Read(ref _lastAudioBytes);
-    public bool IsActive => State is RecordingState.Recording or RecordingState.Paused or RecordingState.Stopping;
+    public bool IsActive
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _state is RecordingState.Recording or RecordingState.Paused or RecordingState.Stopping ||
+                       (_state == RecordingState.Failed && (_captureTask is not null || _options is not null));
+            }
+        }
+    }
 
     public void Start(RecordingOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
         var normalized = options with
         {
+            OutputPath = Path.GetFullPath(options.OutputPath),
             FramesPerSecond = Math.Clamp(options.FramesPerSecond, 1, 30)
         };
 
@@ -81,14 +93,25 @@ public sealed class ScreenRecordingService : IDisposable
 
         lock (_gate)
         {
-            if (_state is RecordingState.Recording or RecordingState.Paused or RecordingState.Stopping)
+            if (_state is RecordingState.Recording or RecordingState.Paused or RecordingState.Stopping ||
+                (_state == RecordingState.Failed && (_captureTask is not null || _options is not null)))
             {
-                throw new InvalidOperationException("当前已经有录屏任务在运行。");
+                throw new InvalidOperationException(
+                    _state == RecordingState.Failed
+                        ? "上一条录屏失败，请先点击“停止并保存”完成清理，再开始新的录屏。"
+                        : "当前已经有录屏任务在运行。" );
             }
 
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(normalized.OutputPath))!);
+                if (File.Exists(normalized.OutputPath))
+                {
+                    throw new IOException(
+                        $"输出文件已存在：{normalized.OutputPath}。请先选择新的 MP4 文件名，避免覆盖已有录屏。\n" +
+                        "原有文件没有被修改。" );
+                }
+
                 if (normalized.IncludeMicrophone)
                 {
                     if (normalized.MicrophoneId is not { } microphoneId)
@@ -106,6 +129,7 @@ public sealed class ScreenRecordingService : IDisposable
                 cancellation = new CancellationTokenSource();
                 _captureCancellation = cancellation;
                 _options = normalized;
+                _stopTask = null;
                 _startedAt = DateTimeOffset.Now;
                 _lastOutputPath = normalized.OutputPath;
                 _lastResult = null;
@@ -178,11 +202,28 @@ public sealed class ScreenRecordingService : IDisposable
             : "录制已继续");
     }
 
-    public async Task<RecordingResult?> StopAsync()
+    public Task<RecordingResult?> StopAsync()
+    {
+        lock (_gate)
+        {
+            if (_state is RecordingState.Idle or RecordingState.Completed ||
+                (_state == RecordingState.Failed && _captureTask is null && _options is null))
+            {
+                return Task.FromResult(_lastResult);
+            }
+
+            // Window shutdown and the Stop button can arrive together.  Share
+            // one cleanup task so the second caller cannot detach the writer,
+            // microphone and options while the first caller is still using
+            // them and then overwrite a successful result with a failure.
+            return _stopTask ??= StopCoreAsync();
+        }
+    }
+
+    private async Task<RecordingResult?> StopCoreAsync()
     {
         Task? captureTask;
-        bool captureFailed;
-        string failureMessage;
+        var alreadyFailed = false;
         lock (_gate)
         {
             if (_state is RecordingState.Idle or RecordingState.Completed)
@@ -190,14 +231,18 @@ public sealed class ScreenRecordingService : IDisposable
                 return _lastResult;
             }
 
-            captureFailed = _state == RecordingState.Failed;
-            failureMessage = _failureMessage;
-            _state = RecordingState.Stopping;
+            alreadyFailed = _state == RecordingState.Failed;
+            if (!alreadyFailed)
+            {
+                _state = RecordingState.Stopping;
+            }
             _captureCancellation?.Cancel();
             captureTask = _captureTask;
         }
 
-        PublishState(RecordingState.Stopping, "正在收尾录屏文件…");
+        PublishState(
+            alreadyFailed ? RecordingState.Failed : RecordingState.Stopping,
+            alreadyFailed ? "正在清理失败的录屏文件…" : "正在收尾录屏文件…");
         if (captureTask is not null)
         {
             try
@@ -208,6 +253,17 @@ public sealed class ScreenRecordingService : IDisposable
             {
                 // 正常停止路径。
             }
+        }
+
+        bool captureFailed;
+        string failureMessage;
+        lock (_gate)
+        {
+            // CaptureLoop can fail after StopAsync has requested cancellation.
+            // Read the state after awaiting it; sampling before the await could
+            // incorrectly turn a failed/partial MP4 into a successful result.
+            captureFailed = _state == RecordingState.Failed;
+            failureMessage = _failureMessage;
         }
 
         MicrophoneCapture? microphone;
@@ -286,6 +342,7 @@ public sealed class ScreenRecordingService : IDisposable
             _lastResult = result;
             _state = finalState;
             _failureMessage = finalState == RecordingState.Failed ? finalMessage : string.Empty;
+            _stopTask = null;
         }
 
         PublishState(finalState, finalMessage, finalState == RecordingState.Completed ? result : null);
@@ -309,11 +366,18 @@ public sealed class ScreenRecordingService : IDisposable
     {
         var delay = TimeSpan.FromMilliseconds(1000d / options.FramesPerSecond);
         Mp4FileWriter? writer = null;
+        string? partialPath = null;
+        var captureCompleted = false;
         var initializeResult = CoInitializeEx(nint.Zero, 0x0);
         try
         {
+            // Write to a same-directory hidden partial file.  The requested
+            // filename becomes visible only after Media Foundation finalized
+            // the container successfully.  A failed recording therefore
+            // cannot leave a file that looks complete to the user.
+            partialPath = CreatePartialPath(options.OutputPath);
             writer = new Mp4FileWriter(
-                options.OutputPath,
+                partialPath,
                 options.Target.Width,
                 options.Target.Height,
                 options.FramesPerSecond,
@@ -347,6 +411,7 @@ public sealed class ScreenRecordingService : IDisposable
             {
                 DrainPendingAudioLocked(writer);
                 writer.Complete();
+                captureCompleted = true;
             }
         }
         catch (Exception exception)
@@ -366,12 +431,14 @@ public sealed class ScreenRecordingService : IDisposable
             {
                 Interlocked.Exchange(ref _lastVideoFrames, writer.VideoFrames);
                 Interlocked.Exchange(ref _lastAudioBytes, writer.AudioBytes);
+                var disposeSucceeded = true;
                 try
                 {
                     writer.Dispose();
                 }
                 catch (Exception exception)
                 {
+                    disposeSucceeded = false;
                     lock (_gate)
                     {
                         if (_state is not RecordingState.Failed)
@@ -382,6 +449,29 @@ public sealed class ScreenRecordingService : IDisposable
                     }
                 }
 
+                if (captureCompleted && disposeSucceeded && partialPath is not null)
+                {
+                    try
+                    {
+                        File.Move(partialPath, options.OutputPath, overwrite: false);
+                    }
+                    catch (Exception exception)
+                    {
+                        lock (_gate)
+                        {
+                            _failureMessage = exception.Message;
+                            _state = RecordingState.Failed;
+                        }
+
+                        PublishState(RecordingState.Failed, $"保存 MP4 文件失败：{exception.Message}");
+                        TryDeletePartial(partialPath);
+                    }
+                }
+                else if (partialPath is not null)
+                {
+                    TryDeletePartial(partialPath);
+                }
+
                 lock (_gate)
                 {
                     if (ReferenceEquals(_writer, writer))
@@ -389,6 +479,13 @@ public sealed class ScreenRecordingService : IDisposable
                         _writer = null;
                     }
                 }
+            }
+            else if (partialPath is not null)
+            {
+                // Media Foundation can fail during construction after it has
+                // already created the URL.  Do not leave that partial file in
+                // the user's recording directory.
+                TryDeletePartial(partialPath);
             }
 
             if (initializeResult >= 0)
@@ -439,6 +536,29 @@ public sealed class ScreenRecordingService : IDisposable
             }
 
             cancellation?.Dispose();
+        }
+    }
+
+    private static string CreatePartialPath(string outputPath)
+    {
+        var fullPath = Path.GetFullPath(outputPath);
+        var directory = Path.GetDirectoryName(fullPath)!;
+        var stem = Path.GetFileNameWithoutExtension(fullPath);
+        return Path.Combine(directory, $".{stem}.{Guid.NewGuid():N}.partial.mp4");
+    }
+
+    private static void TryDeletePartial(string partialPath)
+    {
+        try
+        {
+            if (File.Exists(partialPath))
+            {
+                File.Delete(partialPath);
+            }
+        }
+        catch
+        {
+            // A cleanup failure must not hide the original capture failure.
         }
     }
 

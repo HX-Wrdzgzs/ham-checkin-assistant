@@ -14,9 +14,9 @@
     <Company>HX-Wrdzgzs</Company>
     <Authors>HX-Wrdzgzs</Authors>
     <NeutralLanguage>zh-CN</NeutralLanguage>
-    <Version>1.0.5</Version>
-    <FileVersion>1.0.5.0</FileVersion>
-    <AssemblyVersion>1.0.5.0</AssemblyVersion>
+    <Version>1.0.14</Version>
+    <FileVersion>1.0.14.0</FileVersion>
+    <AssemblyVersion>1.0.14.0</AssemblyVersion>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>

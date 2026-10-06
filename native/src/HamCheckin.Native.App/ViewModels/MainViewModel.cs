@@ -9,6 +9,7 @@ using HamCheckin.Native.Core.Catalogs;
 using HamCheckin.Native.Core.Export;
 using HamCheckin.Native.Core.Parsing;
 using HamCheckin.Native.Core.Storage;
+using HamCheckin.Native.Core.Updates;
 
 namespace HamCheckin.Native.App.ViewModels;
 
@@ -19,10 +20,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly FieldParser _fieldParser;
     private readonly NativeStore? _store;
     private readonly MiitCatalogSyncService _miitSyncService;
-    private readonly QthPackageService _qthPackageService;
+    private readonly string? _catalogDataRoot;
     private readonly ExcelExportService _exporter = new();
     private readonly QuickInputDraftService _draftService = new();
+    private readonly NativeUpdateService _updates;
     private CancellationTokenSource? _catalogCancellation;
+    private CancellationTokenSource? _updateCancellation;
     private SessionInfo? _session;
     private ParseResult _parseResult = ParseResult.Empty;
     private string _callsign = string.Empty;
@@ -43,12 +46,18 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string _catalogQuery = string.Empty;
     private string _miitStatus = "尚未下载工信部电台型号库";
     private string _locationStatus = "全国行政区基础索引；详细地点按省市包管理";
+    private string _updateStatus = $"启动后后台检查更新 · 当前 {NativeVersion.Current}";
     private string _databasePath = AppPaths.NativeDatabasePath;
     private string _currentPage = "Quick";
     private bool _isReady;
+    private bool _initializationComplete;
     private bool _animationsEnabled = true;
     private bool _isCatalogBusy;
     private int _nextSequence = 1;
+    private long _parsedInputRevision = -1;
+    private long _selectedQthRevision = -1;
+    private string _selectedQthRaw = string.Empty;
+    private string _selectedQthCanonical = string.Empty;
     private long _lastParseMicroseconds;
 
     public MainViewModel()
@@ -56,14 +65,21 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
     }
 
-    private MainViewModel(CatalogService catalogService, NativeStore? store)
+    internal MainViewModel(
+        CatalogService catalogService,
+        NativeStore? store,
+        NativeUpdateService? updates = null,
+        string? catalogDataRoot = null,
+        bool importLegacyDatabase = true)
     {
         _catalogService = catalogService;
         _parser = new InputParser(catalogService);
         _fieldParser = new FieldParser(catalogService);
         _store = store;
+        _updates = updates ?? new NativeUpdateService();
+        _catalogDataRoot = catalogDataRoot;
+        ImportLegacyDatabase = importLegacyDatabase;
         _miitSyncService = new MiitCatalogSyncService();
-        _qthPackageService = new QthPackageService();
         _draftService.Changed += DraftService_Changed;
         SubmitCommand = new AsyncRelayCommand(
             SubmitAsync,
@@ -87,10 +103,20 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public event EventHandler<ShortcutChangedEventArgs>? ShortcutsChanged;
     public event EventHandler<QuickInputDraftChangedEventArgs>? InputDraftChanged;
 
+    /// <summary>
+    /// Exposed only to isolated UI tests so the test can await the launch
+    /// check without sleeping or relying on a real GitHub request.
+    /// </summary>
+    internal Task? StartupUpdateCheckTask { get; private set; }
+
+    private bool ImportLegacyDatabase { get; }
+
     public ObservableCollection<CheckinEntry> Checkins { get; } = new();
+    public IEnumerable<CheckinEntry> RecentCheckins => Checkins.Take(3);
     public ObservableCollection<DeviceCandidate> CatalogResults { get; } = new();
     public ObservableCollection<ShortcutBinding> ShortcutBindings { get; } = new();
     public ObservableCollection<QthPackageNode> QthPackages { get; } = new();
+    public ObservableCollection<string> QthCandidates { get; } = new();
 
     public ICommand SubmitCommand { get; }
     public ICommand SearchCatalogCommand { get; }
@@ -112,8 +138,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         string originId,
         long baseRevision,
         string text,
-        bool isImeComposing = false) =>
-        _draftService.ApplyUserEdit(originId, baseRevision, text, isImeComposing);
+        bool isImeComposing = false,
+        bool isActiveEditor = true) =>
+        _draftService.ApplyUserEdit(originId, baseRevision, text, isImeComposing, isActiveEditor);
 
     public QuickInputDraftSnapshot SetImeCompositionState(string originId, bool isComposing) =>
         _draftService.SetImeCompositionState(originId, isComposing);
@@ -135,6 +162,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public string CatalogSummary { get => _catalogSummary; private set => SetProperty(ref _catalogSummary, value); }
     public string MiitStatus { get => _miitStatus; private set => SetProperty(ref _miitStatus, value); }
     public string LocationStatus { get => _locationStatus; private set => SetProperty(ref _locationStatus, value); }
+    public string UpdateStatus { get => _updateStatus; private set => SetProperty(ref _updateStatus, value); }
     public string DatabasePath { get => _databasePath; private set => SetProperty(ref _databasePath, value); }
     public string CurrentPage { get => _currentPage; set => SetProperty(ref _currentPage, value); }
     public long LastParseMicroseconds { get => _lastParseMicroseconds; private set => SetProperty(ref _lastParseMicroseconds, value); }
@@ -145,6 +173,38 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         $"{SessionDate} · 主控 {Display(OperatorCallsign, "未设置")} · 中继 {Display(RepeaterName, "未设置")} · 下一序号 {NextSequence}";
 
     public string CurrentUnmatchedDisplay => string.IsNullOrWhiteSpace(Unmatched) ? "无" : Unmatched;
+    public bool HasQthCandidates => QthCandidates.Count > 0;
+
+    /// <summary>
+    /// Explicitly accepts one displayed QTH candidate without replacing the
+    /// raw input.  The selected result is kept in the parsed snapshot so the
+    /// subsequent submit cannot silently re-parse the ambiguous abbreviation.
+    /// </summary>
+    public void SelectQthCandidate(string canonical)
+    {
+        if (string.IsNullOrWhiteSpace(canonical)
+            || _parseResult.Qth.Candidates is not { } candidates
+            || !candidates.Contains(canonical, StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        _selectedQthRevision = _draftService.Current.Revision;
+        _selectedQthRaw = _parseResult.RawText;
+        _selectedQthCanonical = canonical;
+        _parseResult = ApplySelectedQthCandidate(_parseResult, canonical);
+        Qth = canonical;
+        Unmatched = _parseResult.UnmatchedText;
+        QthCandidates.Clear();
+        OnPropertyChanged(nameof(HasQthCandidates));
+        OnPropertyChanged(nameof(CurrentUnmatchedDisplay));
+        StatusMessage = $"已选择 QTH：{canonical}；原始输入未改写";
+        if (SubmitCommand is AsyncRelayCommand command)
+        {
+            command.RaiseCanExecuteChanged();
+        }
+        ParseUpdated?.Invoke(this, EventArgs.Empty);
+    }
 
     public string ShortcutStatus { get; private set; } = "快捷键已使用默认配置";
 
@@ -168,12 +228,33 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         get => _isReady;
         private set
         {
-            if (SetProperty(ref _isReady, value) && SubmitCommand is AsyncRelayCommand command)
+            if (SetProperty(ref _isReady, value))
             {
-                command.RaiseCanExecuteChanged();
+                OnPropertyChanged(nameof(IsSessionWritable));
+                OnPropertyChanged(nameof(IsQuickInputAvailable));
+                if (SubmitCommand is AsyncRelayCommand command)
+                {
+                    command.RaiseCanExecuteChanged();
+                }
             }
         }
     }
+
+    /// <summary>
+    /// A closed session is a read-only view.  Keep this as a separate state
+    /// instead of relying only on SubmitCommand.CanExecute: otherwise the
+    /// user could still edit a TextBox or open a field editor and discover
+    /// the read-only rule only after typing.
+    /// </summary>
+    public bool IsSessionWritable => IsReady && _session?.Status == "active";
+
+    /// <summary>
+    /// The editor may accept a draft while SQLite/session bootstrap is still
+    /// running.  SubmitCommand remains disabled until IsReady is true, so a
+    /// fast first keystroke cannot be lost and cannot be written without a
+    /// resolved session.
+    /// </summary>
+    public bool IsQuickInputAvailable => _store is null || !_initializationComplete || IsSessionWritable;
 
     public bool AnimationsEnabled
     {
@@ -185,34 +266,88 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         if (_store is null)
         {
+            _initializationComplete = true;
+            OnPropertyChanged(nameof(IsQuickInputAvailable));
             IsReady = true;
             return;
         }
 
+        // Start the check for every real application launch before the
+        // database/catalog work.  It is intentionally fire-and-forget and
+        // isolated from the input path, so a slow/offline GitHub request can
+        // never delay the first keystroke or SQLite submission.
+        _updateCancellation?.Cancel();
+        _updateCancellation?.Dispose();
+        _updateCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        UpdateStatus = RuntimeOptions.DisableNetwork
+            ? "测试模式：已跳过启动更新检查"
+            : $"正在检查更新… 当前 {NativeVersion.Current}";
+        StartupUpdateCheckTask = CheckForUpdatesInBackgroundAsync(_updateCancellation.Token);
+
         var timer = Stopwatch.StartNew();
         DatabasePath = _store.DatabasePath;
-        await _store.InitializeAsync(cancellationToken).ConfigureAwait(true);
-        var legacyImport = await LegacyPythonMigration.TryImportAsync(
-            _store.DatabasePath, AppPaths.LegacyDatabasePath, AppPaths.BackupRoot,
-            cancellationToken).ConfigureAwait(true);
-        _session = await _store.GetOrCreateFirstSessionAsync(
-            RuntimeOptions.Today, cancellationToken).ConfigureAwait(true);
-        ApplySession(_session);
-        var rows = await _store.LoadRecentAsync(_session.Id, 300, cancellationToken).ConfigureAwait(true);
+        // SQLite bootstrap and legacy inspection are deliberately moved off
+        // the WPF dispatcher.  The TextBox can accept a draft immediately;
+        // only the submit command waits for the session to become ready.
+        var bootstrap = await Task.Run(async () =>
+        {
+            await _store.InitializeAsync(cancellationToken).ConfigureAwait(false);
+            var legacyImport = ImportLegacyDatabase
+                ? await LegacyPythonMigration.TryImportAsync(
+                    _store.DatabasePath, AppPaths.LegacyDatabasePath, AppPaths.BackupRoot,
+                    cancellationToken).ConfigureAwait(false)
+                : new LegacyImportResult(false, false, 0, 0, 0, "", "测试已跳过旧版数据库迁移。");
+            var session = await _store.GetOrCreateFirstSessionAsync(
+                RuntimeOptions.Today, cancellationToken).ConfigureAwait(false);
+            var rows = await _store.LoadRecentAsync(session.Id, 300, cancellationToken)
+                .ConfigureAwait(false);
+            return (LegacyImport: legacyImport, Session: session, Rows: rows);
+        }, cancellationToken).ConfigureAwait(true);
+
+        ApplySession(bootstrap.Session);
         Checkins.Clear();
-        foreach (var row in rows)
+        foreach (var row in bootstrap.Rows)
         {
             Checkins.Add(row);
         }
+        OnPropertyChanged(nameof(RecentCheckins));
 
+        _initializationComplete = true;
+        OnPropertyChanged(nameof(IsQuickInputAvailable));
         IsReady = true;
         timer.Stop();
-        StatusMessage = legacyImport.Imported
-            ? $"{legacyImport.Message} 本地录入已就绪"
+        StatusMessage = bootstrap.LegacyImport.Imported
+            ? $"{bootstrap.LegacyImport.Message} 本地录入已就绪"
             : "本地录入已就绪";
         TaskSummary = "资料库后台加载中 · 可继续点名";
         _catalogCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _ = LoadCatalogInBackgroundAsync(_catalogCancellation.Token);
+    }
+
+    private async Task CheckForUpdatesInBackgroundAsync(CancellationToken cancellationToken)
+    {
+        if (RuntimeOptions.DisableNetwork)
+        {
+            UpdateStatus = "测试模式：已跳过启动更新检查";
+            return;
+        }
+
+        try
+        {
+            var release = await _updates.FetchLatestAsync(cancellationToken).ConfigureAwait(true);
+            UpdateStatus = NativeUpdateService.IsNewer(release.Version, NativeVersion.Current)
+                ? $"发现新版本 {release.TagName} · 可在“关于 / 检查更新”下载"
+                : $"已检查更新 · 当前 {NativeVersion.Current} 为最新";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Closing the application or an isolated test cancels the check;
+            // this is not an input or data failure.
+        }
+        catch (Exception exception)
+        {
+            UpdateStatus = $"启动更新检查失败（不影响点名）：{exception.Message}";
+        }
     }
 
     public async Task<SessionInfo?> GetSessionAsync(CancellationToken cancellationToken = default) =>
@@ -239,6 +374,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             Checkins.Add(row);
         }
+        OnPropertyChanged(nameof(RecentCheckins));
         SetInputText(string.Empty);
         CurrentPage = "Quick";
         StatusMessage = session.Status == "ended"
@@ -314,6 +450,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     public async Task ApplyFieldEditAsync(FieldEditCommit commit, CancellationToken cancellationToken = default)
     {
+        if (_session is not null && _session.Status != "active")
+        {
+            throw new InvalidOperationException("当前场次已结束，只能查看和导出；请先点击“结束/重开”后再修改。");
+        }
+
         CheckinEntry updated;
         if (_store is null)
         {
@@ -331,6 +472,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             Checkins[index] = updated;
         }
+        OnPropertyChanged(nameof(RecentCheckins));
         StatusMessage = $"第 {updated.SequenceNo} 条已保存，仅修改 {FieldName(commit.Field)}；未识别其余内容保留";
         CheckinsChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -457,12 +599,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 full: firstDownload,
                 progress,
                 _catalogCancellation.Token).ConfigureAwait(true);
-            var report = await _catalogService.ReloadExistingDataAsync(null).ConfigureAwait(true);
+            var report = await _catalogService.ReloadExistingDataAsync(_catalogDataRoot).ConfigureAwait(true);
             CatalogSummary = $"本地别名 {report.DeviceAliasCount:N0} 个；行政地点别名 {report.QthAliasCount:N0} 个；地点记录 {report.QthPlaceCount:N0} 条；工信部 {report.MiitModelCount:N0} 个";
             MiitStatus = $"{(firstDownload ? "完整同步" : "检查更新")}完成 · 扫描 {syncReport.ScannedCount:N0} · 保留 {syncReport.RetainedCount:N0} · 排除 {syncReport.ExcludedCount:N0}";
             LocationStatus = report.QthPlaceCount > 0
-                ? $"全国地点 {report.QthPlaceCount:N0} 条已载入；省市包可独立更新"
-                : "内置全国行政区可用；尚未安装详细地点包";
+                ? $"全国行政区已载入；详细地点 {report.QthPlaceCount:N0} 条；省市包可独立更新"
+                : "全国省市行政区已载入；尚未安装道路/地标地点包";
             StatusMessage = "资料库刷新完成；快速输入仍只查本地";
             ReparseCurrentInput();
         }
@@ -500,7 +642,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             TaskSummary = "工信部断点续传进行中 · 录入不受阻";
             var progress = new Progress<MiitSyncProgress>(UpdateMiitProgress);
             var syncReport = await _miitSyncService.ResumeAsync(progress, _catalogCancellation.Token).ConfigureAwait(true);
-            var report = await _catalogService.ReloadExistingDataAsync(null).ConfigureAwait(true);
+            var report = await _catalogService.ReloadExistingDataAsync(_catalogDataRoot).ConfigureAwait(true);
             CatalogSummary = $"本地别名 {report.DeviceAliasCount:N0} 个；行政地点 {report.QthPlaceCount:N0} 条；工信部 {report.MiitModelCount:N0} 个";
             MiitStatus = $"断点续传完成 · 扫描 {syncReport.ScannedCount:N0} · 保留 {syncReport.RetainedCount:N0}";
             ReparseCurrentInput();
@@ -538,15 +680,16 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public async Task RefreshQthPackagesAsync(string? message = null,
         CancellationToken cancellationToken = default)
     {
-        var tree = await _qthPackageService.LoadInstalledTreeAsync(null, cancellationToken).ConfigureAwait(true);
+        var tree = await QthPackageService.LoadInstalledTreeAsync(_catalogDataRoot, cancellationToken).ConfigureAwait(true);
         QthPackages.Clear();
         foreach (var node in tree)
         {
             QthPackages.Add(node);
         }
+        var installedProvinces = tree.Count(static node => node.IsInstalled);
         LocationStatus = tree.Count > 0
-            ? $"已安装 {tree.Count} 个省级地点包 · 可展开查看城市与条数"
-            : "尚未发现地点包；全国行政区基础索引仍可用";
+            ? $"全国省市树 {tree.Count} 个省级节点；已安装 {installedProvinces} 个省级地点包"
+            : "全国行政区基础索引仍可用";
         if (!string.IsNullOrWhiteSpace(message))
         {
             StatusMessage = message;
@@ -557,10 +700,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         try
         {
-            var report = await _catalogService.ReloadExistingDataAsync(null, cancellationToken).ConfigureAwait(true);
+            var report = await _catalogService.ReloadExistingDataAsync(_catalogDataRoot, cancellationToken).ConfigureAwait(true);
             CatalogSummary = $"本地别名 {report.DeviceAliasCount:N0} 个；行政地点 {report.QthPlaceCount:N0} 条；工信部 {report.MiitModelCount:N0} 个";
             MiitStatus = report.MiitModelCount > 0 ? $"本地工信部电台型号 {report.MiitModelCount:N0} 个" : "工信部电台型号库尚未下载";
-            LocationStatus = report.QthPlaceCount > 0 ? $"全国地点 {report.QthPlaceCount:N0} 条已载入" : "全国行政区基础索引可用";
+            LocationStatus = report.QthPlaceCount > 0
+                ? $"全国行政区基础索引可用；详细地点 {report.QthPlaceCount:N0} 条已载入"
+                : "全国行政区基础索引可用；详细地点包尚未安装";
             await RefreshQthPackagesAsync(cancellationToken: cancellationToken).ConfigureAwait(true);
             TaskSummary = "无后台任务 · 本地资料库已就绪";
             ReparseCurrentInput();
@@ -581,20 +726,47 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(InputText));
         OnPropertyChanged(nameof(InputRevision));
         OnPropertyChanged(nameof(InputDraft));
-        ParseInput(e.Snapshot.Text);
+        // Do not parse or publish candidates while an IME composition is still
+        // being assembled.  The committed TextInput event produces the final
+        // snapshot and parses once, without writing anything back to TextBox.
+        if (!e.Snapshot.IsImeComposing)
+        {
+            ParseInput(e.Snapshot.Text, e.Snapshot.Revision);
+        }
         InputDraftChanged?.Invoke(this, e);
     }
 
     private void ReparseCurrentInput()
     {
         var snapshot = _draftService.Current;
-        ParseInput(snapshot.Text);
+        ParseInput(snapshot.Text, snapshot.Revision);
     }
 
-    private void ParseInput(string value)
+    /// <summary>
+    /// Isolated UI tests use the same reparse operation that a background
+    /// catalog refresh uses, without reaching the network or production data.
+    /// </summary>
+    internal void ReparseCurrentInputForTesting() => ReparseCurrentInput();
+
+    private void ParseInput(string value, long revision = -1)
     {
         var started = Stopwatch.GetTimestamp();
-        _parseResult = _parser.Parse(value);
+        var parsed = _parser.Parse(value);
+        if (revision >= 0
+            && revision == _selectedQthRevision
+            && string.Equals(parsed.RawText, _selectedQthRaw, StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(_selectedQthCanonical))
+        {
+            parsed = ApplySelectedQthCandidate(parsed, _selectedQthCanonical);
+        }
+        else if (revision != _selectedQthRevision
+                 || !string.Equals(parsed.RawText, _selectedQthRaw, StringComparison.Ordinal))
+        {
+            ClearSelectedQthCandidate();
+        }
+
+        _parseResult = parsed;
+        _parsedInputRevision = revision >= 0 ? revision : _draftService.Current.Revision;
         LastParseMicroseconds = (long)(Stopwatch.GetElapsedTime(started).TotalMilliseconds * 1000);
         Callsign = _parseResult.Callsign.Value;
         Qth = _parseResult.Qth.Value;
@@ -603,12 +775,55 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         Power = _parseResult.Power.Value;
         Signal = _parseResult.Signal.Value;
         Unmatched = _parseResult.UnmatchedText;
+        QthCandidates.Clear();
+        if (!string.Equals(_parseResult.Qth.Source, "用户选择", StringComparison.Ordinal))
+        {
+            foreach (var candidate in _parseResult.Qth.Candidates ?? Array.Empty<string>())
+            {
+                QthCandidates.Add(candidate);
+            }
+        }
+        OnPropertyChanged(nameof(HasQthCandidates));
         OnPropertyChanged(nameof(CurrentUnmatchedDisplay));
         if (SubmitCommand is AsyncRelayCommand command)
         {
             command.RaiseCanExecuteChanged();
         }
         ParseUpdated?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ClearSelectedQthCandidate()
+    {
+        _selectedQthRevision = -1;
+        _selectedQthRaw = string.Empty;
+        _selectedQthCanonical = string.Empty;
+    }
+
+    private static ParseResult ApplySelectedQthCandidate(ParseResult parsed, string canonical)
+    {
+        var token = TextNormalizer.Tokenize(parsed.Qth.Raw).FirstOrDefault();
+        var unmatched = parsed.Unmatched.ToList();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            var tokenIndex = unmatched.FindIndex(item =>
+                string.Equals(TextNormalizer.NormalizeKey(item),
+                    TextNormalizer.NormalizeKey(token), StringComparison.Ordinal));
+            if (tokenIndex >= 0)
+            {
+                unmatched.RemoveAt(tokenIndex);
+            }
+        }
+
+        return parsed with
+        {
+            Qth = new ParseField(
+                canonical,
+                "用户选择",
+                1.0,
+                token ?? canonical,
+                parsed.Qth.Candidates),
+            Unmatched = unmatched
+        };
     }
 
     private async Task SubmitAsync()
@@ -618,29 +833,59 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
+        // Capture the session before the first await.  A user may switch
+        // sessions while SQLite is committing; the completed row must stay in
+        // the captured session and must not be appended to the newly selected
+        // session's ObservableCollection.
+        var submissionSession = _session;
         var draft = _draftService.Current;
         var raw = draft.Text;
-        var parsed = _parser.Parse(raw);
+        var parsed = _parsedInputRevision == draft.Revision
+            && string.Equals(_parseResult.RawText, raw, StringComparison.Ordinal)
+            ? _parseResult
+            : _parser.Parse(raw);
         if (!parsed.CanSubmit)
         {
             StatusMessage = "未识别到有效呼号，原文仍保留在输入框";
             return;
         }
 
-        var row = await _store.AddCheckinAsync(_session, parsed).ConfigureAwait(true);
-        Checkins.Insert(0, row);
-        _session = _session with { NextSequence = row.SequenceNo + 1 };
+        var row = await _store.AddCheckinAsync(
+            submissionSession,
+            parsed,
+            Guid.NewGuid().ToString("N")).ConfigureAwait(true);
+        var isCurrentSession = _session?.Id == submissionSession.Id;
+
+        // Clearing is guarded by the draft revision even when the user has
+        // moved to another session.  A newer draft is never removed by an
+        // older SQLite completion.
+        var cleared = _draftService.TryClear(draft.Revision);
+        if (!isCurrentSession)
+        {
+            TaskSummary = $"后台已保存 {submissionSession.Name} 第 {row.SequenceNo} 条";
+            return;
+        }
+
+        if (Checkins.All(checkin => checkin.Id != row.Id))
+        {
+            Checkins.Insert(0, row);
+        }
+        OnPropertyChanged(nameof(RecentCheckins));
+        _session = submissionSession with { NextSequence = row.SequenceNo + 1 };
         NextSequence = row.SequenceNo + 1;
         OnPropertyChanged(nameof(SessionMeta));
-        StatusMessage = $"第 {row.SequenceNo} 条已保存；Excel 延后批量同步";
+        StatusMessage = cleared
+            ? $"第 {row.SequenceNo} 条已保存；Excel 延后批量同步"
+            : $"第 {row.SequenceNo} 条已保存；当前输入在保存期间有修改，已保留原文";
         TaskSummary = "SQLite 已保存 · 可继续录入";
-        if (!_draftService.TryClear(draft.Revision))
-        {
-            StatusMessage = $"第 {row.SequenceNo} 条已保存；当前输入在保存期间有修改，已保留原文";
-        }
         CheckinsChanged?.Invoke(this, EventArgs.Empty);
         SubmissionSucceeded?.Invoke(this, EventArgs.Empty);
     }
+
+    // The UI command is intentionally async-void through ICommand.  Keep a
+    // narrow awaitable seam for isolated integration tests so submission
+    // races can be exercised without driving the user's desktop.
+    internal Task SubmitForTestingAsync() => SubmitAsync();
 
     private void SearchCatalog()
     {
@@ -661,6 +906,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         SessionStatus = session.Status == "ended" ? "已结束" : "进行中";
         NextSequence = session.NextSequence;
         OnPropertyChanged(nameof(SessionMeta));
+        OnPropertyChanged(nameof(IsSessionWritable));
+        OnPropertyChanged(nameof(IsQuickInputAvailable));
         if (SubmitCommand is AsyncRelayCommand command)
         {
             command.RaiseCanExecuteChanged();
@@ -755,16 +1002,20 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             _taskSummary = "无后台任务",
             _catalogSummary = "全国地点 2,521 条 · 工信部电台型号 7,704 个 · 本地别名优先",
             _miitStatus = "已安装快照 · 可检查更新 / 继续 / 取消 / 完整重下",
-            _locationStatus = "江苏省 已安装 · 南京市 18.2 万条 · 扬州市 7.4 万条",
+            _locationStatus = "全国省市树已载入 · 已安装江苏/安徽示例包 · 其余省市可选",
             _databasePath = Path.Combine(AppPaths.DataRoot, "ham_checkin_native.db"),
             _isReady = true,
             _nextSequence = 38,
             _lastParseMicroseconds = 37
         };
-        viewModel.QthPackages.Add(new("江苏省", "省", "已安装", "2026.09 · 2521 条行政区/地点", true, true,
+        viewModel.QthPackages.Add(new("江苏省", "省", "部分安装", "3 条本地点 · 可展开选择城市", true, true,
             new[] { new QthPackageNode("南京市", "城市", "已安装", "18.2 万条", true, false), new QthPackageNode("扬州市", "城市", "已安装", "7.4 万条", true, false), new QthPackageNode("苏州市", "城市", "有更新", "待更新", true, true) }));
         viewModel.QthPackages.Add(new("安徽省", "省", "未下载", "可选择城市或下载全省", false, false,
             new[] { new QthPackageNode("合肥市", "城市", "未下载", "", false, false), new QthPackageNode("芜湖市", "城市", "未下载", "", false, false) }));
+        viewModel.QthPackages.Add(new("广东省", "省", "未下载", "可选择城市或下载全省", false, false,
+            new[] { new QthPackageNode("广州市", "城市", "未下载", "可下载城市包", false, false), new QthPackageNode("深圳市", "城市", "未下载", "可下载城市包", false, false) }));
+        viewModel.QthPackages.Add(new("新疆维吾尔自治区", "省", "未下载", "可选择城市或下载全省", false, false,
+            new[] { new QthPackageNode("乌鲁木齐市", "城市", "未下载", "可下载城市包", false, false), new QthPackageNode("和田市", "城市", "未下载", "可下载城市包", false, false) }));
         viewModel._session = new SessionInfo(1, "第1场点名", "2026-09-25", "active", 38,
             "BA4THG", "江苏省中继");
         viewModel.Checkins.Add(new(37, 1, 37, "21:59", "BH6ERY", "安徽省芜湖市鸠江区", "泉盛 UV-K1", "1.8米GP", "低", "", "local", "BH6ERY K1 1.8MGP L AHWHWZ", "", "2026-09-25T21:59:00+08:00"));
@@ -780,6 +1031,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _draftService.Changed -= DraftService_Changed;
         _catalogCancellation?.Cancel();
         _catalogCancellation?.Dispose();
+        _updateCancellation?.Cancel();
+        _updateCancellation?.Dispose();
         if (_store is not null)
         {
             await _store.DisposeAsync();

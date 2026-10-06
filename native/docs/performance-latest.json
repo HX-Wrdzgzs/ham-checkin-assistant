@@ -1,17 +1,20 @@
 {
   "runtime": "10.0.12",
   "os": "Microsoft Windows NT 10.0.26300.0",
-  "builtin_first_parse_ms": 32.402,
+  "builtin_first_parse_ms": 19.289,
   "parser_iterations": 20000,
-  "parser_p50_ms": 0.1161,
-  "parser_p95_ms": 0.3024,
-  "parser_p99_ms": 0.4857,
+  "parser_p50_ms": 0.1159,
+  "parser_p95_ms": 2.1484,
+  "parser_p99_ms": 3.381,
   "external_catalog": {
-    "load_ms": 91,
+    "load_ms": 95,
     "QthPlaceCount": 2521,
-    "QthAliasCount": 9628,
-    "DeviceAliasCount": 179,
-    "MiitModelCount": 7704
+    "QthAliasCount": 11971,
+    "DeviceAliasCount": 196,
+    "MiitModelCount": 7704,
+    "parser_p50_ms": 9.2164,
+    "parser_p95_ms": 15.4207,
+    "parser_p99_ms": 18.7593
   },
   "recognition_cases": [
     {
@@ -60,10 +63,10 @@
       "unmatched": "MYSTERY"
     }
   ],
-  "sqlite_init_ms": 27.811,
+  "sqlite_init_ms": 27.213,
   "sqlite_commits": 150,
-  "sqlite_commit_total_ms": 1368.163,
-  "sqlite_commit_avg_ms": 9.121,
+  "sqlite_commit_total_ms": 1096.461,
+  "sqlite_commit_avg_ms": 7.31,
   "sqlite_quick_check": "ok",
-  "total_ms": 4538.133
+  "total_ms": 62023.281
 }

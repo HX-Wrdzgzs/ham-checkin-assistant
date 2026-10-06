@@ -70,6 +70,31 @@ public static partial class TextNormalizer
         return hasLetter && hasDigit;
     }
 
+    public static bool ContainsCjk(string? value) =>
+        !string.IsNullOrEmpty(value) && value.Any(static character =>
+            character is >= '\u3400' and <= '\u9fff');
+
+    public static bool IsMixedModelAndCjk(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || !ContainsCjk(value))
+        {
+            return false;
+        }
+
+        var hasLatinOrDigit = value.Any(static character =>
+            char.IsLetterOrDigit(character) && character is not (>= '\u3400' and <= '\u9fff'));
+        return hasLatinOrDigit;
+    }
+
+    public static bool LooksLikeIncompleteCallsign(string? value)
+    {
+        var normalized = NormalizeCallsign(value);
+        return normalized.Length == 3
+            && char.IsLetter(normalized[0])
+            && char.IsLetter(normalized[1])
+            && char.IsDigit(normalized[2]);
+    }
+
     public static string NormalizePower(string value)
     {
         var normalized = value.Normalize(NormalizationForm.FormKC).Trim();

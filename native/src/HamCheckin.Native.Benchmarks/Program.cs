@@ -30,9 +30,18 @@ for (var index = 0; index < timings.Length; index++)
 Array.Sort(timings);
 
 CatalogLoadReport? catalogReport = null;
+double[]? externalTimings = null;
 if (Directory.Exists(CatalogLoader.DefaultDataRoot))
 {
     catalogReport = await catalogService.ReloadExistingDataAsync();
+    externalTimings = new double[5_000];
+    for (var index = 0; index < externalTimings.Length; index++)
+    {
+        var started = Stopwatch.GetTimestamp();
+        _ = parser.Parse(samples[index % samples.Length]);
+        externalTimings[index] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+    }
+    Array.Sort(externalTimings);
 }
 
 #pragma warning disable CA1861 // Created once per benchmark process, then enumerated once.
@@ -93,7 +102,10 @@ var output = new
         catalogReport.QthPlaceCount,
         catalogReport.QthAliasCount,
         catalogReport.DeviceAliasCount,
-        catalogReport.MiitModelCount
+        catalogReport.MiitModelCount,
+        parser_p50_ms = Math.Round(externalTimings![(int)(externalTimings.Length * 0.50)], 4),
+        parser_p95_ms = Math.Round(externalTimings[(int)(externalTimings.Length * 0.95)], 4),
+        parser_p99_ms = Math.Round(externalTimings[(int)(externalTimings.Length * 0.99)], 4)
     },
     recognition_cases = recognitionCases,
     sqlite_init_ms = Math.Round(storeInit.Elapsed.TotalMilliseconds, 3),

@@ -25,7 +25,7 @@
             <Border Grid.Column="1" Background="{StaticResource AccentSoftBrush}" CornerRadius="12" Padding="14,8" VerticalAlignment="Center">
                 <StackPanel>
                     <TextBlock Text="当前版本" FontSize="10" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center"/>
-                    <TextBlock x:Name="CurrentVersionText" Text="1.0.5" FontSize="20" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"/>
+                <TextBlock x:Name="CurrentVersionText" Text="1.0.14" FontSize="20" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"/>
                 </StackPanel>
             </Border>
         </Grid>
@@ -35,7 +35,7 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="125"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="更新渠道" FontWeight="Bold"/>
-                    <TextBlock Text="稳定版" Foreground="{StaticResource SuccessBrush}" FontSize="11" Margin="0,4,0,0"/>
+                    <TextBlock Text="本地候选版" Foreground="{StaticResource SuccessBrush}" FontSize="11" Margin="0,4,0,0"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1">
                     <TextBlock Text="GitHub Release · main/updates/latest.json · SHA-256" Foreground="{StaticResource TextBrush}"/>

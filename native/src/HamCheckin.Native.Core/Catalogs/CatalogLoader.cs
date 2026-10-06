@@ -32,6 +32,7 @@ public static class CatalogLoader
             ("m8220", "摩托罗拉 M8220"), ("p8260", "摩托罗拉 P8260"),
             ("p6620", "摩托罗拉 P6620"), ("gm300", "摩托罗拉 GM300"),
             ("gp338", "摩托罗拉 GP338"), ("gp328", "摩托罗拉 GP328"),
+            ("gm338", "摩托罗拉 GM338"),
             ("gm3688", "摩托罗拉 GM3688"),
             ("vrn76", "威诺 VR-N76"), ("vr-n76", "威诺 VR-N76"),
             ("n76", "威诺 VR-N76"),
@@ -51,15 +52,25 @@ public static class CatalogLoader
             ("ft1907r", "YAESU FT-1907R"), ("1907r", "YAESU FT-1907R"),
             ("ft70d", "YAESU FT-70DR"), ("ft70dr", "YAESU FT-70DR"),
             ("ft5dr", "YAESU FT-5DR"), ("5dr", "YAESU FT-5DR"),
+            // 录屏中的 ft-400xd 省略了型号中的 M；八重洲官方型号为 FTM-400XD。
+            ("ft400xd", "八重洲 FTM-400XD"), ("ftm400xd", "八重洲 FTM-400XD"),
             ("shk8800", "森海克斯 SHK-8800"), ("shks8600", "森海克斯 8600"),
             ("gx8500", "冠星 GX8500"),
             ("tm481", "建武 TM-481"), ("tm8118", "TM-8118"),
             ("tm800", "HYT-TM800"), ("hyttm800", "HYT-TM800"),
             ("m8260", "M8260"),
+            ("vn-n7600", "威诺 VR-N7600"), ("vnn7600", "威诺 VR-N7600"),
+            ("八重洲ft100dr", "八重洲 FT-100DR"), ("ft100dr", "八重洲 FT-100DR"),
+            ("mt", "摩托罗拉车台"),
             ("wpks2200", "威泰克斯 VX-2200"), ("vx2200", "威泰克斯 VX-2200"),
             ("vx2108", "威泰克斯 VX-2108"), ("wpks2108", "威泰克斯 VX-2108"),
             ("ct1300", "摩托罗拉 CT1300"), ("qs118", "泉盛 QS-118"),
-            ("300d", "300D"),
+            ("tk11", "泉盛 TK11"), ("kt118", "泉盛 KT-118"),
+            ("kt8900", "KT-8900"), ("kt8900d", "KT-8900D"),
+            ("300d", "300D"), ("d900", "即时通 D900"),
+            ("ar152", "宝锋 AR-152"),
+            ("威诺n76", "威诺 VR-N76"),
+            ("威派克斯2108", "威派克斯 2108"),
             ("建武808", "建武 808"), ("808", "建武 808"),
             ("d9000", "即时通 D9000"), ("nrl", "NRL互联"),
             ("ht", "HT"), ("73ham", "73HAM")
@@ -73,9 +84,11 @@ public static class CatalogLoader
             ("770", "770"), ("770h", "770H"), ("770s", "770s"),
             ("4.2m", "4.2米玻璃钢"), ("4.2米", "4.2米玻璃钢"),
             ("4.2米玻璃钢", "4.2米玻璃钢"),
-            ("1.2m", "1.2米玻璃钢"), ("1.5m", "1.5米玻璃钢"),
+            ("1.2m", "1.2米玻璃钢"), ("1.2米玻璃钢", "1.2米玻璃钢"),
+            ("1.5m", "1.5米玻璃钢"),
             ("1.8m", "1.8米玻璃钢"), ("1.8米玻璃钢", "1.8米玻璃钢"),
-            ("1.8米gp", "1.8米GP"), ("2.4米玻璃钢", "2.4米玻璃钢"),
+            ("1.8米gp", "1.8米GP"), ("2.4m玻璃钢", "2.4米玻璃钢"),
+            ("2.4米玻璃钢", "2.4米玻璃钢"),
             ("5.2米玻璃钢", "5.2米玻璃钢"),
             ("gp", "GP"), ("gp天线", "GP天线"), ("dp", "DP"),
             ("4y", "4单元八木"), ("4单元八木", "4单元八木"),
@@ -86,8 +99,13 @@ public static class CatalogLoader
             ("775拉杆天线", "775拉杆天线"), ("吸盘天线", "吸盘天线"),
             ("车载苗子", "车载苗子"), ("车苗", "车载苗子"),
             ("车载天线", "车载天线"), ("橡胶天线", "橡胶天线"),
+            ("棒杆天线", "棒杆天线"), ("棒子天线", "棒子天线"),
+            ("775拉杆", "775拉杆"), ("3单元八木", "3单元八木"),
             ("十字交叉偶极天线", "十字交叉偶极天线"), ("x520", "X520"),
             ("srh701", "SRH-701"), ("srh518", "SRH-518"),
+            ("nr770", "NR770"), ("x300", "X300"), ("xz50", "XZ50"),
+            ("stm507", "STM507"), ("sgm507", "SGM507"),
+            ("zs7900", "钻石 7900"), ("钻石srj77", "钻石 SRJ77"),
             ("钻石vr77天线", "钻石 VR-77 天线"),
             ("7900", "钻石 7900"), ("钻石7900", "钻石 7900")
         });
@@ -98,6 +116,7 @@ public static class CatalogLoader
             ("1", "1W"), ("2", "2W"), ("4", "4W"), ("5", "5W"),
             ("8", "8W"), ("10", "10W"), ("15", "15W"), ("20", "20W"),
             ("25", "25W"), ("30", "30W"), ("50", "50W"),
+            ("高功", "高"), ("高功率", "高"), ("小功率", "小功率"),
             ("l", "低"), ("m", "中"), ("h", "高"), ("f", "满"),
             ("低", "低"), ("中", "中"), ("高", "高"), ("满", "满")
         });
@@ -137,6 +156,8 @@ public static class CatalogLoader
         AddQth(qths, "安徽芜湖湾沚", new("安徽省芜湖市湾沚区", "安徽省", "芜湖市", "湾沚区", "admin_region", 1000));
         AddQth(qths, "玄武湖", new("江苏省南京市玄武湖", "江苏省", "南京市", "玄武湖", "place", 1200));
         AddQth(qths, "南京工程学院", new("江苏省南京市南京工程学院", "江苏省", "南京市", "", "place", 1200));
+        AddQth(qths, "南京邮电大学", new("江苏省南京市南京邮电大学", "江苏省", "南京市", "", "place", 1200));
+        AddQth(qths, "南京师范大学仙林校区", new("江苏省南京市南京师范大学仙林校区", "江苏省", "南京市", "", "place", 1200));
         AddQth(qths, "南京大学仙林校区", new("江苏省南京市南京大学仙林校区", "江苏省", "南京市", "", "place", 1200));
         AddQth(qths, "南京工业大学", new("江苏省南京市南京工业大学", "江苏省", "南京市", "", "place", 1200));
         AddQth(qths, "南京禄口机场", new("江苏省南京市南京禄口机场", "江苏省", "南京市", "", "place", 1200));
@@ -150,13 +171,68 @@ public static class CatalogLoader
         AddQth(qths, "东南大学九龙湖校区", new("江苏省南京市江宁区东南大学九龙湖校区", "江苏省", "南京市", "江宁区", "place", 1200));
         AddQth(qths, "东大九龙湖校区", new("江苏省南京市江宁区东大九龙湖校区", "江苏省", "南京市", "江宁区", "place", 1200));
 
+        // 旧版点名表中出现过的道路/地标，只有在行政归属可由公开
+        // 城市道路或地点资料明确确认时才进入内置词典；其余地点继续
+        // 保留原文并要求用户选择，避免用模糊相似度制造错误 QTH。
+        AddQth(qths, "丰台南路", new("北京市丰台区丰台南路", "北京市", "", "丰台区", "place", 1200));
+        AddQth(qths, "盐仓桥", new("江苏省南京市鼓楼区盐仓桥", "江苏省", "南京市", "鼓楼区", "place", 1200));
+        AddQth(qths, "凤台路", new("江苏省南京市秦淮区凤台路", "江苏省", "南京市", "秦淮区", "place", 1200));
+        AddQth(qths, "安徽乌江", new("安徽省马鞍山市和县乌江镇", "安徽省", "马鞍山市", "和县", "place", 1200));
+
+        // 启动早期先提供跨省常用行政缩写；完整的全国省/市/区县别名
+        // 仍会从已安装 qth_places.db 原子加载，不把联网查询放进输入热路径。
+        AddQth(qths, "南通", new("江苏省南通市", "江苏省", "南通市", "", "admin_region", 1000));
+        AddQth(qths, "jsnt", new("江苏省南通市", "江苏省", "南通市", "", "admin_region", 1000));
+        AddQth(qths, "江苏张家港", new("江苏省苏州市张家港市", "江苏省", "苏州市", "张家港市", "admin_region", 1000));
+        AddQth(qths, "jszjg", new("江苏省苏州市张家港市", "江苏省", "苏州市", "张家港市", "admin_region", 1000));
+        AddQth(qths, "盐城响水", new("江苏省盐城市响水县", "江苏省", "盐城市", "响水县", "admin_region", 1000));
+        AddQth(qths, "ycxs", new("江苏省盐城市响水县", "江苏省", "盐城市", "响水县", "admin_region", 1000));
+        AddQth(qths, "jsxs", new("江苏省盐城市响水县", "江苏省", "盐城市", "响水县", "admin_region", 1000));
+        AddQth(qths, "bjhd", new("北京市海淀区", "北京市", "", "海淀区", "admin_region", 1000));
+        AddQth(qths, "sh", new("上海市", "上海市", "", "", "admin_region", 1000));
+        AddQth(qths, "shxh", new("上海市徐汇区", "上海市", "", "徐汇区", "admin_region", 1000));
+        AddQth(qths, "tj", new("天津市", "天津市", "", "", "admin_region", 1000));
+        AddQth(qths, "cq", new("重庆市", "重庆市", "", "", "admin_region", 1000));
+        AddQth(qths, "zjhz", new("浙江省杭州市", "浙江省", "杭州市", "", "admin_region", 1000));
+        AddQth(qths, "zjnb", new("浙江省宁波市", "浙江省", "宁波市", "", "admin_region", 1000));
+        AddQth(qths, "gdgz", new("广东省广州市", "广东省", "广州市", "", "admin_region", 1000));
+        AddQth(qths, "gdsz", new("广东省深圳市", "广东省", "深圳市", "", "admin_region", 1000));
+        AddQth(qths, "fjfz", new("福建省福州市", "福建省", "福州市", "", "admin_region", 1000));
+        AddQth(qths, "fjxm", new("福建省厦门市", "福建省", "厦门市", "", "admin_region", 1000));
+        AddQth(qths, "sdjn", new("山东省济南市", "山东省", "济南市", "", "admin_region", 1000));
+        AddQth(qths, "sdqd", new("山东省青岛市", "山东省", "青岛市", "", "admin_region", 1000));
+        AddQth(qths, "hbwh", new("湖北省武汉市", "湖北省", "武汉市", "", "admin_region", 1000));
+        AddQth(qths, "hnyc", new("湖南省岳阳市", "湖南省", "岳阳市", "", "admin_region", 1000));
+        AddQth(qths, "sc成都", new("四川省成都市", "四川省", "成都市", "", "admin_region", 1000));
+        AddQth(qths, "sccd", new("四川省成都市", "四川省", "成都市", "", "admin_region", 1000));
+
+        // 全国行政区快照嵌入原生包，保证程序刚启动、外部地点库仍在后台
+        // 加载时也能使用省、市、区县名称和现成的拼音首字母。详细道路、
+        // 学校和地标不混进热路径，仍由地点包按省市管理。
+        foreach (var entry in NationwideAdminCatalog.Entries)
+        {
+            var candidate = new QthCandidate(
+                entry.Canonical,
+                entry.Province,
+                entry.City,
+                entry.District,
+                entry.Kind.Length == 0 ? "admin_region" : entry.Kind,
+                800);
+            AddQth(qths, entry.Name, candidate);
+            AddQth(qths, entry.Canonical, candidate);
+            foreach (var alias in NationwideAdminCatalog.GetAliases(entry))
+            {
+                AddQth(qths, alias, candidate);
+            }
+        }
+
         return BuildSnapshot(
             devices,
             new Dictionary<string, DeviceCandidate>(StringComparer.Ordinal),
             antennas,
             powers,
             qths,
-            0);
+            NationwideAdminCatalog.Entries.Count);
     }
 
     public static Task<(CatalogSnapshot Snapshot, CatalogLoadReport Report)> LoadExistingDataAsync(
@@ -186,7 +262,7 @@ public static class CatalogLoader
             static item => item.Key,
             static item => item.Value.ToList(),
             StringComparer.Ordinal);
-        var qthPlaceCount = 0;
+        var qthPlaceCount = baseline.QthPlaceCount;
 
         // 正式版使用 qth_admin.db；兼容此前已下载的 qth_places.db，避免
         // 用户升级后丢失已经安装的全国行政区/地点索引。
@@ -197,6 +273,7 @@ public static class CatalogLoader
         {
             try
             {
+                qthPlaceCount = 0;
                 using var connection = OpenReadOnly(qthPath);
                 using var command = connection.CreateCommand();
                 command.CommandText = """

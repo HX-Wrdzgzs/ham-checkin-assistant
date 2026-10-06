@@ -7,7 +7,7 @@ public sealed class InputParser
     private static readonly HashSet<string> KnownBrandTokens = new(StringComparer.Ordinal)
     {
         "泉盛", "宝锋", "海能达", "摩托罗拉", "八重洲", "建武", "威诺",
-        "全易通", "森海克斯", "icom", "yaesu", "motorola", "hytera"
+        "全易通", "森海克斯", "即时通", "宝峰", "icom", "yaesu", "motorola", "hytera"
     };
 
     private readonly Func<CatalogSnapshot> _catalogAccessor;
@@ -42,6 +42,8 @@ public sealed class InputParser
         var power = ParseField.Empty;
         var signal = ParseField.Empty;
         var ambiguous = new List<int>();
+        var ambiguousQthTokens = new List<string>();
+        var deferredAntenna = new List<(int Index, string Value)>();
         var qthSuggestions = new List<string>();
 
         for (var index = 0; index < tokens.Count; index++)
@@ -91,6 +93,20 @@ public sealed class InputParser
             }
 
             var token = tokens[index];
+            if (catalog.TryResolveDeviceAndQth(token, out var gluedDevice, out var gluedQth))
+            {
+                if (device.Value.Length == 0)
+                {
+                    device = DeviceField(gluedDevice, token);
+                }
+                if (qth.Value.Length == 0)
+                {
+                    qth = new ParseField(gluedQth.Canonical, "全国地点库", 1.0, token);
+                }
+                consumed[index] = true;
+                continue;
+            }
+
             var qthCandidates = catalog.ResolveQthCandidates(token);
             var qthResolved = catalog.ResolveQthInput(token);
             var antennaResolved = catalog.ResolveAntenna(token);
@@ -98,6 +114,7 @@ public sealed class InputParser
             if (qthCandidates.Count > 0 && qthResolved is null)
             {
                 qthSuggestions.AddRange(qthCandidates.Select(static item => item.Canonical));
+                ambiguousQthTokens.Add(token);
                 continue;
             }
 
@@ -133,8 +150,20 @@ public sealed class InputParser
 
             if (antennaResolved is not null && antenna.Value.Length == 0)
             {
-                antenna = new ParseField(NormalizeAntenna(antennaResolved), "天线别名", 1.0, token);
-                consumed[index] = true;
+                // Short alphanumeric strings such as sgm507/xz50 can be
+                // either a model or an antenna.  Do not steal an otherwise
+                // unknown model when it appears before any context; defer
+                // the decision until a device or QTH has been recognized.
+                if (device.Value.Length > 0 || qth.Value.Length > 0
+                    || IsStandaloneAntennaToken(token))
+                {
+                    antenna = new ParseField(NormalizeAntenna(antennaResolved), "天线别名", 1.0, token);
+                    consumed[index] = true;
+                }
+                else
+                {
+                    deferredAntenna.Add((index, NormalizeAntenna(antennaResolved)));
+                }
                 continue;
             }
 
@@ -155,7 +184,9 @@ public sealed class InputParser
 
             var token = tokens[index];
             var key = TextNormalizer.NormalizeKey(token);
-            if (token.Any(IsCjk) && token.Length >= 2 && !KnownBrandTokens.Contains(key))
+            if (token.Any(IsCjk) && token.Length >= 2
+                && !TextNormalizer.IsMixedModelAndCjk(token)
+                && !KnownBrandTokens.Contains(key))
             {
                 qth = new ParseField(token, "原文保留", 0.62, token);
                 consumed[index] = true;
@@ -187,10 +218,30 @@ public sealed class InputParser
             }
         }
 
+        // Revisit an ambiguous alphanumeric antenna after the rest of the
+        // line has provided context.  If no context appears, the normal
+        // unknown-model fallback below preserves it as device raw text.
+        if (antenna.Value.Length == 0 && (device.Value.Length > 0 || qth.Value.Length > 0))
+        {
+            foreach (var (index, value) in deferredAntenna)
+            {
+                if (consumed[index])
+                {
+                    continue;
+                }
+
+                antenna = new ParseField(value, "天线别名", 1.0, tokens[index]);
+                consumed[index] = true;
+                break;
+            }
+        }
+
         // 未命中的字母数字组合仍保留到设备列，绝不因资料库缺失而丢数据。
         for (var index = 0; index < tokens.Count && device.Value.Length == 0; index++)
         {
-            if (consumed[index] || !TextNormalizer.LooksLikeDevice(tokens[index]))
+            if (consumed[index] || !TextNormalizer.LooksLikeDevice(tokens[index])
+                || (index == 0 && callsign.Value.Length == 0
+                    && TextNormalizer.LooksLikeIncompleteCallsign(tokens[index])))
             {
                 continue;
             }
@@ -206,7 +257,8 @@ public sealed class InputParser
         if (qth.Value.Length == 0 && qthSuggestions.Count > 0)
         {
             qth = new ParseField(
-                "", "需要选择", 0, "",
+                "", "需要选择", 0,
+                string.Join(' ', ambiguousQthTokens.Distinct(StringComparer.Ordinal)),
                 qthSuggestions.Distinct(StringComparer.Ordinal).Take(5).ToArray());
         }
 
@@ -229,6 +281,15 @@ public sealed class InputParser
         raw);
 
     private static string NormalizeAntenna(string value) => value == "原" ? "原装天线" : value;
+
+    private static bool IsStandaloneAntennaToken(string token)
+    {
+        var key = TextNormalizer.NormalizeKey(token);
+        return TextNormalizer.ContainsCjk(token)
+            || token.Contains('.', StringComparison.Ordinal)
+            || key.All(static character => character is >= '0' and <= '9')
+            || key is "771" or "770" or "770h" or "770s";
+    }
 
     private static void ConsumeAdjacentBrand(
         IReadOnlyList<string> tokens,

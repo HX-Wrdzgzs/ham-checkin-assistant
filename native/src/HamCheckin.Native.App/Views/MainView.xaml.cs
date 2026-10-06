@@ -24,6 +24,7 @@ public partial class MainView : UserControl, IDisposable
     private bool _synchronizingInput;
     private bool _imeComposing;
     private long _appliedInputRevision;
+    private string? _lastShownPage;
     private readonly ScreenRecordingService _recordingService = new();
     private readonly DispatcherTimer _recordingTimer;
     private MicrophoneCapture? _microphoneTest;
@@ -76,9 +77,16 @@ public partial class MainView : UserControl, IDisposable
         CatalogNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         RecordingNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         SettingsNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
-        LocalStatusDetails.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         LocalStatusTitle.Text = compact ? "●" : "●  本地录入";
         LocalStatusCard.Padding = compact ? new Thickness(8, 10, 8, 10) : new Thickness(11);
+        foreach (var radio in NavigationPanel.Children.OfType<RadioButton>())
+        {
+            radio.Padding = compact ? new Thickness(8, 11, 8, 11) : new Thickness(14, 11, 14, 11);
+            radio.Margin = compact ? new Thickness(3, 2, 3, 2) : new Thickness(8, 2, 8, 2);
+            radio.HorizontalContentAlignment = compact
+                ? HorizontalAlignment.Center
+                : HorizontalAlignment.Left;
+        }
     }
 
     private void Root_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -112,9 +120,11 @@ public partial class MainView : UserControl, IDisposable
             InputOrigin,
             _appliedInputRevision,
             InputBox.Text,
-            _imeComposing);
-        if (snapshot.Revision != _appliedInputRevision
-            || !string.Equals(snapshot.Text, InputBox.Text, StringComparison.Ordinal))
+            _imeComposing,
+            InputBox.IsKeyboardFocusWithin);
+        _appliedInputRevision = snapshot.Revision;
+        if (!string.Equals(snapshot.Text, InputBox.Text, StringComparison.Ordinal)
+            && !InputBox.IsKeyboardFocusWithin)
         {
             SyncInputBox(snapshot, moveCaretToEnd: false);
         }
@@ -126,6 +136,17 @@ public partial class MainView : UserControl, IDisposable
         {
             SyncInputBox(_viewModel.InputDraft, moveCaretToEnd: false);
         }
+    }
+
+    private void QthCandidate_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null || sender is not Button { Tag: string candidate })
+        {
+            return;
+        }
+
+        _viewModel.SelectQthCandidate(candidate);
+        InputBox.Focus();
     }
 
     private void InputBox_TextInputStart(object sender, TextCompositionEventArgs e) =>
@@ -145,8 +166,12 @@ public partial class MainView : UserControl, IDisposable
 
     private void ViewModel_InputDraftChanged(object? sender, QuickInputDraftChangedEventArgs e)
     {
-        _appliedInputRevision = e.Snapshot.Revision;
-        if (e.Snapshot.OriginId == InputOrigin && InputBox.IsKeyboardFocusWithin)
+        // The focused TextBox owns its complete raw string, caret and undo
+        // stack.  Never assign Text while it has focus unless this is an
+        // explicit operation such as a successful submit clearing the draft.
+        // IME metadata and cross-window notifications are deliberately not
+        // allowed to replace the complete string between TextChanged events.
+        if (InputBox.IsKeyboardFocusWithin && !e.ForceApplyToEditors)
         {
             return;
         }
@@ -250,6 +275,8 @@ public partial class MainView : UserControl, IDisposable
 
     public void ShowPage(string pageName)
     {
+        var pageChanged = !string.Equals(_lastShownPage, pageName, StringComparison.Ordinal);
+        _lastShownPage = pageName;
         var pages = new[] { QuickPage, RecordsPage, CatalogPage, RecordingPage, SettingsPage };
         foreach (var page in pages)
         {
@@ -261,7 +288,7 @@ public partial class MainView : UserControl, IDisposable
             _viewModel.CurrentPage = pageName;
         }
         var selected = pages.FirstOrDefault(page => page.Visibility == Visibility.Visible);
-        if (selected is not null)
+        if (selected is not null && pageChanged)
         {
             AnimatePage(selected);
         }
@@ -581,8 +608,10 @@ public partial class MainView : UserControl, IDisposable
 
     private void ViewModel_ParseUpdated(object? sender, EventArgs e)
     {
-        if (!ShouldAnimate()) return;
-        ParseStrip.BeginAnimation(OpacityProperty, new DoubleAnimation(0.72, 1.0, TimeSpan.FromMilliseconds(80)));
+        // Parsing runs for every keystroke.  Animating this strip used to
+        // repaint/fade the live input feedback on every TextChanged event and
+        // made the editor feel delayed.  The preview is now a stable binding;
+        // only page transitions and successful saves get a subtle transition.
     }
 
     private void ViewModel_SubmissionSucceeded(object? sender, EventArgs e)
@@ -590,7 +619,7 @@ public partial class MainView : UserControl, IDisposable
         if (!ShouldAnimate()) return;
         SuccessFlash.BeginAnimation(OpacityProperty, new DoubleAnimation
         {
-            From = 0.4, To = 0, Duration = TimeSpan.FromMilliseconds(220),
+            From = 0.16, To = 0, Duration = TimeSpan.FromMilliseconds(110),
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         });
     }
@@ -599,7 +628,7 @@ public partial class MainView : UserControl, IDisposable
 
     private void RecordsGrid_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (_viewModel is null || sender is not DataGrid grid)
+        if (_viewModel is null || !_viewModel.IsSessionWritable || sender is not DataGrid grid)
         {
             return;
         }
@@ -617,7 +646,7 @@ public partial class MainView : UserControl, IDisposable
 
     private void RecordsGrid_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (_viewModel is null || sender is not DataGrid grid || grid.SelectedItem is not CheckinEntry row)
+        if (_viewModel is null || !_viewModel.IsSessionWritable || sender is not DataGrid grid || grid.SelectedItem is not CheckinEntry row)
         {
             return;
         }
@@ -850,11 +879,11 @@ public partial class MainView : UserControl, IDisposable
     private void AnimatePage(FrameworkElement page)
     {
         if (!ShouldAnimate()) { page.Opacity = 1; page.RenderTransform = Transform.Identity; return; }
-        var translate = new TranslateTransform(8, 0);
+        var translate = new TranslateTransform(4, 0);
         page.RenderTransform = translate; page.Opacity = 0;
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        page.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(140)) { EasingFunction = ease });
-        translate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(8, 0, TimeSpan.FromMilliseconds(150)) { EasingFunction = ease });
+        page.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(90)) { EasingFunction = ease });
+        translate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(4, 0, TimeSpan.FromMilliseconds(95)) { EasingFunction = ease });
     }
 
     private bool ShouldAnimate() => SystemParameters.ClientAreaAnimation && (_viewModel?.AnimationsEnabled ?? true);

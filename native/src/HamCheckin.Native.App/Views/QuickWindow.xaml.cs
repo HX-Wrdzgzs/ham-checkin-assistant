@@ -44,6 +44,21 @@ public partial class QuickWindow : Window
         }
     }
 
+    private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (RecentCheckinsCard is null)
+        {
+            return;
+        }
+
+        // At the declared minimum height the input, parsed fields and footer
+        // are the usable controls.  Recent rows are useful context, but must
+        // not push the submit button or status out of the client area.
+        var compact = e.NewSize.Height < 235;
+        RecentCheckinsCard.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        RecentCheckinsCard.IsHitTestVisible = !compact;
+    }
+
     private void QuickInputBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (_synchronizingInput || _viewModel is null)
@@ -55,9 +70,11 @@ public partial class QuickWindow : Window
             InputOrigin,
             _appliedInputRevision,
             QuickInputBox.Text,
-            _imeComposing);
-        if (snapshot.Revision != _appliedInputRevision
-            || !string.Equals(snapshot.Text, QuickInputBox.Text, StringComparison.Ordinal))
+            _imeComposing,
+            QuickInputBox.IsKeyboardFocusWithin);
+        _appliedInputRevision = snapshot.Revision;
+        if (!string.Equals(snapshot.Text, QuickInputBox.Text, StringComparison.Ordinal)
+            && !QuickInputBox.IsKeyboardFocusWithin)
         {
             SyncInputBox(snapshot, moveCaretToEnd: false);
         }
@@ -68,6 +85,15 @@ public partial class QuickWindow : Window
         if (_viewModel is not null)
         {
             SyncInputBox(_viewModel.InputDraft, moveCaretToEnd: false);
+        }
+    }
+
+    private void QthCandidate_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is not null && sender is Button { Tag: string candidate })
+        {
+            _viewModel.SelectQthCandidate(candidate);
+            QuickInputBox.Focus();
         }
     }
 
@@ -88,8 +114,13 @@ public partial class QuickWindow : Window
 
     private void ViewModel_InputDraftChanged(object? sender, QuickInputDraftChangedEventArgs e)
     {
-        _appliedInputRevision = e.Snapshot.Revision;
-        if (e.Snapshot.OriginId == InputOrigin && QuickInputBox.IsKeyboardFocusWithin)
+        // The focused TextBox is the authoritative editor.  A notification
+        // from the other surface may be stale relative to a keyboard event.
+        // Do not replace the full Text property while the user is editing;
+        // this also covers IME metadata events, which are not text edits but
+        // can arrive between the composition TextChanged events.  Only an
+        // explicit operation (submit clear/session switch) may force it.
+        if (QuickInputBox.IsKeyboardFocusWithin && !e.ForceApplyToEditors)
         {
             return;
         }

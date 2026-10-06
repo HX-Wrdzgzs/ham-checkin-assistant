@@ -19,6 +19,10 @@ public sealed class FieldParserTests
     [InlineData("玄武湖", "江苏省南京市玄武湖")]
     [InlineData("南京马群", "江苏省南京市马群")]
     [InlineData("西安门地铁站", "江苏省南京市西安门地铁站")]
+    [InlineData("丰台南路", "北京市丰台区丰台南路")]
+    [InlineData("盐仓桥", "江苏省南京市鼓楼区盐仓桥")]
+    [InlineData("凤台路", "江苏省南京市秦淮区凤台路")]
+    [InlineData("安徽乌江", "安徽省马鞍山市和县乌江镇")]
     [InlineData("ahwh", "安徽省芜湖市")]
     public void QthAbbreviationExpandsAdministrativePrefix(string input, string expected)
     {
@@ -98,11 +102,49 @@ public sealed class FieldParserTests
     }
 
     [Fact]
-    public void QthParserDoesNotGuessFromASingleCharacterRegionSuffix()
+    public void ForeignQthRemainsManualUntilAPlaceCatalogProvidesIt()
     {
-        var result = _parser.Parse(FieldKind.Qth, "丰台南路");
+        var result = _parser.Parse(FieldKind.Qth, "德国");
 
-        Assert.Equal("丰台南路", result.CanonicalValue);
+        Assert.Equal("德国", result.CanonicalValue);
         Assert.Equal("人工输入（待确认）", result.Source);
     }
+
+    [Fact]
+    public void EveryUniqueNationwideAsciiCityAliasExpands()
+    {
+        var snapshot = CatalogLoader.CreateBuiltIn();
+        var aliases = NationwideAdminCatalog.Entries
+            .Where(static entry => entry.Kind == "admin_region")
+            .SelectMany(entry => NationwideAdminCatalog.GetAliases(entry)
+                .Where(static alias => alias.Length >= 2
+                    && alias.All(static character => char.IsAsciiLetterOrDigit(character)))
+                .Select(alias => new { Key = TextNormalizer.NormalizeKey(alias), Alias = alias, entry.Canonical }))
+            .Where(static item => item.Key.Length > 0)
+            .GroupBy(static item => item.Key, StringComparer.Ordinal)
+            .Select(group => new
+            {
+                Alias = group.First().Alias,
+                Canonicals = group.Select(static item => item.Canonical)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray()
+            })
+            .Where(static item => item.Canonicals.Length == 1)
+            .ToArray();
+
+        Assert.NotEmpty(aliases);
+        foreach (var item in aliases)
+        {
+            var result = snapshot.ResolveQthInput(item.Alias);
+            Assert.True(result is not null, $"Alias '{item.Alias}' expected '{item.Canonicals[0]}'");
+            Assert.Equal(NormalizeExpectedQth(item.Canonicals[0]), result!.Canonical);
+        }
+    }
+
+    private static string NormalizeExpectedQth(string value) => value switch
+    {
+        "江苏省盐城市响水区" => "江苏省盐城市响水县",
+        "江苏省盐城市滨海区" => "江苏省盐城市滨海县",
+        _ => value
+    };
 }

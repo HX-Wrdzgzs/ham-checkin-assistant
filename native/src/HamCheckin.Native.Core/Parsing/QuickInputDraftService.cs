@@ -21,15 +21,27 @@ public sealed record QuickInputDraftSnapshot(
 
 public sealed class QuickInputDraftChangedEventArgs(
     QuickInputDraftSnapshot snapshot,
-    bool isUserEdit) : EventArgs
+    bool isUserEdit,
+    bool forceApplyToEditors = false) : EventArgs
 {
     public QuickInputDraftSnapshot Snapshot { get; } = snapshot;
     public bool IsUserEdit { get; } = isUserEdit;
+
+    /// <summary>
+    /// Indicates an explicit application operation, such as a successful
+    /// submission clearing the draft or a deliberate session switch.  Only
+    /// these operations may replace the text of a focused editor.  Parser,
+    /// IME metadata, candidate, and cross-window notifications must leave the
+    /// focused TextBox's complete raw text, caret, selection, and undo stack
+    /// untouched.
+    /// </summary>
+    public bool ForceApplyToEditors { get; } = forceApplyToEditors;
 }
 
 /// <summary>
 /// 为主窗口和置顶快速小窗提供带修订号的输入草稿。
-/// 外部控件必须带上自己最后应用的 Revision，旧事件不能覆盖新草稿。
+/// baseRevision 仅用于事件追踪。当前获得键盘焦点的 TextBox 拥有完整
+/// 原文，因此旧 Revision 的用户编辑也必须被接受，不能把旧快照写回控件。
 /// </summary>
 public sealed class QuickInputDraftService
 {
@@ -53,29 +65,59 @@ public sealed class QuickInputDraftService
         string originId,
         long baseRevision,
         string? text,
-        bool isImeComposing = false)
+        bool isImeComposing = false,
+        bool isActiveEditor = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(originId);
         QuickInputDraftSnapshot snapshot;
+        var isTextEdit = false;
         lock (_gate)
         {
-            if (baseRevision != _current.Revision)
-            {
-                return _current;
-            }
-
             var value = text ?? string.Empty;
-            if (string.Equals(value, _current.Text, StringComparison.Ordinal)
-                && isImeComposing == _current.IsImeComposing)
+            // Only the editor that currently owns keyboard focus may submit a
+            // stale revision as authoritative text.  A non-focused editor can
+            // have a queued TextChanged notification from before the other
+            // window was edited; accepting that old full string would replace
+            // the active draft and recreate the suffix-loss bug.  The focused
+            // editor remains authoritative even when WPF/IME metadata makes
+            // its base revision look old.
+            if (!isActiveEditor && baseRevision < _current.Revision)
             {
                 return _current;
             }
 
-            snapshot = Next(value, originId, isImeComposing);
-            _current = snapshot;
+            // A TextBox edit is authoritative for the control that currently owns
+            // keyboard focus.  A stale revision can happen when IME composition,
+            // the other input window, or a queued WPF notification runs between
+            // TextChanged events.  Rejecting that edit makes the caller write the
+            // old full string back into the TextBox, which is exactly how a suffix
+            // disappears while editing the beginning of a line.
+            _ = baseRevision;
+            if (string.Equals(value, _current.Text, StringComparison.Ordinal))
+            {
+                if (isImeComposing == _current.IsImeComposing
+                    && string.Equals(originId, _current.OriginId, StringComparison.Ordinal))
+                {
+                    return _current;
+                }
+
+                snapshot = _current with
+                {
+                    OriginId = originId,
+                    IsImeComposing = isImeComposing,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                };
+                _current = snapshot;
+            }
+            else
+            {
+                snapshot = Next(value, originId, isImeComposing);
+                _current = snapshot;
+                isTextEdit = true;
+            }
         }
 
-        Changed?.Invoke(this, new QuickInputDraftChangedEventArgs(snapshot, true));
+        Changed?.Invoke(this, new QuickInputDraftChangedEventArgs(snapshot, isTextEdit));
         return snapshot;
     }
 
@@ -99,7 +141,8 @@ public sealed class QuickInputDraftService
             _current = snapshot;
         }
 
-        Changed?.Invoke(this, new QuickInputDraftChangedEventArgs(snapshot, false));
+        Changed?.Invoke(this, new QuickInputDraftChangedEventArgs(
+            snapshot, false, forceApplyToEditors: true));
         return snapshot;
     }
 
@@ -117,7 +160,8 @@ public sealed class QuickInputDraftService
             _current = snapshot;
         }
 
-        Changed?.Invoke(this, new QuickInputDraftChangedEventArgs(snapshot, false));
+        Changed?.Invoke(this, new QuickInputDraftChangedEventArgs(
+            snapshot, false, forceApplyToEditors: true));
         return true;
     }
 
@@ -132,7 +176,15 @@ public sealed class QuickInputDraftService
                 return _current;
             }
 
-            snapshot = Next(_current.Text, originId, isComposing);
+            // IME state is metadata, not a text edit.  It must not advance the
+            // text revision: otherwise a composition notification can make the
+            // next real TextChanged event look stale.
+            snapshot = _current with
+            {
+                OriginId = originId,
+                IsImeComposing = isComposing,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
             _current = snapshot;
         }
 

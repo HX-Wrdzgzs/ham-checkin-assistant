@@ -69,6 +69,31 @@ public sealed class ExcelExportTests : IDisposable
         Assert.Contains("sheetFormatPr", childNames);
     }
 
+    [Fact]
+    public async Task FormulaLikeUserContentRemainsInlineText()
+    {
+        Directory.CreateDirectory(_root);
+        var path = Path.Combine(_root, "formula-safe.xlsx");
+        const string formulaLikeQth = "=HYPERLINK(\"https://example.invalid\",\"not-a-formula\")";
+        var session = new SessionInfo(1, "第1场点名", "2026-10-05", "active", 2,
+            "BA4THG", "江苏省中继");
+        var rows = new[]
+        {
+            new CheckinEntry(1, 1, 1, "21:01", "BA4AAA", formulaLikeQth,
+                "海能达 PD-780", "原装天线", "5W", "", "local",
+                formulaLikeQth, "")
+        };
+
+        await new ExcelExportService().ExportAsync(session, rows, path);
+
+        using var document = SpreadsheetDocument.Open(path, false);
+        var cell = document.WorkbookPart!.WorksheetParts.Single().Worksheet
+            .Descendants<Cell>()
+            .Single(item => item.CellReference?.Value == "D5");
+        Assert.Equal(CellValues.InlineString, cell.DataType?.Value);
+        Assert.Equal(formulaLikeQth, cell.InlineString?.Text?.Text);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root))

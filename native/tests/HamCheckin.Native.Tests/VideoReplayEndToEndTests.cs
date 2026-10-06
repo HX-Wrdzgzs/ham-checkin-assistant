@@ -34,9 +34,21 @@ public sealed class VideoReplayEndToEndTests
             "ba4vjd bfuv5r 771",
             "BA4VJD", "", "宝峰 UV-5R", "SRH-771", "", "", ""),
         new(
+            "22:04:34",
+            "ba4scr bfuv36 扬州邗江 7900",
+            "BA4SCR", "江苏省扬州市邗江区", "宝峰 UV-36", "钻石 7900", "", "", ""),
+        new(
+            "23:00:00",
+            "ba4scr bfuv36 扬州邗江 zs7900 高",
+            "BA4SCR", "江苏省扬州市邗江区", "宝峰 UV-36", "钻石 7900", "高", "", ""),
+        new(
             "22:30:00",
             "ba4vnn isvcxs bfuv5r yz 高",
             "BA4VNN", "江苏省扬州市", "宝峰 UV-5R", "", "高", "", "isvcxs"),
+        new(
+            "22:31:00",
+            "ba4vnn jsycxs bfuv5r yz 高",
+            "BA4VNN", "江苏省盐城市响水县", "宝峰 UV-5R", "原装天线", "高", "", ""),
         new(
             "22:34:43",
             "bd4wye shks8600 4单元八木 秦淮区大光路 5w",
@@ -49,6 +61,35 @@ public sealed class VideoReplayEndToEndTests
             "23:07:35",
             "bd1ekh njqx uvk6 srh518 满",
             "BD1EKH", "江苏省南京市栖霞区", "泉盛 UV-K6", "SRH-518", "满", "", ""),
+        // 2026-10-04 录屏中可读到并且在隔离生产副本中找到对应完整记录的样例。
+        new(
+            "10-04 15:00:00",
+            "ba4sim k6 771 5w 盐城",
+            "BA4SIM", "江苏省盐城市", "泉盛 UV-K6", "SRH-771", "5W", "", ""),
+        new(
+            "10-04 17:00:00",
+            "bi4xfo ft-400xd 车苗 南通汽车东站 满",
+            "BI4XFO", "江苏省南通市汽车东站", "八重洲 FTM-400XD", "车载苗子", "满", "", ""),
+        new(
+            "10-04 18:00:00",
+            "bh4syc mt 小功率 棒子天线 szzjg",
+            "BH4SYC", "江苏省苏州市张家港市", "摩托罗拉车台", "棒子天线", "小功率", "", ""),
+        new(
+            "10-04 18:20:00",
+            "bi7ehj nrl 湖南长沙",
+            "BI7EHJ", "湖南省长沙市", "NRL互联", "", "", "", ""),
+        new(
+            "10-04 19:00:00",
+            "ba4ufc njjn ht",
+            "BA4UFC", "江苏省南京市江宁区", "HT", "", "", "", ""),
+        new(
+            "10-04 20:00:00",
+            "bg7oai 广东广州 ht",
+            "BG7OAI", "广东省广州市", "HT", "", "", "", ""),
+        new(
+            "10-04 20:10:00",
+            "bh4gbn 上海徐汇 73ham",
+            "BH4GBN", "上海市徐汇区", "73HAM", "", "", "", ""),
     };
 
     [Fact]
@@ -87,11 +128,12 @@ public sealed class VideoReplayEndToEndTests
             Assert.Equal("ba", partial.RawText);
 
             // 复现视频里的设备字段修正：只改设备，QTH/天线/功率不能跟着被重解析。
+            var bd4wyeRow = rows.Single(row => row.Callsign == "BD4WYE");
             var deviceRequest = await store.CreateFieldEditRequestAsync(
-                rows[4].Id, FieldKind.Device);
+                bd4wyeRow.Id, FieldKind.Device);
             Assert.NotNull(deviceRequest);
             var edited = await store.ApplyFieldEditAsync(new FieldEditCommit(
-                rows[4].Id,
+                bd4wyeRow.Id,
                 FieldKind.Device,
                 deviceRequest!.CurrentValue,
                 "森海克斯 8600",
@@ -104,14 +146,18 @@ public sealed class VideoReplayEndToEndTests
             Assert.Equal("江苏省南京市秦淮区大光路", edited.Qth);
             Assert.Equal("4单元八木", edited.Antenna);
             Assert.Equal("5W", edited.Power);
-            Assert.Equal(Cases[4].RawInput, edited.RawInput);
+            Assert.Equal(
+                Cases.Single(item => item.Callsign == "BD4WYE").RawInput,
+                edited.RawInput);
 
             // 未识别内容保留在数据库中，只有明确消费的 token 才能移除。
+            var ba4vnnRow = rows.Single(row =>
+                row.Callsign == "BA4VNN" && row.Unmatched == "isvcxs");
             var unmatchedRequest = await store.CreateFieldEditRequestAsync(
-                rows[3].Id, FieldKind.Qth);
+                ba4vnnRow.Id, FieldKind.Qth);
             Assert.NotNull(unmatchedRequest);
             var keptUnmatched = await store.ApplyFieldEditAsync(new FieldEditCommit(
-                rows[3].Id,
+                ba4vnnRow.Id,
                 FieldKind.Qth,
                 unmatchedRequest!.CurrentValue,
                 "江苏省扬州市",
@@ -164,7 +210,8 @@ public sealed class VideoReplayEndToEndTests
                     Enumerable.Range(1, Cases.Length + 1).Reverse(),
                     rows.Select(static row => row.SequenceNo));
                 Assert.Equal("森海克斯 8600", rows.Single(row => row.Callsign == "BD4WYE").Device);
-                Assert.Equal("isvcxs", rows.Single(row => row.Callsign == "BA4VNN").Unmatched);
+                Assert.Equal("isvcxs", rows.Single(row =>
+                    row.Callsign == "BA4VNN" && row.Unmatched == "isvcxs").Unmatched);
                 Assert.Equal("ok", await reopened.QuickCheckAsync());
             }
         }

@@ -30,7 +30,7 @@
                         <TextBlock Text="Windows 原生版" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,3,0,0"/>
                     </StackPanel>
                 </StackPanel>
-                <StackPanel Grid.Row="1" Margin="0,9,0,0">
+                <StackPanel x:Name="NavigationPanel" Grid.Row="1" Margin="0,9,0,0">
                     <TextBlock x:Name="WorkspaceLabel" Text="工作台" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource MutedBrush}" Margin="20,0,0,5"/>
                     <RadioButton x:Name="QuickNav" GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Quick" IsChecked="True" Checked="Nav_Checked">
                         <StackPanel Orientation="Horizontal"><TextBlock Text="⌨" Width="25"/><TextBlock x:Name="QuickNavLabel" Text="快速点名"/></StackPanel>
@@ -49,16 +49,13 @@
                     </RadioButton>
                 </StackPanel>
                 <Border x:Name="LocalStatusCard" Grid.Row="2" Margin="10,10,10,14" Padding="11" CornerRadius="9" Background="{StaticResource SuccessSoftBrush}">
-                    <StackPanel>
-                        <TextBlock x:Name="LocalStatusTitle" Text="●  本地录入" Foreground="{StaticResource SuccessBrush}" FontSize="12" FontWeight="SemiBold"/>
-                        <TextBlock x:Name="LocalStatusDetails" Text="SQLite 即时保存&#x0a;Excel 后台导出" Margin="0,6,0,0" FontSize="11" Foreground="{StaticResource MutedBrush}" LineHeight="17"/>
-                    </StackPanel>
+                    <TextBlock x:Name="LocalStatusTitle" Text="●  本地录入" Foreground="{StaticResource SuccessBrush}" FontSize="12" FontWeight="SemiBold"/>
                 </Border>
             </Grid>
         </Border>
 
         <Grid Grid.Column="1" MinWidth="0" ClipToBounds="True">
-            <Grid.RowDefinitions><RowDefinition Height="98"/><RowDefinition Height="*"/><RowDefinition Height="35"/></Grid.RowDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" MinHeight="98"/><RowDefinition Height="*"/><RowDefinition Height="35"/></Grid.RowDefinitions>
             <Border Grid.Row="0" Background="#FDFEFF" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="20,10">
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="0"/><ColumnDefinition Width="1.05*" MinWidth="0"/></Grid.ColumnDefinitions>
@@ -71,12 +68,12 @@
                         </StackPanel>
                         <TextBlock Text="{Binding SessionMeta}" Margin="0,5,0,0" FontSize="12" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
-                    <WrapPanel Grid.Column="1" MaxWidth="440" VerticalAlignment="Center" HorizontalAlignment="Right">
-                        <Button Style="{StaticResource BaseButton}" Content="新建场次" Margin="0,0,6,0" Click="NewSession_Click"/>
-                        <Button Style="{StaticResource BaseButton}" Content="选择场次" Margin="0,0,6,0" Click="SelectSession_Click"/>
-                        <Button Style="{StaticResource BaseButton}" Content="编辑场次" Margin="0,0,6,0" Click="EditSession_Click"/>
-                        <Button Style="{StaticResource BaseButton}" Content="结束/重开" Margin="0,0,6,0" Click="ToggleSessionStatus_Click"/>
-                        <Button Style="{StaticResource PrimaryButton}" Content="快速小窗" Click="OpenQuickWindow_Click"/>
+                    <WrapPanel x:Name="HeaderActionsPanel" Grid.Column="1" MaxWidth="520" MinWidth="0" VerticalAlignment="Center" HorizontalAlignment="Right">
+                        <Button x:Name="NewSessionButton" AutomationProperties.AutomationId="new-session" Style="{StaticResource BaseButton}" Content="新建场次" Margin="0,0,6,0" Click="NewSession_Click"/>
+                        <Button x:Name="SelectSessionButton" AutomationProperties.AutomationId="select-session" Style="{StaticResource BaseButton}" Content="选择场次" Margin="0,0,6,0" Click="SelectSession_Click"/>
+                        <Button x:Name="EditSessionButton" AutomationProperties.AutomationId="edit-session" Style="{StaticResource BaseButton}" Content="编辑场次" Margin="0,0,6,0" Click="EditSession_Click"/>
+                        <Button x:Name="ToggleSessionButton" AutomationProperties.AutomationId="toggle-session" Style="{StaticResource BaseButton}" Content="结束/重开" Margin="0,0,6,0" Click="ToggleSessionStatus_Click"/>
+                        <Button x:Name="OpenQuickWindowButton" AutomationProperties.AutomationId="open-quick-window" Style="{StaticResource PrimaryButton}" Content="快速小窗" Click="OpenQuickWindow_Click"/>
                     </WrapPanel>
                 </Grid>
             </Border>
@@ -89,7 +86,7 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="0"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="快速录入" FontWeight="SemiBold" FontSize="13"/>
-                                <TextBox x:Name="InputBox" Height="50" Margin="0,9,0,0" Style="{StaticResource InputTextBox}" PreviewKeyDown="InputBox_PreviewKeyDown" TextChanged="InputBox_TextChanged" GotKeyboardFocus="InputBox_GotKeyboardFocus" AutomationProperties.Name="快速点名输入" AutomationProperties.AutomationId="quick-input-main"/>
+                                <TextBox x:Name="InputBox" Height="50" Margin="0,9,0,0" Style="{StaticResource InputTextBox}" IsEnabled="{Binding IsQuickInputAvailable}" PreviewKeyDown="InputBox_PreviewKeyDown" TextChanged="InputBox_TextChanged" GotKeyboardFocus="InputBox_GotKeyboardFocus" AutomationProperties.Name="快速点名输入" AutomationProperties.AutomationId="quick-input-main"/>
                             </StackPanel>
                             <Button Grid.Column="1" Margin="12,27,0,20" MinWidth="96" Style="{StaticResource PrimaryButton}" Content="提交  Enter" Command="{Binding SubmitCommand}"/>
                         </Grid>
@@ -110,7 +107,7 @@
                             <Grid>
                                 <Grid.RowDefinitions><RowDefinition Height="43"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                                 <Grid Margin="13,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="本场最近记录" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/><TextBlock Grid.Column="1" Text="{Binding NextSequence, StringFormat=下一序号 {0}}" FontSize="11" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/></Grid>
-                                <DataGrid x:Name="RecentGrid" Grid.Row="1" ItemsSource="{Binding Checkins}" AutoGenerateColumns="False" SelectionMode="Single" SelectionUnit="Cell" PreviewMouseDoubleClick="RecordsGrid_PreviewMouseDoubleClick" PreviewKeyDown="RecordsGrid_PreviewKeyDown" MinWidth="0">
+                                <DataGrid x:Name="RecentGrid" Grid.Row="1" ItemsSource="{Binding Checkins}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" SelectionUnit="Cell" PreviewMouseDoubleClick="RecordsGrid_PreviewMouseDoubleClick" PreviewKeyDown="RecordsGrid_PreviewKeyDown" MinWidth="0">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="#" Binding="{Binding SequenceNo}" Width="38"/>
                                         <DataGridTextColumn Header="时间" Binding="{Binding CheckinTime}" Width="65"/>
@@ -127,7 +124,25 @@
                         <Border Grid.Column="1" Style="{StaticResource CardBorder}" Padding="13">
                             <StackPanel>
                                 <TextBlock Text="当前解析" FontSize="14" FontWeight="Bold"/>
-                                <TextBlock Text="QTH" FontSize="10" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Qth, TargetNullValue=—}" FontWeight="SemiBold" Margin="0,2,0,9" TextWrapping="Wrap"/>
+                                <TextBlock Text="QTH" FontSize="10" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Qth, TargetNullValue=—}" FontWeight="SemiBold" Margin="0,2,0,4" TextWrapping="Wrap"/>
+                                <StackPanel x:Name="QthCandidatePanel" Margin="0,0,0,8">
+                                    <StackPanel.Style>
+                                        <Style TargetType="StackPanel">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasQthCandidates}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </StackPanel.Style>
+                                    <TextBlock Text="QTH候选（点击确认）" FontSize="10" Foreground="{StaticResource AccentBrush}" Margin="0,0,0,3"/>
+                                    <ItemsControl ItemsSource="{Binding QthCandidates}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Content="{Binding}" Tag="{Binding}" Click="QthCandidate_Click" Style="{StaticResource BaseButton}" HorizontalContentAlignment="Left" Padding="5,3" Margin="0,0,0,3"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
                                 <TextBlock Text="设备" FontSize="10" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Device, TargetNullValue=—}" FontWeight="SemiBold" Margin="0,2,0,9" TextWrapping="Wrap"/>
                                 <TextBlock Text="天线 / 功率" FontSize="10" Foreground="{StaticResource MutedBrush}"/><StackPanel Orientation="Horizontal"><TextBlock Text="{Binding Antenna, TargetNullValue=—}" FontWeight="SemiBold"/><TextBlock Text="  ·  " Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Power, TargetNullValue=—}" FontWeight="SemiBold"/></StackPanel>
                                 <Border Background="{StaticResource WarningSoftBrush}" CornerRadius="8" Padding="9" Margin="0,2,0,0"><StackPanel><TextBlock Text="待处理原文" FontSize="10" Foreground="#9A6700"/><TextBlock Text="{Binding CurrentUnmatchedDisplay}" FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" TextWrapping="Wrap"/></StackPanel></Border>
@@ -139,8 +154,8 @@
                 <Grid x:Name="RecordsPage" Tag="Records" Visibility="Collapsed">
                     <Border Style="{StaticResource CardBorder}" ClipToBounds="True">
                         <Grid><Grid.RowDefinitions><RowDefinition Height="70"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                            <Grid Margin="18,13"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="本场记录" FontSize="19" FontWeight="Bold"/><TextBlock Text="双击字段或选中后按 Enter/F2，只修改当前列；来源和序号不可改。" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0"/></StackPanel><Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="导出 Excel  Ctrl+E" Command="{Binding ExportCommand}" VerticalAlignment="Center"/></Grid>
-                            <DataGrid x:Name="RecordsGrid" Grid.Row="1" ItemsSource="{Binding Checkins}" AutoGenerateColumns="False" SelectionMode="Single" SelectionUnit="Cell" PreviewMouseDoubleClick="RecordsGrid_PreviewMouseDoubleClick" PreviewKeyDown="RecordsGrid_PreviewKeyDown" MinWidth="0">
+                            <Grid Margin="18,13"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="本场记录" FontSize="19" FontWeight="Bold" VerticalAlignment="Center"/><Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="导出 Excel  Ctrl+E" Command="{Binding ExportCommand}" VerticalAlignment="Center"/></Grid>
+                            <DataGrid x:Name="RecordsGrid" Grid.Row="1" ItemsSource="{Binding Checkins}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" SelectionUnit="Cell" PreviewMouseDoubleClick="RecordsGrid_PreviewMouseDoubleClick" PreviewKeyDown="RecordsGrid_PreviewKeyDown" MinWidth="0">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="序号" Binding="{Binding SequenceNo}" Width="55"/><DataGridTextColumn Header="时间" Binding="{Binding CheckinTime}" Width="78"/><DataGridTextColumn Header="呼号" Binding="{Binding Callsign}" Width="100"/><DataGridTextColumn Header="QTH" Binding="{Binding Qth}" Width="2*"/><DataGridTextColumn Header="设备" Binding="{Binding Device}" Width="1.4*"/><DataGridTextColumn Header="天线" Binding="{Binding Antenna}" Width="1.1*"/><DataGridTextColumn Header="功率" Binding="{Binding Power}" Width="70"/><DataGridTextColumn Header="信号" Binding="{Binding Signal}" Width="60"/><DataGridTextColumn Header="待修正" Binding="{Binding UnmatchedCount}" Width="65"/>
                                 </DataGrid.Columns>
@@ -152,19 +167,19 @@
                 <Grid x:Name="CatalogPage" Tag="Catalog" Visibility="Collapsed">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,10">
-                        <StackPanel><TextBlock Text="资料库" FontSize="20" FontWeight="Bold"/><TextBlock Text="{Binding CatalogSummary}" Foreground="{StaticResource SuccessBrush}" FontSize="12" TextWrapping="Wrap"/></StackPanel>
+                        <TextBlock Text="资料库" FontSize="20" FontWeight="Bold"/>
                     </Border>
                     <Grid Grid.Row="1" MinHeight="0">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="1.32*"/><ColumnDefinition Width="0.98*"/></Grid.ColumnDefinitions>
                         <Border Style="{StaticResource CardBorder}" Padding="14" Margin="0,0,10,0">
                             <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="工信部电台型号库" FontSize="15" FontWeight="Bold"/><TextBlock Grid.Column="1" Text="{Binding MiitStatus}" FontSize="10" Foreground="{StaticResource SuccessBrush}" TextWrapping="Wrap" MaxWidth="190" HorizontalAlignment="Right"/></Grid>
+                            <TextBlock Text="工信部电台型号库" FontSize="15" FontWeight="Bold"/>
                                 <WrapPanel Grid.Row="1" Margin="0,12,0,10"><Button Style="{StaticResource PrimaryButton}" Content="首次下载" Command="{Binding FirstMiitDownloadCommand}" Margin="0,0,6,0"/><Button Style="{StaticResource BaseButton}" Content="检查更新" Command="{Binding RefreshCatalogCommand}" Margin="0,0,6,0"/><Button Style="{StaticResource BaseButton}" Content="完整重下" Command="{Binding FullMiitDownloadCommand}" Margin="0,0,6,0"/><Button Style="{StaticResource BaseButton}" Content="继续" Command="{Binding ResumeMiitCommand}" Margin="0,0,6,0"/><Button Style="{StaticResource BaseButton}" Content="取消" Command="{Binding CancelMiitCommand}"/></WrapPanel>
                                 <Grid Grid.Row="2" MinHeight="0"><Grid.RowDefinitions><RowDefinition Height="48"/><RowDefinition Height="*"/></Grid.RowDefinitions><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox Style="{StaticResource InputTextBox}" Height="42" FontSize="15" Text="{Binding CatalogQuery, UpdateSourceTrigger=PropertyChanged}"/><Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="搜索本地型号" Command="{Binding SearchCatalogCommand}" Margin="8,0,0,0"/></Grid><DataGrid Grid.Row="1" ItemsSource="{Binding CatalogResults}" AutoGenerateColumns="False" MinWidth="0"><DataGrid.Columns><DataGridTextColumn Header="标准名称" Binding="{Binding StandardName}" Width="1.45*"/><DataGridTextColumn Header="官方型号" Binding="{Binding Model}" Width="1*"/><DataGridTextColumn Header="类别" Binding="{Binding DeviceClass}" Width="1.1*"/><DataGridTextColumn Header="申请单位" Binding="{Binding Applicant}" Width="1.5*"/><DataGridTextColumn Header="来源" Binding="{Binding Source}" Width="100"/></DataGrid.Columns></DataGrid></Grid>
                             </Grid>
                         </Border>
                         <Border Grid.Column="1" Style="{StaticResource CardBorder}" Padding="14">
-                            <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><TextBlock Text="地点包" FontSize="15" FontWeight="Bold"/><TextBlock Grid.Row="1" Text="{Binding LocationStatus}" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,10" TextWrapping="Wrap"/><Grid Grid.Row="2"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><WrapPanel Margin="0,0,0,8"><Button Style="{StaticResource BaseButton}" Content="下载全省" Margin="0,0,6,0" Click="DownloadProvince_Click"/><Button Style="{StaticResource BaseButton}" Content="更新已安装" Click="UpdatePlaces_Click"/></WrapPanel><TreeView Grid.Row="1" ItemsSource="{Binding QthPackages}"><TreeView.ItemContainerStyle><Style TargetType="TreeViewItem"><Setter Property="IsExpanded" Value="True"/></Style></TreeView.ItemContainerStyle><TreeView.Resources><HierarchicalDataTemplate DataType="{x:Type local:QthPackageNode}" ItemsSource="{Binding Children}"><StackPanel Orientation="Horizontal"><TextBlock Text="{Binding Name}"/><TextBlock Text="  ·  " Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Status}" Foreground="{StaticResource AccentBrush}"/><TextBlock Foreground="{StaticResource MutedBrush}"><Run Text="  "/><Run Text="{Binding Detail}"/></TextBlock></StackPanel></HierarchicalDataTemplate></TreeView.Resources></TreeView></Grid></Grid>
+                            <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><TextBlock Text="地点包" FontSize="15" FontWeight="Bold"/><Grid Grid.Row="1" Margin="0,10,0,0"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><WrapPanel Margin="0,0,0,8"><Button Style="{StaticResource BaseButton}" Content="下载全省" Margin="0,0,6,0" Click="DownloadProvince_Click"/><Button Style="{StaticResource BaseButton}" Content="更新已安装" Click="UpdatePlaces_Click"/></WrapPanel><TreeView Grid.Row="1" ItemsSource="{Binding QthPackages}"><TreeView.ItemContainerStyle><Style TargetType="TreeViewItem"><Setter Property="IsExpanded" Value="True"/></Style></TreeView.ItemContainerStyle><TreeView.Resources><HierarchicalDataTemplate DataType="{x:Type local:QthPackageNode}" ItemsSource="{Binding Children}"><StackPanel Orientation="Horizontal"><TextBlock Text="{Binding Name}"/><TextBlock Text="  ·  " Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Status}" Foreground="{StaticResource AccentBrush}"/><TextBlock Foreground="{StaticResource MutedBrush}"><Run Text="  "/><Run Text="{Binding Detail}"/></TextBlock></StackPanel></HierarchicalDataTemplate></TreeView.Resources></TreeView></Grid></Grid>
                         </Border>
                     </Grid>
                 </Grid>
@@ -184,7 +199,6 @@
                                     <Border Background="#F4F7FB" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="10">
                                         <StackPanel>
                                             <TextBlock x:Name="RecordingTargetText" Text="HAM 点名助手窗口 · 正在读取窗口尺寸" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.AutomationId="recording-target"/>
-                                            <TextBlock Text="仅捕获本软件窗口客户区；桌面、其他程序和侧边窗口不会进入视频。" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
                                         </StackPanel>
                                     </Border>
                                     <CheckBox x:Name="IncludeMicrophoneCheckBox" Content="同时录制麦克风" IsChecked="True" Margin="0,12,0,5" Checked="IncludeMicrophoneChanged" Unchecked="IncludeMicrophoneChanged"/>
@@ -201,7 +215,6 @@
                                         <TextBox x:Name="RecordingPathBox" Height="36" IsReadOnly="True" FontSize="12" Padding="10,6" VerticalContentAlignment="Center" Style="{StaticResource InputTextBox}"/>
                                         <Button Grid.Column="1" Style="{StaticResource BaseButton}" Content="选择…" Margin="7,0,0,0" Click="BrowseRecordingPath_Click"/>
                                     </Grid>
-                                    <TextBlock Text="MP4 / H.264 视频 + AAC 音频；录屏结束后可用系统播放器、VLC 或 PotPlayer 打开。" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,8,0,0" TextWrapping="Wrap"/>
                                 </StackPanel>
                             </Border>
                             <Border Style="{StaticResource CardBorder}" Padding="15">
@@ -217,8 +230,6 @@
                                     <Border Background="{StaticResource WarningSoftBrush}" CornerRadius="8" Padding="10" Margin="0,18,0,0">
                                         <TextBlock Text="隐私提示：视频只包含 HAM 点名助手窗口客户区；开始前仍请确认窗口内没有不应记录的账号、密钥或敏感内容。" FontSize="11" Foreground="#8A5A00" TextWrapping="Wrap"/>
                                     </Border>
-                                    <TextBlock Text="麦克风调试" FontSize="13" FontWeight="SemiBold" Margin="0,18,0,4"/>
-                                    <TextBlock Text="测试按钮会打开所选输入设备并显示实时峰值；再次点击即可停止测试。正式录制使用同一设备。" FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -229,9 +240,9 @@
                     <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
                         <TextBlock Text="设置" FontSize="21" FontWeight="Bold" Margin="0,0,0,14"/>
                         <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="数据安全" FontWeight="Bold"/><TextBlock Text="原生独立库" FontSize="11" Foreground="{StaticResource SuccessBrush}" Margin="0,5,0,0"/></StackPanel><TextBlock Grid.Column="1" Text="{Binding DatabasePath}" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}"/></Grid></Border>
-                        <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="过渡动画" FontWeight="Bold"/><TextBlock Text="不进入录入热路径" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0"/></StackPanel><CheckBox Grid.Column="1" Content="启用页面和提交反馈动画" IsChecked="{Binding AnimationsEnabled}" VerticalAlignment="Center"/></Grid></Border>
+                        <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="过渡动画" FontWeight="Bold"/><CheckBox Grid.Column="1" Content="启用轻量页面切换和成功提示" IsChecked="{Binding AnimationsEnabled}" VerticalAlignment="Center"/></Grid></Border>
                         <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><StackPanel><TextBlock Text="快捷键" FontSize="16" FontWeight="Bold"/><TextBlock Text="点击右侧组合键后直接按下新键；冲突会拒绝保存，主窗口和快速小窗共用提交键。" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,10" TextWrapping="Wrap"/><ItemsControl ItemsSource="{Binding ShortcutBindings}"><ItemsControl.ItemTemplate><DataTemplate><Grid Margin="0,3"><Grid.ColumnDefinitions><ColumnDefinition Width="175"/><ColumnDefinition Width="120"/><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"/><Button Grid.Column="1" Content="{Binding Gesture}" Tag="{Binding ActionKey}" Style="{StaticResource BaseButton}" Padding="10,5" Click="CaptureShortcut_Click"/><TextBlock Grid.Column="2" Text="{Binding Scope}" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/><TextBlock Grid.Column="3" Text="{Binding Description}" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl><TextBlock Text="冲突校验：同一作用范围不能重复；全局注册失败时保留旧快捷键。" FontSize="11" Foreground="{StaticResource SuccessBrush}" Margin="0,10,0,0"/><Button Content="恢复默认快捷键" Style="{StaticResource BaseButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="ResetShortcuts_Click"/></StackPanel></Border>
-                        <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="更新渠道" FontWeight="Bold"/><TextBlock Text="Native 1.0.5 · 稳定版" FontSize="11" Foreground="{StaticResource SuccessBrush}" Margin="0,5,0,0"/></StackPanel><TextBlock Grid.Column="1" Text="GitHub Release · main/updates/latest.json · SHA-256" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/><WrapPanel Grid.Column="2" VerticalAlignment="Center"><Button Content="赞助开发" Style="{StaticResource BaseButton}" Click="OpenSponsor_Click" Margin="12,0,6,0" AutomationProperties.AutomationId="open-sponsor"/><Button Content="关于 / 检查更新" Style="{StaticResource BaseButton}" Click="OpenAbout_Click" AutomationProperties.AutomationId="open-about"/></WrapPanel></Grid></Border>
+                        <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="更新渠道" FontWeight="Bold"/><TextBlock Text="Native 1.0.14 · 本地候选版" FontSize="11" Foreground="{StaticResource SuccessBrush}" Margin="0,5,0,0"/></StackPanel><StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="GitHub Release · main/updates/latest.json · SHA-256" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/><TextBlock Text="{Binding UpdateStatus}" Foreground="{StaticResource SuccessBrush}" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/></StackPanel><WrapPanel Grid.Column="2" VerticalAlignment="Center"><Button Content="赞助开发" Style="{StaticResource BaseButton}" Click="OpenSponsor_Click" Margin="12,0,6,0" AutomationProperties.AutomationId="open-sponsor"/><Button Content="关于 / 检查更新" Style="{StaticResource BaseButton}" Click="OpenAbout_Click" Margin="0" AutomationProperties.AutomationId="open-about"/></WrapPanel></Grid></Border>
                     </StackPanel></ScrollViewer>
                 </Grid>
             </Grid>

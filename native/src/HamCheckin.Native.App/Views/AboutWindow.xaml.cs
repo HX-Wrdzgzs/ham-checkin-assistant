@@ -20,14 +20,14 @@ public partial class AboutWindow : Window, IDisposable
         _updates = updates ?? new NativeUpdateService();
         CurrentVersionText.Text = NativeVersion.Current;
         DataPathText.Text = $"数据目录：{AppPaths.Root}";
-        ReleaseNotesText.Text = "当前未读取云端更新说明。\n\n检查更新只在点击按钮后运行，不进入启动和录入热路径。";
+        ReleaseNotesText.Text = "当前未读取云端更新说明。\n\n程序进入可录入状态后会在后台检查更新；按钮可以立即重试。更新检查不进入录入热路径。";
         Closed += (_, _) => Dispose();
     }
 
     public void SetPreviewState()
     {
         StatusText.Text = $"云端版本：{NativeVersion.Current}（当前已是最新）";
-        ReleaseNotesText.Text = "稳定版\n\n· Native WPF / .NET 10\n· SQLite 现场提交\n· Excel 后台导出\n· 本地资料库和 SHA-256 更新校验";
+        ReleaseNotesText.Text = "本地候选版\n\n· Native WPF / .NET 10\n· SQLite 现场提交\n· Excel 后台导出\n· 本地资料库和 SHA-256 更新校验";
         CheckButton.IsEnabled = true;
         DownloadButton.IsEnabled = false;
     }
