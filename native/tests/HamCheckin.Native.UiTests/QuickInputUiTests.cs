@@ -1115,6 +1115,88 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
     }
 
     [Fact]
+    public void ApplicationRecordingNeverFallsBackToACoveringDesktopWindow()
+    {
+        _fixture.Run(() =>
+        {
+            var target = new Window
+            {
+                Width = 640,
+                Height = 480,
+                Left = 120,
+                Top = 120,
+                WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize,
+                ShowInTaskbar = false,
+                Background = new SolidColorBrush(Color.FromRgb(26, 180, 112)),
+                Content = new Border
+                {
+                    Background = new SolidColorBrush(Color.FromRgb(26, 180, 112))
+                }
+            };
+            var coveringWindow = new Window
+            {
+                Width = target.Width,
+                Height = target.Height,
+                Left = target.Left,
+                Top = target.Top,
+                WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize,
+                ShowInTaskbar = false,
+                Topmost = true,
+                Background = new SolidColorBrush(Color.FromRgb(220, 38, 38)),
+                Content = new Border
+                {
+                    Background = new SolidColorBrush(Color.FromRgb(220, 38, 38))
+                }
+            };
+
+            try
+            {
+                target.Show();
+                target.UpdateLayout();
+                coveringWindow.Show();
+                coveringWindow.UpdateLayout();
+
+                var recordingTarget = ScreenCapture.CreateTarget(target);
+                var frame = ScreenCapture.CaptureFrame(recordingTarget);
+                var width = recordingTarget.Width;
+                var height = recordingTarget.Height;
+                var greenPixels = 0;
+                var redPixels = 0;
+                foreach (var y in new[] { height / 4, height / 2, (height * 3) / 4 })
+                {
+                    foreach (var x in new[] { width / 4, width / 2, (width * 3) / 4 })
+                    {
+                        var offset = ((y * width) + x) * 4;
+                        var blue = frame[offset];
+                        var green = frame[offset + 1];
+                        var red = frame[offset + 2];
+                        if (Math.Abs(red - 26) <= 3 && Math.Abs(green - 180) <= 3 && Math.Abs(blue - 112) <= 3)
+                        {
+                            greenPixels++;
+                        }
+
+                        if (Math.Abs(red - 220) <= 3 && Math.Abs(green - 38) <= 3 && Math.Abs(blue - 38) <= 3)
+                        {
+                            redPixels++;
+                        }
+                    }
+                }
+
+                Assert.True(greenPixels >= 7,
+                    $"窗口被覆盖时没有稳定捕获 HAM 目标窗口内容；绿色采样={greenPixels}，红色覆盖采样={redPixels}。" );
+                Assert.Equal(0, redPixels);
+            }
+            finally
+            {
+                coveringWindow.Close();
+                target.Close();
+            }
+        });
+    }
+
+    [Fact]
     public void ApplicationAndMicrophoneRecordingWritesVideoAndAacStreams()
     {
         var microphones = MicrophoneCapture.EnumerateDevices();
