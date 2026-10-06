@@ -468,6 +468,34 @@ public sealed class ParserTests
         Assert.Equal("m507", result.UnmatchedText);
     }
 
+    [Theory]
+    [InlineData("ba4aaa sdqcd", "山东省", "qcd")]
+    [InlineData("ba4aaa gdszqcd", "广东省深圳市", "qcd")]
+    [InlineData("ba4aaa jsnjfoo", "江苏省南京市", "foo")]
+    public void AsciiAdministrativePrefixKeepsUnknownSuffixPending(
+        string input,
+        string expectedQth,
+        string expectedUnmatched)
+    {
+        var result = _parser.Parse(input);
+
+        Assert.Equal(expectedQth, result.Qth.Value);
+        Assert.Equal(expectedUnmatched, result.UnmatchedText);
+    }
+
+    [Theory]
+    [InlineData("bh8")]
+    [InlineData("BH8XYZ")]
+    [InlineData("sgm507")]
+    public void AdministrativePrefixSplitNeverInventsAPlaceForCallsignOrModel(
+        string input)
+    {
+        var result = _parser.Parse(input);
+
+        Assert.Empty(result.Qth.Value);
+        Assert.DoesNotContain("北海", result.Qth.Value, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void KnownAntennaAfterChineseQthPrefixIsStillRecognized()
     {

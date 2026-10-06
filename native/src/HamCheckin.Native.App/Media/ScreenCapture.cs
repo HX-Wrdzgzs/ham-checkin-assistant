@@ -12,7 +12,11 @@ namespace HamCheckin.Native.App.Media;
 /// </summary>
 internal static class ScreenCapture
 {
-    private const uint PrintWindowRenderFullContent = 0x00000002;
+    // PW_CLIENTONLY (0x1) keeps the non-client frame and anything around the
+    // window out of the bitmap. PW_RENDERFULLCONTENT (0x2) keeps WPF content
+    // renderable when the window is covered. Combining both is intentional:
+    // recording must never fall back to a monitor or desktop capture.
+    private const uint PrintWindowClientOnlyFullContent = 0x00000003;
 
     public static RecordingTarget CreateTarget(Window window)
     {
@@ -51,7 +55,7 @@ internal static class ScreenCapture
         var deviceContext = graphics.GetHdc();
         try
         {
-            var captured = PrintWindow(target.WindowHandle, deviceContext, PrintWindowRenderFullContent);
+            var captured = PrintWindow(target.WindowHandle, deviceContext, PrintWindowClientOnlyFullContent);
             if (!captured)
             {
                 // Never fall back to a desktop DC: doing so could capture an

@@ -1,30 +1,31 @@
 # Windows 原生版开发验收记录
 
-## 1.0.18-r27 当前候选验证（2026-10-06）
+## 1.0.19-r28 当前候选验证（2026-10-06）
 
-本节是当前源代码和 1.0.18-r27 候选包的最新证据；下方的 1.0.17-r26、1.0.16-r18、1.0.15-r17 与 1.0.14-r15 内容保留为历史记录，不能与本候选混用。
+本节是当前源代码和 1.0.19-r28 候选包的最新证据；下方的 1.0.18-r27 及更早内容保留为历史记录，不能与本候选混用。
 
 | 检查 | 实际结果 |
 |---|---:|
-| Release 全解决方案编译 | PASS，0 error；保留 34 条代码分析器 warning，没有编译错误 |
-| Native 核心自动化测试 | PASS，188 / 188；`artifacts/test-results/1.0.18-r27-core-final/core-1.0.18-r27-final.trx` |
-| WPF UI 自动化测试 | PASS，31 / 31；`artifacts/test-results/1.0.18-r27-ui/ui-1.0.18-r27.trx`；包含主窗口/小窗前中尾部编辑、双窗口同步、IME 元数据、录屏 MP4 与麦克风、响应式按钮边界和侧边栏页面同步 |
-| 发布 EXE 离线启动与键盘黑盒 | PASS；1.0.18-r27 单文件 EXE `WaitForInputIdle=true`、保持运行 8 秒、隔离 SQLite 生效；主窗口和快速小窗前/中/尾部编辑均保持后缀，并读取 11 组全国缩写/视频样例；`artifacts/published-blackbox-1.0.18-r27-offline/report.json` |
-| 发布 EXE 在线启动与输入可用性 | PASS；候选 EXE 未使用 `--disable-network`，进入设置页后实际读到“已检查更新 · 当前 1.0.18 为最新”，主窗口/小窗输入和 11 组识别均通过；`artifacts/published-blackbox-1.0.18-r27-online/report.json` |
-| 1.0.18-r27 自包含候选 EXE | PASS；文件版本 `1.0.18.0`，产品版本以候选包元数据为准；实际字节数、SHA-256 和候选副本以 `artifacts/candidate-1.0.18-r27/SHA256SUMS.txt` 为准 |
-| 全国行政区 ASCII 别名审计 | PASS；4,762 个唯一 ASCII 别名，0 个失败 |
+| Release 全解决方案编译 | PASS，0 error；保留现有代码分析器 warning，没有编译错误 |
+| Native 核心自动化测试 | PASS，194 / 194；`artifacts/test-results/1.0.19-r28-core/core-1.0.19-r28.trx` |
+| WPF UI 自动化测试 | PASS，32 / 32；`artifacts/test-results/1.0.19-r28-ui-rerun/ui-1.0.19-r28-rerun.trx`；包含主窗口/小窗前中尾部编辑、双窗口同步、IME 元数据、录屏默认安全、MP4 与麦克风、响应式按钮边界和侧边栏页面同步 |
+| 发布 EXE 离线启动与键盘黑盒 | PASS；1.0.19-r28 自包含 EXE `WaitForInputIdle=true`、保持运行 8 秒、隔离 SQLite 生效；主窗口和快捷小窗前/中/尾部编辑均保持后缀，并读取视频样例及全国跨省缩写；`artifacts/published-blackbox-1.0.19-r28-offline/report.json` |
+| 发布 EXE 在线启动与输入可用性 | PASS；候选 EXE 未使用 `--disable-network`，进入设置页后实际读到“已检查更新 · 当前 1.0.19 为最新”，主窗口/小窗输入和识别均通过；`artifacts/published-blackbox-1.0.19-r28-online/report.json` |
+| 1.0.19-r28 自包含候选 EXE | PASS；文件版本 `1.0.19.0`，78,648,144 bytes；SHA-256 `A73EBD0886111313D7E215875788BED7F618989A77D12132DCE1D26CCEE0A4B8` |
+| 全国行政区 ASCII 别名审计 | PASS；现有全国行政区别名扫描通过；另有省码锚定的未知尾缀保留回归 |
 | 行政区歧义审计 | PASS；269 个真实碰撞，0 个错误强行解析；`鼓楼区`、`栖霞区`、`东乡`保留候选并要求选择 |
 | 重名行政区规范化 | PASS；临夏市、楚雄市、阿克苏市等不再输出重复的“省+市+同名市” |
 | 短设备查询回归 | PASS；`k1` 不再吸附无关的 `TK11`，`pd780`、`r6`、`k5`、`k6` 仍有正确候选 |
-| 视频样例识别审计 | PASS（保守保留未知尾缀）；`7900`、`jsycxs`、`bh8` 完整识别；`山东qcd` 得到 `山东省` + 待修正 `qcd`，`广东省汕头市m507` 得到完整已知 QTH + 待修正 `m507`，没有擅自猜城市或吞掉尾缀；完整机器结果见候选包 `识别准确性审计.json` |
-| WPF 效果图渲染 | PASS；1.0.18-r27 自包含发布物实际输出 10 张真实控件效果图，含 800×600 窄窗、录屏/麦克风页和导航同步后的设置页；目录为 `%USERPROFILE%\Downloads\HAM点名助手-UI效果图-1.0.18-r27` |
+| 视频样例识别审计 | PASS（保守保留未知尾缀）；`7900`、`jsycxs`、`bh8` 完整识别；`山东qcd` 得到 `山东省` + 待修正 `qcd`，`广东省汕头市m507` 得到完整已知 QTH + 待修正 `m507`，没有擅自猜城市或吞掉尾缀；完整机器结果见黑盒 `report.json` |
+| 录屏默认安全回归 | PASS；真实 WPF 客户区抓帧使用 `PW_CLIENTONLY + PW_RENDERFULLCONTENT`，不回退到桌面；默认麦克风为 Off，录屏目标明确为软件窗口，输出为 MP4；`artifacts/test-results/continued-ui-recording-2/ui-recording-2.trx` |
+| WPF 效果图渲染 | PASS；1.0.19-r28 自包含发布物实际输出 10 张真实控件效果图，含 800×600 窄窗、关于/版本页和录屏/麦克风页；目录为 `artifacts/published-ui-effects-1.0.19-r28-final` |
 | 侧边栏与页面同步 | PASS；设置页/快速点名页切换后选中状态一致；新增 UI 回归测试包含在 31 / 31 中 |
 | 候选包校验清单 | PASS；`SHA256SUMS.txt` 与候选 EXE 当前哈希一致 |
-| NativeUpdateService 真实更新链路 | PASS（稳定 v1.0.5）；项目自己的更新服务在 GitHub API 403 时回退到 `main/updates/latest.json`，实际下载 78,580,274 字节并完成 SHA-256 校验，临时文件删除；`artifacts/update-live-probe/result.json` |
+| NativeUpdateService 真实更新链路 | PASS（稳定 v1.0.5）；项目自己的更新服务在 GitHub API 403 时回退到 `main/updates/latest.json`，既有 SHA-256 下载/拒绝测试通过；1.0.19-r28 在线启动实际显示已检查更新；候选版尚未创建远程 Release |
 
-当前候选包中的正式证据文件：`artifacts/candidate-1.0.18-r27/输入与核心测试.trx`、`WPF黑盒测试.trx`、`发布包黑盒测试.json`、`在线启动输入黑盒.json`、`更新下载黑盒.json`、`识别准确性审计.json` 和 `SHA256SUMS.txt`。
+当前候选包中的正式证据文件：`artifacts/candidate-1.0.19-r28/输入与核心测试.trx`、`WPF黑盒测试.trx`、`发布包黑盒测试.json`、`在线启动输入黑盒.json`、`识别准确性审计.json`、`效果图/` 和 `SHA256SUMS.txt`。
 
-当前仍未宣称完成的项目：真实微软拼音现场操作、用户可见的 Microsoft Excel 修复提示流程、长时间录屏稳定性、1.0.18 远程 GitHub Release 资产下载，以及用户生产库迁移。它们必须在现场或真实发布通道验证，不能由本地隔离测试替代。现有稳定 v1.0.5 下载链路和 1.0.18-r27 候选启动检查已分别通过真实清单回退/下载/SHA-256 与在线启动黑盒，但不能代替 1.0.18 Release 验证。
+当前仍未宣称完成的项目：真实微软拼音现场操作、用户可见的 Microsoft Excel 修复提示流程、长时间录屏稳定性、1.0.19 远程 GitHub Release 资产下载，以及用户生产库迁移。它们必须在现场或真实发布通道验证，不能由本地隔离测试替代。现有稳定 v1.0.5 下载链路和 1.0.19-r28 候选启动检查已分别通过真实清单回退/下载/SHA-256 与在线启动黑盒，但不能代替 1.0.19 Release 验证。
 
 ## 历史：1.0.14-r15 验证
 

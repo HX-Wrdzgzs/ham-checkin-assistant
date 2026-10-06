@@ -506,8 +506,8 @@ public sealed class CatalogSnapshot
     }
 
     /// <summary>
-    /// Splits a Chinese administrative prefix followed by an unknown ASCII
-    /// suffix, for example “山东qcd” or “广东省汕头市m507”. The prefix is
+    /// Splits an administrative prefix followed by an unknown ASCII suffix,
+    /// for example “山东qcd”, “sdqcd” or “广东省汕头市m507”. The prefix is
     /// returned as the most specific administrative value that is proven by
     /// the local catalog; the suffix remains a separate token so the parser
     /// can expose it as pending correction or recognize it as an antenna or
@@ -527,13 +527,116 @@ public sealed class CatalogSnapshot
             return false;
         }
 
-        var prefixLength = 0;
-        while (prefixLength < normalized.Length
-            && normalized[prefixLength] is >= '\u3400' and <= '\u9fff')
+        // Never split a complete or partial callsign.  This check must happen
+        // before looking at administrative aliases: “bh8xyz” is a callsign,
+        // while “bh8” is an incomplete callsign and neither is evidence of
+        // 北海市.
+        if (TextNormalizer.IsCallsign(normalized)
+            || TextNormalizer.LooksLikeIncompleteCallsign(normalized))
         {
-            prefixLength++;
+            return false;
         }
 
+        // ASCII administrative aliases have no character-class boundary:
+        // “sdqcd” can mean “sd” + an unknown “qcd” suffix. Only split when
+        // the complete token is not already a known administrative alias.
+        // This keeps compact city/district aliases such as “sxty”, “hazz” and
+        // “gdszns” under the normal QTH resolver instead of truncating them
+        // to a shorter province or city.
+        if (!TextNormalizer.ContainsCjk(normalized))
+        {
+            if (ResolveQthCandidates(normalized)
+                .Any(static item => IsAdministrativeRegion(item)))
+            {
+                return false;
+            }
+
+            for (var length = normalized.Length - 1; length >= 2; length--)
+            {
+                var asciiPrefix = normalized[..length];
+                var unknownSuffix = normalized[length..];
+                if (!asciiPrefix.All(char.IsAsciiLetter)
+                    || unknownSuffix.Any(static character => !char.IsAsciiLetterOrDigit(character)))
+                {
+                    continue;
+                }
+
+                QthCandidate[] prefixCandidates;
+                if (_qthAliases.TryGetValue(asciiPrefix, out var prefixAliases))
+                {
+                    prefixCandidates = prefixAliases
+                        .Where(static item => IsAdministrativeRegion(item))
+                        .Select(NormalizeCandidate)
+                        .DistinctBy(static item => item.Canonical, StringComparer.Ordinal)
+                        .ToArray();
+                }
+                else if (asciiPrefix.Length == 2)
+                {
+                    prefixCandidates = NationwideAdminCatalog.Entries
+                        .Where(static item => string.IsNullOrWhiteSpace(item.City))
+                        .Where(item => NationwideAdminCatalog.GetProvinceCodes(item.Province)
+                            .Contains(asciiPrefix, StringComparer.Ordinal))
+                        .Select(item => new QthCandidate(
+                            item.Canonical,
+                            item.Province,
+                            item.City,
+                            item.District,
+                            item.Kind.Length == 0 ? "admin_region" : item.Kind,
+                            800))
+                        .DistinctBy(static item => item.Canonical, StringComparer.Ordinal)
+                        .ToArray();
+                }
+                else
+                {
+                    continue;
+                }
+
+                if (prefixCandidates.Length != 1)
+                {
+                    continue;
+                }
+
+                // The split must be anchored by a two-letter province alias.
+                // A generic city alias such as “my” (绵阳) must not turn an
+                // unrelated model or word such as “mystery” into “my” +
+                // “stery”.
+                var provinceCandidates = NationwideAdminCatalog.Entries
+                    .Where(static item => string.IsNullOrWhiteSpace(item.City))
+                    .Where(item => NationwideAdminCatalog.GetProvinceCodes(item.Province)
+                        .Contains(normalized[..2], StringComparer.Ordinal))
+                    .Select(item => item.Province)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                if (provinceCandidates.Length != 1)
+                {
+                    continue;
+                }
+
+                // A numeric tail is much more likely to be a radio model or
+                // antenna than a place suffix. “sgm507” must therefore stay
+                // one token instead of becoming 韶关 + m507.
+                if (unknownSuffix.Any(char.IsAsciiDigit))
+                {
+                    return false;
+                }
+
+                candidate = prefixCandidates[0];
+                suffix = unknownSuffix;
+                return true;
+            }
+
+            return false;
+        }
+
+        var prefixLength = 0;
+        if (normalized[0] is >= '\u3400' and <= '\u9fff')
+        {
+            while (prefixLength < normalized.Length
+                && normalized[prefixLength] is >= '\u3400' and <= '\u9fff')
+            {
+                prefixLength++;
+            }
+        }
         if (prefixLength < 2 || prefixLength == normalized.Length)
         {
             return false;

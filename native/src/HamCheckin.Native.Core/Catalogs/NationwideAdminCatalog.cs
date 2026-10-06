@@ -47,6 +47,8 @@ internal static class NationwideAdminCatalog
         }
     }
 
+    internal static IReadOnlyList<string> GetProvinceCodes(string province) => ProvinceCodes(province);
+
     private static string[] ProvinceCodes(string province) => province switch
     {
         "内蒙古自治区" => new[] { "nmg", "nm" },

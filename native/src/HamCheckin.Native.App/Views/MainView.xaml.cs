@@ -345,13 +345,17 @@ public partial class MainView : UserControl, IDisposable
             new MicrophoneDevice(1, "USB 无线电台麦克风（预览设备）")
         };
         MicrophoneComboBox.SelectedIndex = 0;
+        IncludeMicrophoneCheckBox.IsChecked = false;
+        IncludeMicrophoneCheckBox.IsEnabled = true;
+        MicrophoneComboBox.IsEnabled = false;
+        TestMicrophoneButton.IsEnabled = true;
         RecordingPathBox.Text = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Downloads", "HAM点名助手录屏", "点名现场_20260925_213000.mp4");
-        MicrophoneLevelBar.Value = 0.42;
-        MicrophoneStatusText.Text = "测试中 · 峰值 42% · 预览数据";
+        MicrophoneLevelBar.Value = 0;
+        MicrophoneStatusText.Text = "默认关闭 · 勾选后测试输入设备";
         RecordingStatusText.Text = "已准备";
-        RecordingStatsText.Text = "软件窗口 1180×760 · 10 FPS · 麦克风已选择 · MP4";
+        RecordingStatsText.Text = "软件窗口 1180×760 · 10 FPS · 仅视频 · MP4";
         StartRecordingButton.IsEnabled = true;
         PauseRecordingButton.IsEnabled = false;
         StopRecordingButton.IsEnabled = false;
@@ -384,17 +388,39 @@ public partial class MainView : UserControl, IDisposable
 
             var microphones = MicrophoneCapture.EnumerateDevices();
             MicrophoneComboBox.ItemsSource = microphones;
-            if (MicrophoneComboBox.SelectedIndex < 0)
+            if (microphones.Count > 0 && MicrophoneComboBox.SelectedIndex < 0)
             {
                 MicrophoneComboBox.SelectedIndex = 0;
             }
 
-            MicrophoneStatusText.Text = microphones.Count == 0
-                ? "未发现 Windows 麦克风设备；可以关闭麦克风后录制屏幕。"
-                : $"已发现 {microphones.Count} 个输入设备；点击“测试麦克风”查看峰值。";
+            var hasMicrophone = microphones.Count > 0;
+            if (!hasMicrophone)
+            {
+                // Recording the application window is the safe baseline. Do
+                // not leave a checked microphone option pointing at a missing
+                // device, because that turns a harmless screen recording into
+                // a confusing start failure.
+                IncludeMicrophoneCheckBox.IsChecked = false;
+                IncludeMicrophoneCheckBox.IsEnabled = false;
+                MicrophoneComboBox.IsEnabled = false;
+                TestMicrophoneButton.IsEnabled = false;
+                MicrophoneStatusText.Text = "未发现 Windows 麦克风设备；当前仅录制软件窗口，可稍后刷新。";
+            }
+            else
+            {
+                IncludeMicrophoneCheckBox.IsEnabled = true;
+                TestMicrophoneButton.IsEnabled = true;
+                IncludeMicrophoneChanged(this, new RoutedEventArgs());
+                MicrophoneStatusText.Text =
+                    $"已发现 {microphones.Count} 个输入设备；默认不录音，勾选后可测试并选择输入。";
+            }
         }
         catch (Exception exception)
         {
+            IncludeMicrophoneCheckBox.IsChecked = false;
+            IncludeMicrophoneCheckBox.IsEnabled = false;
+            MicrophoneComboBox.IsEnabled = false;
+            TestMicrophoneButton.IsEnabled = false;
             MicrophoneStatusText.Text = $"设备枚举失败：{exception.Message}";
         }
 
@@ -616,9 +642,10 @@ public partial class MainView : UserControl, IDisposable
         PauseRecordingButton.IsEnabled = active && _recordingService.State is RecordingState.Recording or RecordingState.Paused;
         StopRecordingButton.IsEnabled = active;
         PauseRecordingButton.Content = paused ? "继续" : "暂停";
-        IncludeMicrophoneCheckBox.IsEnabled = !active;
+        var hasMicrophone = MicrophoneComboBox.Items.Count > 0;
+        IncludeMicrophoneCheckBox.IsEnabled = !active && hasMicrophone;
         MicrophoneComboBox.IsEnabled = IncludeMicrophoneCheckBox.IsChecked == true && !active;
-        TestMicrophoneButton.IsEnabled = !active;
+        TestMicrophoneButton.IsEnabled = !active && hasMicrophone;
     }
 
     private static string GetDefaultRecordingPath() => Path.Combine(

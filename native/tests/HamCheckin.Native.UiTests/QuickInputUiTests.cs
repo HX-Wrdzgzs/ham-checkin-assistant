@@ -709,11 +709,11 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             var check = (Button)window.FindName("CheckButton")!;
             var sponsor = (Button)window.FindName("SponsorButton")!;
 
-            Assert.Equal("1.0.18", version.Text);
+            Assert.Equal("1.0.19", version.Text);
             Assert.Equal("开发者：BA4THG（HX-Wrdzgzs）", developer.Text);
             Assert.Contains("当前已是最新", status.Text);
             Assert.Contains("本地候选版", notes.Text);
-            Assert.Contains("未知尾缀单独保留待修正", notes.Text);
+            Assert.Contains("未知尾缀保留待修正", notes.Text);
             Assert.True(check.IsEnabled);
             Assert.Equal("赞助开发", sponsor.Content);
 
@@ -827,6 +827,10 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             };
             window.Show();
             window.UpdateLayout();
+            var recordingTarget = ScreenCapture.CreateTarget(window);
+            var frame = ScreenCapture.CaptureFrame(recordingTarget);
+            Assert.Equal(recordingTarget.Width * recordingTarget.Height * 4, frame.Length);
+
             view.ShowPage("Recording");
             view.SetPreviewRecordingData();
             window.UpdateLayout();
@@ -838,6 +842,38 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             Assert.NotNull(view.FindName("StartRecordingButton"));
             Assert.Equal("已准备", ((TextBlock)view.FindName("RecordingStatusText")!).Text);
             Assert.Contains("MP4", ((TextBlock)view.FindName("RecordingStatsText")!).Text);
+
+            view.Dispose();
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void RecordingDefaultsToApplicationWindowOnlyUntilMicrophoneIsOptedIn()
+    {
+        _fixture.Run(() =>
+        {
+            var view = new MainView { DataContext = MainViewModel.CreatePreview() };
+            var window = new Window
+            {
+                Width = 1_180,
+                Height = 760,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                Content = view
+            };
+
+            window.Show();
+            window.UpdateLayout();
+            view.ShowPage("Recording");
+            view.UpdateLayout();
+
+            var microphoneCheckBox = (CheckBox)view.FindName("IncludeMicrophoneCheckBox")!;
+            var target = (TextBlock)view.FindName("RecordingTargetText")!;
+            var output = (TextBox)view.FindName("RecordingPathBox")!;
+            Assert.False(microphoneCheckBox.IsChecked == true);
+            Assert.Contains("仅录制软件窗口", target.Text);
+            Assert.EndsWith(".mp4", output.Text, StringComparison.OrdinalIgnoreCase);
 
             view.Dispose();
             window.Close();

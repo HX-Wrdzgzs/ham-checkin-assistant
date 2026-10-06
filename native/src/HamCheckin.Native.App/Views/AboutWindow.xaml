@@ -25,7 +25,7 @@
             <Border Grid.Column="1" Background="{StaticResource AccentSoftBrush}" CornerRadius="12" Padding="14,8" VerticalAlignment="Center">
                 <StackPanel>
                     <TextBlock Text="当前版本" FontSize="10" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center"/>
-                <TextBlock x:Name="CurrentVersionText" Text="1.0.18" FontSize="20" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"/>
+                <TextBlock x:Name="CurrentVersionText" Text="1.0.19" FontSize="20" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"/>
                 </StackPanel>
             </Border>
         </Grid>
