@@ -10,6 +10,7 @@
 | Native 核心自动化测试 | PASS，187 / 187；`artifacts/test-results/1.0.17-catalog-root-core/core-1.0.17-catalog-root.trx` |
 | WPF UI 自动化测试 | PASS，30 / 30；`artifacts/test-results/1.0.17-catalog-root-ui/ui-1.0.17-catalog-root.trx`；包含主窗口/小窗前中尾部编辑、双窗口同步、IME 元数据、录屏 MP4 与麦克风、响应式按钮边界 |
 | 发布 EXE 真实启动与键盘黑盒 | PASS；1.0.17 单文件 EXE `WaitForInputIdle=true`、保持运行 8 秒、隔离数据库和资料库路径均生效；主窗口和快速小窗前/中/尾部编辑均保持后缀，并直接读取 9 组视频/全国缩写识别样例解析卡；`artifacts/published-blackbox-1.0.17-r24/report.json` |
+| 发布 EXE 在线启动与输入可用性 | PASS（动态更新状态读取单独未验证）；候选 EXE 未使用 `--disable-network`，保持运行、主窗口/小窗输入和 9 组识别均通过；`artifacts/published-blackbox-1.0.17-r24-online/report.json`；原始驱动在 UI Automation 查询动态更新状态控件时未返回，不能把该字段写成 PASS |
 | 1.0.17 自包含候选 EXE | PASS；文件版本 `1.0.17.0`；实际字节数、SHA-256 和候选副本以 `artifacts/candidate-1.0.17-r24/SHA256SUMS.txt` 为准 |
 | 全国行政区 ASCII 别名审计 | PASS；4,762 个唯一 ASCII 别名，0 个失败 |
 | 行政区歧义审计 | PASS；269 个真实碰撞，0 个错误强行解析；`鼓楼区`、`栖霞区`、`东乡`保留候选并要求选择 |
@@ -18,10 +19,11 @@
 | 视频样例识别审计 | PASS；`7900`、`jsycxs`、`山东qcd`、`广东省汕头市m507`、`bh8` 样例均按当前规则得到结果；完整机器结果见候选包 `识别准确性审计.json` |
 | WPF 效果图渲染 | PASS；1.0.17-r24 自包含发布物实际输出 10 张真实控件效果图，含 800×600 窄窗和录屏/麦克风页 |
 | 候选包校验清单 | PASS；`SHA256SUMS.txt` 与候选 EXE 当前哈希一致 |
+| NativeUpdateService 真实更新链路 | PASS（稳定 v1.0.5）；项目自己的更新服务在 GitHub API 403 时回退到 `main/updates/latest.json`，实际下载 78,580,274 字节并完成 SHA-256 校验，临时文件删除；`artifacts/update-live-probe/result.json` |
 
 当前候选包中的正式证据文件：`artifacts/candidate-1.0.17-r24/输入与核心测试.trx`、`WPF黑盒测试.trx`、`发布包黑盒测试.json`、`识别准确性审计.json` 和 `SHA256SUMS.txt`。
 
-当前仍未宣称完成的项目：真实微软拼音现场操作、用户可见的 Microsoft Excel 修复提示流程、长时间录屏稳定性、1.0.17 远程 GitHub Release 资产下载，以及用户生产库迁移。它们必须在现场或真实发布通道验证，不能由本地隔离测试替代。现有稳定 v1.0.5 下载链路已单独通过 SHA-256 校验，但不能代替 1.0.17 Release 验证。
+当前仍未宣称完成的项目：真实微软拼音现场操作、用户可见的 Microsoft Excel 修复提示流程、长时间录屏稳定性、1.0.17 远程 GitHub Release 资产下载、发布 EXE 动态启动更新状态控件的 UI Automation 读取，以及用户生产库迁移。它们必须在现场或真实发布通道验证，不能由本地隔离测试替代。现有稳定 v1.0.5 下载链路已单独通过项目更新服务的清单回退、实际下载和 SHA-256 校验，但不能代替 1.0.17 Release 验证。
 
 ## 历史：1.0.14-r15 验证
 
