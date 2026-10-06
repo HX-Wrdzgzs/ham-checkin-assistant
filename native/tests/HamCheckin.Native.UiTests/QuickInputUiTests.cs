@@ -674,7 +674,7 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             var check = (Button)window.FindName("CheckButton")!;
             var sponsor = (Button)window.FindName("SponsorButton")!;
 
-            Assert.Equal("1.0.15", version.Text);
+            Assert.Equal("1.0.16", version.Text);
             Assert.Equal("开发者：BA4THG（HX-Wrdzgzs）", developer.Text);
             Assert.Contains("当前已是最新", status.Text);
             Assert.Contains("本地候选版", notes.Text);
@@ -872,6 +872,17 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
 
                 var actions = (FrameworkElement)view.FindName("HeaderActionsPanel")!;
                 Assert.True(actions.ActualWidth > 0, $"{width}x{height} 顶部场次按钮没有布局宽度。");
+                if (width < 1_100)
+                {
+                    Assert.Equal(1, Grid.GetRow(actions));
+                    Assert.Equal(2, Grid.GetColumnSpan(actions));
+                    Assert.Equal(HorizontalAlignment.Left, actions.HorizontalAlignment);
+                }
+                else
+                {
+                    Assert.Equal(0, Grid.GetRow(actions));
+                    Assert.Equal(1, Grid.GetColumn(actions));
+                }
                 foreach (var name in HeaderActionNames)
                 {
                     var button = (Button)view.FindName(name)!;
@@ -1271,7 +1282,7 @@ public sealed class WpfDispatcherFixture : IDisposable
 internal sealed class UpdateProbeHandler : HttpMessageHandler
 {
     private const string ManifestDownload =
-        "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v1.0.15/HAM.exe";
+        "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v1.0.16/HAM.exe";
 
     public List<string> Requests { get; } = new();
 
@@ -1289,7 +1300,7 @@ internal sealed class UpdateProbeHandler : HttpMessageHandler
 
         if (url == NativeVersion.StableManifestUrl)
         {
-            var json = $"{{\"version\":\"1.0.15\",\"tag_name\":\"v1.0.15\",\"download_url\":\"{ManifestDownload}\",\"sha256\":\"{new string('a', 64)}\"}}";
+            var json = $"{{\"version\":\"1.0.16\",\"tag_name\":\"v1.0.16\",\"download_url\":\"{ManifestDownload}\",\"sha256\":\"{new string('a', 64)}\"}}";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json")

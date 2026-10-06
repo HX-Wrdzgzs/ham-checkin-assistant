@@ -25,6 +25,7 @@ public partial class MainView : UserControl, IDisposable
     private bool _imeComposing;
     private long _appliedInputRevision;
     private string? _lastShownPage;
+    private bool _isVisualReady;
     private readonly ScreenRecordingService _recordingService = new();
     private readonly DispatcherTimer _recordingTimer;
     private MicrophoneCapture? _microphoneTest;
@@ -46,6 +47,7 @@ public partial class MainView : UserControl, IDisposable
     {
         if (!System.ComponentModel.DesignerProperties.GetIsInDesignMode(this))
         {
+            _isVisualReady = true;
             SyncInputBox(_viewModel?.InputDraft, moveCaretToEnd: false);
             if (!_recordingDevicesLoaded)
             {
@@ -69,7 +71,18 @@ public partial class MainView : UserControl, IDisposable
         // content area gets the space that the fixed-width labels used to
         // consume.
         var compact = ActualWidth < 1_080;
+        var compactHeader = ActualWidth < 1_100;
         SidebarColumn.Width = new GridLength(compact ? 72 : 190);
+        Grid.SetRow(HeaderActionsPanel, compactHeader ? 1 : 0);
+        Grid.SetColumn(HeaderActionsPanel, compactHeader ? 0 : 1);
+        Grid.SetColumnSpan(HeaderActionsPanel, compactHeader ? 2 : 1);
+        HeaderActionsPanel.HorizontalAlignment = compactHeader
+            ? HorizontalAlignment.Left
+            : HorizontalAlignment.Right;
+        HeaderActionsPanel.MaxWidth = compactHeader ? double.PositiveInfinity : 520;
+        HeaderActionsPanel.Margin = compactHeader
+            ? new Thickness(0, 8, 0, 0)
+            : new Thickness(0);
         BrandTextPanel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         WorkspaceLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         QuickNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
@@ -619,7 +632,7 @@ public partial class MainView : UserControl, IDisposable
         if (!ShouldAnimate()) return;
         SuccessFlash.BeginAnimation(OpacityProperty, new DoubleAnimation
         {
-            From = 0.16, To = 0, Duration = TimeSpan.FromMilliseconds(110),
+            From = 0.08, To = 0, Duration = TimeSpan.FromMilliseconds(80),
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         });
     }
@@ -879,14 +892,16 @@ public partial class MainView : UserControl, IDisposable
     private void AnimatePage(FrameworkElement page)
     {
         if (!ShouldAnimate()) { page.Opacity = 1; page.RenderTransform = Transform.Identity; return; }
-        var translate = new TranslateTransform(4, 0);
-        page.RenderTransform = translate; page.Opacity = 0;
+        var translate = new TranslateTransform(3, 0);
+        page.RenderTransform = translate; page.Opacity = 0.92;
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        page.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(90)) { EasingFunction = ease });
-        translate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(4, 0, TimeSpan.FromMilliseconds(95)) { EasingFunction = ease });
+        page.BeginAnimation(OpacityProperty, new DoubleAnimation(0.92, 1, TimeSpan.FromMilliseconds(70)) { EasingFunction = ease });
+        translate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(3, 0, TimeSpan.FromMilliseconds(75)) { EasingFunction = ease });
     }
 
-    private bool ShouldAnimate() => SystemParameters.ClientAreaAnimation && (_viewModel?.AnimationsEnabled ?? true);
+    private bool ShouldAnimate() => _isVisualReady
+        && SystemParameters.ClientAreaAnimation
+        && (_viewModel?.AnimationsEnabled ?? true);
 
     private static FieldKind? FieldFromColumn(int column, bool quickGrid) => column switch
     {
