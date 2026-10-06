@@ -12,7 +12,7 @@
         DataContextChanged="Window_DataContextChanged"
         SizeChanged="Window_SizeChanged"
         Closing="Window_Closing">
-    <Grid Margin="12" Background="{StaticResource AppBackgroundBrush}">
+    <Grid Margin="12" Background="{StaticResource AppBackgroundBrush}" ClipToBounds="True">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -28,14 +28,23 @@
             <TextBox x:Name="QuickInputBox" Height="44" Style="{StaticResource InputTextBox}" FontSize="16" IsEnabled="{Binding IsQuickInputAvailable}" PreviewKeyDown="Input_PreviewKeyDown" TextChanged="QuickInputBox_TextChanged" GotKeyboardFocus="QuickInputBox_GotKeyboardFocus" AutomationProperties.Name="快速点名输入" AutomationProperties.AutomationId="quick-input-window"/>
             <Button x:Name="QuickSubmitButton" Grid.Column="1" Content="提交" Style="{StaticResource PrimaryButton}" Command="{Binding SubmitCommand}" IsEnabled="{Binding IsSessionWritable}" Margin="8,0,0,0" MinWidth="72"/>
         </Grid>
-        <StackPanel Grid.Row="2" VerticalAlignment="Top">
-            <WrapPanel>
-            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,5,5"><StackPanel><TextBlock Text="呼号" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Callsign}" FontSize="12" FontWeight="Bold"/></StackPanel></Border>
-            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,5,5"><StackPanel><TextBlock Text="QTH" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Qth}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></StackPanel></Border>
-            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,5,5"><StackPanel><TextBlock Text="设备" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Device}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></StackPanel></Border>
-            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,5,5"><StackPanel><TextBlock Text="天线" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Antenna}" FontSize="12" TextTrimming="CharacterEllipsis"/></StackPanel></Border>
-            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,5,5"><StackPanel><TextBlock Text="功率" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Power}" FontSize="12" FontWeight="Bold" Foreground="{StaticResource SuccessBrush}"/></StackPanel></Border>
-            </WrapPanel>
+        <ScrollViewer x:Name="QuickContentScrollViewer"
+                      Grid.Row="2"
+                      VerticalAlignment="Stretch"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      CanContentScroll="False"
+                      Focusable="False"
+                      ClipToBounds="True"
+                      PanningMode="VerticalOnly">
+            <StackPanel x:Name="QuickParsePanel" VerticalAlignment="Top">
+            <UniformGrid Columns="5" Margin="0,0,0,5">
+            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,4,0"><StackPanel><TextBlock Text="呼号" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Callsign}" FontSize="12" FontWeight="Bold" TextTrimming="CharacterEllipsis"/></StackPanel></Border>
+            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,4,0"><StackPanel><TextBlock Text="QTH" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Qth}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></StackPanel></Border>
+            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,4,0"><StackPanel><TextBlock Text="设备" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Device}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></StackPanel></Border>
+            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0,0,4,0"><StackPanel><TextBlock Text="天线" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Antenna}" FontSize="12" TextTrimming="CharacterEllipsis"/></StackPanel></Border>
+            <Border Style="{StaticResource CardBorder}" Padding="8,5" Margin="0"><StackPanel><TextBlock Text="功率" FontSize="9" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Power}" FontSize="12" FontWeight="Bold" Foreground="{StaticResource SuccessBrush}" TextTrimming="CharacterEllipsis"/></StackPanel></Border>
+            </UniformGrid>
             <StackPanel Margin="0,0,0,4">
                 <StackPanel.Style>
                     <Style TargetType="StackPanel">
@@ -80,7 +89,8 @@
                     </ScrollViewer>
                 </StackPanel>
             </Border>
-        </StackPanel>
-        <Grid Grid.Row="3" Margin="0,6,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="{Binding StatusMessage}" FontSize="10" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/><Button Grid.Column="1" Content="打开主窗口" Style="{StaticResource BaseButton}" Padding="10,5" Click="ShowMain_Click"/></Grid>
+            </StackPanel>
+        </ScrollViewer>
+        <Grid x:Name="QuickFooterGrid" Grid.Row="3" Margin="0,6,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="{Binding StatusMessage}" FontSize="10" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/><Button Grid.Column="1" Content="打开主窗口" Style="{StaticResource BaseButton}" Padding="10,5" Click="ShowMain_Click"/></Grid>
     </Grid>
 </Window>

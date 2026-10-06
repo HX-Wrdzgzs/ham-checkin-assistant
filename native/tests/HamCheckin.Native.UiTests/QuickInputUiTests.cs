@@ -426,6 +426,8 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             var input = (TextBox)quick.FindName("QuickInputBox")!;
             var submit = (Button)quick.FindName("QuickSubmitButton")!;
             var recent = (Border)quick.FindName("RecentCheckinsCard")!;
+            var content = (ScrollViewer)quick.FindName("QuickContentScrollViewer")!;
+            var footer = (Grid)quick.FindName("QuickFooterGrid")!;
 
             Assert.True(quick.ActualWidth >= quick.MinWidth);
             Assert.True(quick.ActualHeight >= quick.MinHeight);
@@ -436,6 +438,13 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             Assert.True(submit.IsVisible);
             Assert.True(submit.ActualWidth >= 60);
             Assert.Equal(Original, input.Text);
+
+            var inputBottom = input.TranslatePoint(new Point(0, input.ActualHeight), quick).Y;
+            var contentTop = content.TranslatePoint(new Point(0, 0), quick).Y;
+            var contentBottom = contentTop + content.ActualHeight;
+            var footerTop = footer.TranslatePoint(new Point(0, 0), quick).Y;
+            Assert.True(inputBottom <= contentTop + 0.5, $"输入框与解析区重叠：{inputBottom}/{contentTop}");
+            Assert.True(contentBottom <= footerTop + 0.5, $"解析区越过底部状态栏：{contentBottom}/{footerTop}");
 
             quick.Height = 280;
             quick.UpdateLayout();
