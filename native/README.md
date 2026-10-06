@@ -46,7 +46,7 @@ $dotnet10 = "$env:USERPROFILE\.codex\dotnet10\dotnet.exe"
 & $dotnet10 run --project .\native\src\HamCheckin.Native.App -c Release --no-build -- --render-ui-set "$env:USERPROFILE\Downloads\HAM点名助手-UI效果图-1.0.18-r27"
 ```
 
-本次 r15 候选版效果图固定输出十张：快速点名、窄窗口、独立小窗、QTH 字段修正、设备资料库、地点包省市树、快捷键设置、关于/版本/更新、编辑场次信息、录屏与麦克风。
+当前候选版效果图固定输出十张：快速点名、窄窗口、独立小窗、QTH 字段修正、设备资料库、地点包省市树、快捷键设置、关于/版本/更新、编辑场次信息、录屏与麦克风。
 
 ## 更新渠道边界
 
