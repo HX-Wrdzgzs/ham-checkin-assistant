@@ -9,7 +9,7 @@
 | Release 全解决方案编译 | PASS，0 error；保留 34 条代码分析器 warning，没有编译错误 |
 | Native 核心自动化测试 | PASS，187 / 187；`artifacts/test-results/1.0.17-catalog-root-core/core-1.0.17-catalog-root.trx` |
 | WPF UI 自动化测试 | PASS，30 / 30；`artifacts/test-results/1.0.17-catalog-root-ui/ui-1.0.17-catalog-root.trx`；包含主窗口/小窗前中尾部编辑、双窗口同步、IME 元数据、录屏 MP4 与麦克风、响应式按钮边界 |
-| 发布 EXE 真实启动与键盘黑盒 | PASS；1.0.17 单文件 EXE `WaitForInputIdle=true`、保持运行 8 秒、隔离数据库和资料库路径均生效；主窗口和快速小窗前/中/尾部编辑均保持后缀，并直接读取四组视频/识别样例解析卡；`artifacts/published-blackbox-1.0.17-r24/report.json` |
+| 发布 EXE 真实启动与键盘黑盒 | PASS；1.0.17 单文件 EXE `WaitForInputIdle=true`、保持运行 8 秒、隔离数据库和资料库路径均生效；主窗口和快速小窗前/中/尾部编辑均保持后缀，并直接读取 9 组视频/全国缩写识别样例解析卡；`artifacts/published-blackbox-1.0.17-r24/report.json` |
 | 1.0.17 自包含候选 EXE | PASS；文件版本 `1.0.17.0`；实际字节数、SHA-256 和候选副本以 `artifacts/candidate-1.0.17-r24/SHA256SUMS.txt` 为准 |
 | 全国行政区 ASCII 别名审计 | PASS；4,762 个唯一 ASCII 别名，0 个失败 |
 | 行政区歧义审计 | PASS；269 个真实碰撞，0 个错误强行解析；`鼓楼区`、`栖霞区`、`东乡`保留候选并要求选择 |
