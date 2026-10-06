@@ -96,7 +96,9 @@ public sealed class CatalogSnapshot
     {
         var key = TextNormalizer.NormalizeKey(token);
         return _qthAliases.TryGetValue(key, out var values)
-            ? values
+            ? values.Select(NormalizeCandidate)
+                .DistinctBy(static item => item.Canonical, StringComparer.Ordinal)
+                .ToArray()
             : Array.Empty<QthCandidate>();
     }
 
@@ -184,13 +186,22 @@ public sealed class CatalogSnapshot
     /// </summary>
     public QthCandidate? ResolveQthInput(string token)
     {
-        var direct = ResolveQth(token);
+        var normalized = token?.Trim() ?? string.Empty;
+        var direct = ResolveQth(normalized);
         if (direct is not null)
         {
             return direct;
         }
 
-        var normalized = token?.Trim() ?? string.Empty;
+        // Exact same-name administrative entries must remain a choice. Do not
+        // continue into the Chinese prefix heuristics, which could otherwise
+        // select one of the same-name districts merely because it happens to
+        // match the city/district scoring order.
+        if (ResolveQthCandidates(normalized).Count > 1)
+        {
+            return null;
+        }
+
         if (normalized.Length < 3)
         {
             return null;
@@ -265,6 +276,15 @@ public sealed class CatalogSnapshot
                 // search below.
                 var contains = pair.Key.Contains(key, StringComparison.Ordinal)
                     || standardKey.Contains(key, StringComparison.Ordinal);
+                if (key.Length < 4
+                    && !pair.Key.StartsWith(key, StringComparison.Ordinal)
+                    && !standardKey.StartsWith(key, StringComparison.Ordinal))
+                {
+                    // A short query must not match the middle of another
+                    // model alias: “k1” is not evidence for “TK11”. Exact
+                    // aliases still resolve before this suggestion path.
+                    contains = false;
+                }
                 var fuzzy = prefix >= minimumFuzzyPrefix;
                 return new
                 {
@@ -734,11 +754,31 @@ public sealed class CatalogSnapshot
             Math.Max(0, candidate.Priority - 1));
     }
 
-    private static QthCandidate NormalizeCandidate(QthCandidate candidate) =>
-        candidate.Canonical switch
+    private static QthCandidate NormalizeCandidate(QthCandidate candidate)
+    {
+        var canonical = candidate.Canonical switch
         {
-            "江苏省盐城市响水区" => candidate with { Canonical = "江苏省盐城市响水县" },
-            "江苏省盐城市滨海区" => candidate with { Canonical = "江苏省盐城市滨海县" },
-            _ => candidate
+            "江苏省盐城市响水区" => "江苏省盐城市响水县",
+            "江苏省盐城市滨海区" => "江苏省盐城市滨海县",
+            _ => candidate.Canonical
         };
+
+        // Some prefecture-level entries in the bundled snapshot use the
+        // prefecture name again as a district (for example
+        // “甘肃省临夏市临夏市”). That is a data-shape artifact, not a
+        // useful QTH. Collapse only the exact Province + City + same District
+        // form, leaving genuine districts untouched.
+        var cityKey = TextNormalizer.NormalizeKey(candidate.City);
+        var districtKey = TextNormalizer.NormalizeKey(candidate.District);
+        var duplicateAdministrativeLevel = cityKey.Length > 0
+            && string.Equals(cityKey, districtKey, StringComparison.Ordinal)
+            && string.Equals(
+                TextNormalizer.NormalizeKey(canonical),
+                TextNormalizer.NormalizeKey(candidate.Province + candidate.City + candidate.District),
+                StringComparison.Ordinal);
+
+        return duplicateAdministrativeLevel
+            ? candidate with { Canonical = candidate.Province + candidate.City, District = string.Empty }
+            : candidate with { Canonical = canonical };
+    }
 }

@@ -674,7 +674,7 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             var check = (Button)window.FindName("CheckButton")!;
             var sponsor = (Button)window.FindName("SponsorButton")!;
 
-            Assert.Equal("1.0.14", version.Text);
+            Assert.Equal("1.0.15", version.Text);
             Assert.Equal("开发者：BA4THG（HX-Wrdzgzs）", developer.Text);
             Assert.Contains("当前已是最新", status.Text);
             Assert.Contains("本地候选版", notes.Text);
@@ -1271,7 +1271,7 @@ public sealed class WpfDispatcherFixture : IDisposable
 internal sealed class UpdateProbeHandler : HttpMessageHandler
 {
     private const string ManifestDownload =
-        "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v1.0.14/HAM.exe";
+        "https://github.com/HX-Wrdzgzs/ham-checkin-assistant/releases/download/v1.0.15/HAM.exe";
 
     public List<string> Requests { get; } = new();
 
@@ -1289,7 +1289,7 @@ internal sealed class UpdateProbeHandler : HttpMessageHandler
 
         if (url == NativeVersion.StableManifestUrl)
         {
-            var json = $"{{\"version\":\"1.0.14\",\"tag_name\":\"v1.0.14\",\"download_url\":\"{ManifestDownload}\",\"sha256\":\"{new string('a', 64)}\"}}";
+            var json = $"{{\"version\":\"1.0.15\",\"tag_name\":\"v1.0.15\",\"download_url\":\"{ManifestDownload}\",\"sha256\":\"{new string('a', 64)}\"}}";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json")

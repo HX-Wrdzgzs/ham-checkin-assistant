@@ -221,6 +221,32 @@ public sealed class ParserTests
         Assert.Contains("bj", result.Unmatched);
     }
 
+    [Fact]
+    public void AmbiguousChineseAdministrativeNameRequiresExplicitQthChoice()
+    {
+        var result = _parser.Parse("ba4aaa 鼓楼区");
+
+        Assert.Empty(result.Qth.Value);
+        Assert.Equal("需要选择", result.Qth.Source);
+        Assert.Contains("江苏省南京市鼓楼区", result.Qth.Candidates!);
+        Assert.Contains("福建省福州市鼓楼区", result.Qth.Candidates!);
+        Assert.Contains("鼓楼区", result.Unmatched);
+    }
+
+    [Theory]
+    [InlineData("临夏市", "甘肃省临夏市")]
+    [InlineData("楚雄市", "云南省楚雄市")]
+    [InlineData("阿克苏市", "新疆维吾尔自治区阿克苏市")]
+    public void SelfNamedPrefectureEntriesDoNotDuplicateTheCityName(
+        string input,
+        string expectedQth)
+    {
+        var result = _parser.Parse($"ba4aaa {input}");
+
+        Assert.Equal(expectedQth, result.Qth.Value);
+        Assert.Empty(result.Unmatched);
+    }
+
     [Theory]
     [InlineData("hesjz", "河北省石家庄市")]
     [InlineData("sxty", "山西省太原市")]

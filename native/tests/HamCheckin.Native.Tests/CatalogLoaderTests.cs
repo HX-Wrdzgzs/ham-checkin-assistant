@@ -47,6 +47,17 @@ public sealed class CatalogLoaderTests : IDisposable
         Assert.Contains("海能达 PD660 VHF", fieldResult.Candidates);
     }
 
+    [Fact]
+    public void ShortDeviceSearchDoesNotSuggestAnEmbeddedUnrelatedAlias()
+    {
+        var catalog = CatalogLoader.CreateBuiltIn();
+
+        var candidates = catalog.SearchDevices("k1", 8);
+
+        Assert.Contains(candidates, item => item.StandardName == "泉盛 UV-K1");
+        Assert.DoesNotContain(candidates, item => item.StandardName == "泉盛 TK11");
+    }
+
     private void CreateLegacyAliases()
     {
         using var connection = OpenCreate(Path.Combine(_root, "ham_checkin.db"));

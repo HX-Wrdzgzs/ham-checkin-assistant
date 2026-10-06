@@ -177,12 +177,13 @@ public sealed class InputParser
         // 先保留明确的中文地点原文，避免 “yz 湖北” 被错误解析为扬州。
         for (var index = 0; index < tokens.Count && qth.Value.Length == 0; index++)
         {
-            if (consumed[index] || ambiguous.Contains(index))
+            var token = tokens[index];
+            if (consumed[index] || ambiguous.Contains(index)
+                || ambiguousQthTokens.Contains(token, StringComparer.Ordinal))
             {
                 continue;
             }
 
-            var token = tokens[index];
             var key = TextNormalizer.NormalizeKey(token);
             if (token.Any(IsCjk) && token.Length >= 2
                 && !TextNormalizer.IsMixedModelAndCjk(token)
