@@ -27,7 +27,9 @@ public partial class AboutWindow : Window, IDisposable
     public void SetPreviewState()
     {
         StatusText.Text = $"云端版本：{NativeVersion.Current}（当前已是最新）";
-        ReleaseNotesText.Text = "1.0.19 本地候选版更新内容\n\n"
+        ReleaseNotesText.Text = "1.0.20 本地候选版更新内容\n\n"
+            + "· 修复工信部同步因请求缺少客户端标识而被网关返回 403 的问题\n"
+            + "· 工信部 401/403 立即提示并保留旧资料库，不再更换分页大小反复重试\n"
             + "· 修复主窗口和快捷小窗在前部/中部修改时覆盖后缀的问题\n"
             + "· 解析结果只显示预览，不回写正在输入的原文\n"
             + "· 扩展全国省、市、区县缩写；完整缩写优先，未知尾缀保留待修正\n"

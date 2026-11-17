@@ -34,3 +34,58 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Migration tests (Test Stage 5)
         run: python -m unittest tests.regression.test_migrations -v
+
+  native:
+    name: Native (.NET 10)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Restore Native solution
+        run: dotnet restore native/HamCheckin.Native.sln
+      - name: Build Native solution
+        run: dotnet build native/HamCheckin.Native.sln --configuration Release --no-restore
+      - name: Test Native solution
+        env:
+          HAM_CHECKIN_NATIVE_UI_TEST: "1"
+        run: >-
+          dotnet test native/HamCheckin.Native.sln --configuration Release --no-build
+          --filter 'Category!=Hardware'
+          --blame-hang-timeout 2m
+          --logger "trx;LogFileName=native-tests.trx"
+      - name: Write Native test metadata
+        if: always()
+        shell: pwsh
+        run: |
+          $commitSha = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "git rev-parse failed." }
+          $dirtyStatus = (git status --porcelain | Out-String).TrimEnd()
+          if ($LASTEXITCODE -ne 0) { throw "git status failed." }
+          $dotnetSdk = (dotnet --version).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "dotnet --version failed." }
+          $metadata = [ordered]@{
+            commitSha = $commitSha
+            dirtyStatus = $dirtyStatus
+            dotnetSdk = $dotnetSdk
+            runnerOS = $env:RUNNER_OS
+            runnerArchitecture = $env:RUNNER_ARCH
+            filter = "Category!=Hardware"
+            testCommand = "dotnet test native/HamCheckin.Native.sln --configuration Release --no-build --filter 'Category!=Hardware' --blame-hang-timeout 2m --logger `"trx;LogFileName=native-tests.trx`""
+            testEnvironment = "HAM_CHECKIN_NATIVE_UI_TEST=1"
+            trxPath = "**/TestResults/*.trx"
+          }
+          New-Item -ItemType Directory -Force -Path "native-test-results" | Out-Null
+          $metadata | ConvertTo-Json -Depth 4 | Set-Content -Path "native-test-results/metadata.json" -Encoding utf8
+      - name: Upload Native test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-test-results
+          path: |
+            **/TestResults/*.trx
+            native-test-results/metadata.json
+          if-no-files-found: warn

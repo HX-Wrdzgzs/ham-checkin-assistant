@@ -1,8 +1,8 @@
 # Windows 原生版开发验收记录
 
-## 1.0.19-r29 当前候选验证（2026-10-06）
+## 历史：1.0.19-r29 候选验证（2026-10-06）
 
-本节是当前源代码和 1.0.19-r29 候选包的最新证据；下方的 1.0.18-r27 及更早内容保留为历史记录，不能与本候选混用。
+本节记录当时源码状态与 `1.0.19-r29` 候选包的历史验收；App 项目源码版本字段为 `1.0.20`（见 [App 项目文件](../src/HamCheckin.Native.App/HamCheckin.Native.App.csproj#L17-L19)），但没有当前 `1.0.20` 产物的动态验收证据，也不代表当前 Native 工作树、远端 Actions 或 Release 已验收。下方的 `1.0.18-r27` 及更早内容也保留为历史记录，不能与本候选混用。
 
 | 检查 | 实际结果 |
 |---|---:|
@@ -23,11 +23,19 @@
 | WPF 效果图渲染 | PASS；1.0.19-r29 自包含发布物实际输出 10 张真实控件效果图，含 800×600 窄窗、关于/版本页和录屏/麦克风页；目录为 `artifacts/published-ui-effects-1.0.19-r29-final-commit` |
 | 侧边栏与页面同步 | PASS；设置页/快速点名页切换后选中状态一致；新增 UI 回归测试包含在 33 / 33 中 |
 | 候选包校验清单 | PASS；`SHA256SUMS.txt` 与候选 EXE 当前哈希一致 |
-| NativeUpdateService 真实更新链路 | PASS（稳定 v1.0.5）；项目自己的更新服务在 GitHub API 403 时回退到 `main/updates/latest.json`，既有 SHA-256 下载/拒绝测试通过；1.0.19-r29 在线启动实际显示已检查更新；候选版尚未创建远程 Release |
+| NativeUpdateService 真实更新链路 | PASS（当时稳定通道 v1.0.5）；项目自己的更新服务在 GitHub API 403 时回退到 `main/updates/latest.json`，既有 SHA-256 下载/拒绝测试通过；1.0.19-r29 在线启动实际显示已检查更新；候选版尚未创建远程 Release |
 
 当前候选包中的正式证据文件：`artifacts/candidate-1.0.19-r29/输入与核心测试.trx`、`WPF黑盒测试.trx`、`发布包黑盒测试.json`、`在线启动输入黑盒.json`、`识别准确性审计.json`、`效果图/` 和 `SHA256SUMS.txt`。源测试原始结果另见 `artifacts/test-results/continuation-r29/core/core-r29.trx` 与 `artifacts/test-results/continuation-r29/ui/ui-r29.trx`。
 
-当前仍未宣称完成的项目：真实微软拼音现场操作、用户可见的 Microsoft Excel 修复提示流程、长时间录屏稳定性、1.0.19 远程 GitHub Release 资产下载，以及用户生产库迁移。它们必须在现场或真实发布通道验证，不能由本地隔离测试替代。现有稳定 v1.0.5 下载链路和 1.0.19-r29 候选启动检查已分别通过真实清单回退/下载/SHA-256 与在线启动黑盒，但不能代替 1.0.19 Release 验证。
+这份 `1.0.19-r29` 历史候选验证仍未宣称完成的项目：真实微软拼音现场操作、用户可见的 Microsoft Excel 修复提示流程、长时间录屏稳定性、1.0.19 远程 GitHub Release 资产下载，以及用户生产库迁移。它们必须在现场或真实发布通道验证，不能由本地隔离测试替代。历史记录中的稳定 v1.0.5 下载链路和 1.0.19-r29 候选启动检查，分别有真实清单回退/下载/SHA-256 与在线启动黑盒证据；这些证据不代表当前稳定通道或当前 1.0.20 Release 已验证，也不能代替 1.0.19 Release 验证。
+
+## 门禁与产物来源（静态配置/代码合同）
+
+以下是仓库当前 workflow/source/test 文本所表述的合同，不是本次运行或远端 Actions/Release 已通过的证据，也不改变上方 1.0.19-r29 历史候选记录的范围。
+
+- 普通 CI 保留 Python 3.11/3.12 legacy job matrix，并配置独立 Native (.NET 10) job 执行 Release build/test（排除 Hardware 类测试），always 上传 TRX 与 metadata；见 [ci.yml](../../.github/workflows/ci.yml#L13-L90)。
+- Release workflow 配置 Python legacy regression 与 Native solution build/test，并从 Native App 项目 self-contained publish `HAM点名助手.exe` 后将明确路径传给 `release.py`；见 [release.yml](../../.github/workflows/release.yml#L24-L83)。这是配置文本，不是本次执行、资产上传或远端 Release 完成证据。
+- `release.py` 以传入 EXE 生成 `HAM.exe`、中文名和 GitHub ASCII 名兼容副本，校验副本与主文件 SHA-256 一致并写 `SHA256SUMS.txt`；既有测试源码包含输入 EXE 逐字节复制、checksum 内容和同大小/mtime 旧资产替换断言，见 [release.py](../../release.py#L117-L159) 与 [test_release_prepare.py](../../tests/regression/test_release_prepare.py#L27-L78)。测试本次未运行。
 
 ## 历史：1.0.14-r15 验证
 

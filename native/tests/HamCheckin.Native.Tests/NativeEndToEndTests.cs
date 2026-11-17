@@ -71,9 +71,13 @@ public sealed class NativeEndToEndTests
                 rows.Select(static row => row.SequenceNo));
             Assert.Equal("ok", await reopened.QuickCheckAsync());
 
-            await new ExcelExportService().ExportAsync(reopenedSession, rows, exportPath);
+            Assert.All(rows, row => Assert.Equal(session.Id, row.SessionId));
+            Directory.CreateDirectory(Path.GetDirectoryName(exportPath)!);
+            await new ExcelExportService().ExportAsync(reopenedSession, rows,
+                new ExcelExportTarget(Path.GetDirectoryName(exportPath)!, Path.GetFileName(exportPath), false));
             Assert.True(File.Exists(exportPath));
             AssertExcelWorkbook(exportPath, reopenedSession, rows.Count);
+            Assert.Equal(rows, await reopened.LoadAllForExportAsync(session.Id));
         }
         finally
         {

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -46,6 +47,7 @@ public sealed class MiitCatalogSyncService : IAsyncDisposable
 {
     private const string GatewayUrl = "https://ythzxfw.miit.gov.cn/api-gateway/jpaas-jags-server/interface/gateway";
     private const string SourceUrl = "https://ythzxfw.miit.gov.cn/jgcx/index.html";
+    private const string ClientUserAgent = "HAM-Checkin-Assistant/1.0";
     private const string CategoryId = "352";
     private const string RuleVersion = "radio-v2";
     private static readonly int[] PageSizeFallbacks = { 1000, 500, 200, 100, 50, 20, 5 };
@@ -57,10 +59,46 @@ public sealed class MiitCatalogSyncService : IAsyncDisposable
     {
         _catalogPath = catalogPath ?? AppPaths.MiitRadioCatalogPath;
         _partialPath = _catalogPath + ".partial.db";
-        _httpClient = httpClient ?? new HttpClient
+        _httpClient = httpClient ?? CreateHttpClient();
+
+        // 工信部查询页通过浏览器访问查询页后，再从同一会话调用网关。网关前的
+        // WAF 对没有浏览器请求头、来源页或 XHR 标识的客户端可能返回 403；同步
+        // 仍然是后台任务，但请求必须复现这一小段正式网页请求链。
+        if (_httpClient.DefaultRequestHeaders.UserAgent.Count == 0)
         {
-            Timeout = TimeSpan.FromSeconds(25)
-        };
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                + "(KHTML, like Gecko) Chrome/140.0 Safari/537.36 "
+                + ClientUserAgent);
+        }
+
+        if (_httpClient.DefaultRequestHeaders.Referrer is null)
+        {
+            _httpClient.DefaultRequestHeaders.Referrer = new Uri(SourceUrl);
+        }
+
+        if (_httpClient.DefaultRequestHeaders.Accept.Count == 0)
+        {
+            _httpClient.DefaultRequestHeaders.Accept.ParseAdd("application/json, text/plain, */*");
+        }
+
+        if (!_httpClient.DefaultRequestHeaders.Contains("Accept-Language"))
+        {
+            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation(
+                "Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+        }
+
+        if (!_httpClient.DefaultRequestHeaders.Contains("Origin"))
+        {
+            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation(
+                "Origin", "https://ythzxfw.miit.gov.cn");
+        }
+
+        if (!_httpClient.DefaultRequestHeaders.Contains("X-Requested-With"))
+        {
+            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation(
+                "X-Requested-With", "XMLHttpRequest");
+        }
     }
 
     public string CatalogPath => _catalogPath;
@@ -130,6 +168,7 @@ public sealed class MiitCatalogSyncService : IAsyncDisposable
 
         try
         {
+            await WarmupGatewaySessionAsync(cancellationToken).ConfigureAwait(false);
             while (logicalPage <= maxPages)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -266,6 +305,15 @@ public sealed class MiitCatalogSyncService : IAsyncDisposable
                     var result = await FetchPageAsync(requestPage, size, cancellationToken).ConfigureAwait(false);
                     return result with { PageSize = size };
                 }
+                catch (HttpRequestException exception)
+                    when (exception.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                {
+                    // 401/403 是访问策略或接口状态问题，换分页大小和重复请求都不会
+                    // 修复它；立即保留旧正式库并把真实原因交给 UI。
+                    throw new InvalidOperationException(
+                        $"工信部接口拒绝访问（HTTP {(int)exception.StatusCode.Value}）。请稍后重试；本次不会替换现有本地资料库。",
+                        exception);
+                }
                 catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidOperationException)
                 {
                     lastError = exception;
@@ -278,6 +326,32 @@ public sealed class MiitCatalogSyncService : IAsyncDisposable
             }
         }
         throw new InvalidOperationException($"工信部第 {requestPage} 页读取失败：{lastError?.Message ?? "未知错误"}", lastError);
+    }
+
+    private async Task WarmupGatewaySessionAsync(CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, SourceUrl);
+        request.Headers.Referrer = new Uri(SourceUrl);
+        request.Headers.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+
+        using var response = await _httpClient.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        if (response.IsSuccessStatusCode)
+        {
+            // 读取响应体，让带 Cookie 的 HttpClientHandler 完成站点会话建立；不把网页
+            // 内容保存到磁盘，也不让网页内容进入录入热路径。
+            await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            throw new InvalidOperationException(
+                $"工信部查询页拒绝访问（HTTP {(int)response.StatusCode}）。请稍后重试；本次不会替换现有本地资料库。");
+        }
+
+        throw new InvalidOperationException(
+            $"工信部查询页打开失败（HTTP {(int)response.StatusCode} {response.ReasonPhrase}）。");
     }
 
     private async Task<PageResult> FetchPageAsync(int page, int pageSize, CancellationToken cancellationToken)
@@ -305,7 +379,13 @@ public sealed class MiitCatalogSyncService : IAsyncDisposable
         values.Add(new KeyValuePair<string, string>("sign", Sm3.HashHex(signingPayload)));
         using var content = new FormUrlEncodedContent(values);
         using var response = await _httpClient.PostAsync(GatewayUrl, content, cancellationToken).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"工信部网关返回 HTTP {(int)response.StatusCode} ({response.ReasonPhrase})。",
+                inner: null,
+                statusCode: response.StatusCode);
+        }
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var outer = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
         var root = outer.RootElement;
@@ -543,6 +623,20 @@ public sealed class MiitCatalogSyncService : IAsyncDisposable
     private static void Report(IProgress<MiitSyncProgress>? progress, SyncAccumulator report, string status, string message) => progress?.Report(report.ToProgress(status, message));
     private static void Add(SqliteCommand command, string name, object value) => command.Parameters.AddWithValue(name, value ?? string.Empty);
     private static void DeleteIfExists(string path) { if (File.Exists(path)) File.Delete(path); }
+
+    private static HttpClient CreateHttpClient()
+    {
+        var handler = new HttpClientHandler
+        {
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+            UseCookies = true,
+            CookieContainer = new CookieContainer()
+        };
+        return new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(25)
+        };
+    }
 
     public ValueTask DisposeAsync() { _httpClient.Dispose(); return ValueTask.CompletedTask; }
 

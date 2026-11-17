@@ -1,5 +1,44 @@
 # 变更日志
 
+## 未发布
+
+### 修复
+
+- 2026-11-14：Excel导出固定场次快照并使用净化后的单文件名和所选目录；先生成临时工作簿，再提交目标。仅经用户明确确认的既有目标才允许替换，确认授权的是该路径提交时的当前文件（非内容/文件ID CAS），确认提示警告此残余风险且默认 `MessageBoxResult.No`；未授权目标及竞争新建不覆盖、失败关闭。SDK 10.0.401 `--no-restore`：Native导出/E2E/VideoReplay窄测16/16、UI切场1/1、默认No改动后UI切场1/1（exit 0）；不代表完整UI验收。
+- 2026-11-15：修复 Native 启动时静默隐藏旧库迁移 marker 结果：completed/skipped marker 均可见；skipped 明确提示旧库未导入且该 marker 不能证明迁移完成；无旧库仍显示普通就绪状态，本地会话可用。使用临时 SQLite、禁网、测试全局状态序列化/恢复的隔离 ViewModel 测试 `CatalogPublicationViewModelTests` 11 passed/0 failed/0 skipped；.NET SDK 10.0.401 Release solution build exit 0（0 warnings/0 errors）；correctness review approve（0 Critical/0 Major）。真实桌面 UI 未验证（仅隔离 ViewModel 测试），不代表生产迁移验收。
+
+### 文档
+
+- 2026-11-15：ENG-018 阻塞状态记录：先前本地定向 `Test-Path`/`Get-Item`、`Get-ChildItem docs/audit -Recurse` 及隐藏 glob 检索均未发现被 `docs/audit/SOURCE_COVERAGE.md:127`、`docs/audit/ISSUE_INVENTORY.md:76` 引用的三个文件：`docs/audit/E/untracked-complete-6168.txt`（manifest）、`docs/audit/E/untracked-metadata-complete.json`（metadata）、`docs/audit/E/untracked-classification-complete-6168.csv`（classification）；`docs/audit/`仅见5份Markdown。该证据仅说明所列路径当前本机不存在，不推断其曾否生成/何时丢失或当前精确未跟踪数量。解除条件：恢复权威manifest/metadata/classification文件，或用户另行批准以新的只读方法重建清单；本次未重建或打开/哈希扫描资产。
+
+- 2026-11-15：完成 NAT-T010 别名优先级窄验收：按源码确认用户/本地/内置/MIIT优先序，合成测试验证本地胜同名MIIT、user/default碰撞与disabled过滤、同键异canonical QTH不猜，预览UI验证显式QTH选择保持。使用 .NET SDK 10.0.401、`--no-restore`，先Core后UI串行运行；Core 5/5、UI 2/2 passed，均0 failed/0 skipped、exit 0。先前并行运行曾因共享Core输出目录报CS2012，归类为测试编排问题，串行重跑通过；未访问真实目录、网络或设备。
+- 2026-11-15：将 LB-T03 场次身份标为阻塞：静态源码与既有合成测试显示同日同名冲突会拒绝整批而非静默合并，逐场次映射可记录source、旧/新ID、external字段与reason；但不同主控/external key的同日同名场次应独立导入还是审计归并，尚无批准规则。未运行测试或访问SQLite实例。解除条件：明确处理规则并以合成fixture核验不静默合并及旧→新ID/reason可追溯。
+- 2026-11-15：将 LB-T07 旧源路径预检标为阻塞：静态检查显示可通过启动参数 `--data-root` 覆盖默认Root，设置页仅展示Native `DatabasePath`；迁移调用处按 `FoundLegacyDatabase` 分支显示状态。未见设置页目录选择、旧源指纹/计数/迁移版本展示或调用处明确的“源缺失”提示。此为静态调用链证据，不推断迁移器内部缺源处理；未运行代码/测试或访问SQLite。解除条件：明确非默认源路径选择、源/目标/迁移版本呈现、指纹/计数语义及缺源提示流程，再以隔离合成目录验证。
+- 2026-11-15：将 NAT-T018 动作/设置持久化标为阻塞：静态检查未证实快捷键绑定有独立Native配置持久化/重启加载；部分默认绑定未接入动作分发，Win modifier不能由设置UI录入，冲突校验/状态可见性有缺口（证据：`MainViewModel.cs:65-99,540-594`、`MainView.xaml.cs:287-318,751-767,1038-1056`、`ShortcutGesture.cs:38-53`、`GlobalHotkeyService.cs:20-47,74-81`、`MainView.xaml:245`）。TODO要求记录级撤销语义先确认，但当前没有批准规则。未运行代码/测试，未接触用户配置或生产数据库。解除条件：明确撤销范围/确认流程，完成持久化及快捷动作/Win/冲突可见行为，再用隔离配置和合成UI测试验证。
+- 2026-11-15：将 LB-T09 有限兼容金标准标为阻塞：本地Python测试对呼号、歧义QTH、设备别名和unmatched有候选断言，但未绑定经认可的0.9.4源码提交/hash或用户批准范围；signal/power冲突及旧时间文本覆盖没有golden。不得由旧实现臆造expected；未运行Python或访问历史数据库。解除条件：取得可绑定且获批准的golden矩阵，补齐缺项后以纯合成fixture验证。
+- 2026-11-15：将 ENG-005 供应/复现策略标为阻塞：本地依赖定义及CI/Release含范围或浮动版本，Native未启用锁定模式，检查范围未见依赖漏洞扫描步骤或含时间/来源/版本的扫描记录；可变Action tag与SDK选择也未锁定。版本号及EXE SHA256不是漏洞扫描证据，离线未知不代表无漏洞。未联网或运行安装、restore、构建、扫描。解除条件：批准依赖来源/锁定策略，并取得获授权扫描工具/数据源后验证图漂移失败并记录扫描元数据。
+- 2026-11-15：将 MEDIA-TODO-03 历史构建绑定标为阻塞：现有跟踪 triage 记录目录无经校验的程序集/源码 commit/发布清单映射，录制构建未确定；无法绑定时需用户确认仅作历史交互参考，而已检文档中无该确认。此为已跟踪文本记录，不是对原片的重新检查；未读取/散列/播放原片，未做声音或语义审查。解除条件：提供可追溯构建链，或明确仅历史参考决定；拟报当前缺陷另须当前构建独立复现。
+- 2026-11-15：完成 LB-T10 工具/Gate/附件文档收尾：记录 Python legacy 与 Native .NET 10 CI/Release 配置分层、Native App 自包含 EXE 来源及兼容副本同字节/SHA-256 代码合同。依据 workflow、release.py 与既有测试源码静态核验；本次未运行构建、测试、CI 或 Release，远端 Actions/Release 未验收。
+- 2026-11-15：完成 LB-T08 旧资料依赖/画像文档盘点：记录旧库位置、CatalogLoader 只读别名字段/筛选及缺库/读取错误影响，以及 LegacyProfileReader 按呼号读取最多 300 条未删除签到并由 ProfileAggregator 聚合；源码/测试文本搜索未发现直接调用点，实际用户入口未知。此项仅为静态源码证据，不表示完整历史 schema 或生产库验收；仅改文档/TODO，未访问 SQLite 实例或运行构建/测试。
+- 2026-11-15：完成 NAT-T025 文档事实边界收尾：README、Native README 与验证记录区分源码 `1.0.20` 和 `1.0.19-r29` 历史候选，修正仍以现在时描述 `1.0.19` 的文案，并注明没有当前 `1.0.20` 产物动态验收证据；TODO 中 NAT-T025 保持开放。仅改获准的五份文档；相对链接/锚点和 `git diff --check` 核验通过；未运行构建、测试、当前 EXE 动态验收、联网或发布。
+
+- 2026-11-15：LB-T01 文档收尾：README 明确现行 Native 与 Python 0.9.4 历史兼容/维护工具边界，并将 365dt 历史同步标为非 Native；`RELEASE_GATE.md` 标注为 2026-08-23 的 Python 0.9.4 历史快照，旧 PASS/测试数不代表 Native C# 或当前 GitHub Actions 状态。未删历史资料，未改源码/workflow，未运行构建、测试或发布。
+
+- 2026-11-15：完成 LB-T06 别名优先级文档同步：CatalogLoader 只读取 `enabled=1` 项，以归一化键写入既有字典，非 user 项先、user 项后，组内按 priority/id 升序并由后项覆盖。合成 `uv-5r`/`uv5r` 碰撞验证 user 值覆盖 default、较高 user priority 胜出、disabled 行忽略。SDK 10.0.401 Release solution build exit 0（43 warnings/0 errors），CatalogLoaderTests 16/16 passed/0 failed/0 skipped。本次仅同步 TODO/CHANGELOG，未重跑构建或测试；其他目录、同步及真实数据验收仍开放。
+
+- 2026-11-15：新增 Native 旧 Python SQLite 兼容说明，并同步架构、用户指南与 Native README。按当前 `LegacyPythonMigration` 白名单记录 `sessions/checkins` 的保留、默认、跳过、只读依赖和不迁移项；标明受限 v1–v10 版本/身份契约及未核实历史 schema。既有本机合成 SQLite 运行记录 4 passed/0 failed/0 skipped、源/备份逐值一致；不代表真实生产迁移或全历史格式已验收。本次仅文档收尾，未改代码、未重跑构建或测试。
+
+- 2026-11-14：本地工作区新增 `AGENTS.md`、`docs/PROJECT_CONTEXT.md`、`TODO.md`、`docs/DECISIONS.md` 与 `docs/ISSUE_INVENTORY.md`，建立长期协作规则、项目事实、完整任务、决策及问题入口，并链接Phase0审计证据。上述文件仍为未跟踪文件，不纳入本次Native代码推送；仅文档维护，未修复产品行为或运行产品构建/测试。
+- 2026-11-14：本地工作区新增 `docs/UI_INFORMATION_ARCHITECTURE.md` 与 `docs/UI_DESIGN_SPEC.md` 两份Phase2候选设计，并将 PLAN-P2-IA / PLAN-P2-DESIGN 标记为 Blocked 等待用户决定七项设计选择。相关文档和任务记录仍未跟踪，不纳入本次Native代码推送；未改产品行为或运行产品构建/测试。
+- 2026-11-14：用户已确认 Phase2 UI 设计方向（七项均选 A），IA / 设计规范与任务记录已在本地工作区更新；相关文件仍未跟踪，不纳入本次Native代码推送。未改运行代码/产品行为，未运行构建/测试。
+- 2026-11-14：本地工作区同步用户继续完成全项目目标的授权边界，校正Phase2文档任务状态与依赖，明确LB-T02/T08作为PLAN-P3-DATA前置，并保留旧字段迁移 / ProfileReader等实施事项为开放。相关文档/TODO/决策文件仍未跟踪，不纳入本次Native代码推送；未改产品行为。构建、测试、网络、生产数据、桌面/外设及发布均 NOT_RUN。
+- 2026-11-14：授权边界补充：六份指定文档明确 Git commit 与 Git push 不属于本目标授权且各自须单独授权；TODO 依赖 / 状态只读核验通过。仅文档维护；未改产品行为，未运行产品构建或测试。
+- 2026-11-15：完成 ENG-002 本机SDK与离线资产核验：使用 `%USERPROFILE%\.codex\dotnet10\dotnet.exe`（SDK 10.0.401）及本地 NuGet 缓存唯一源，Native solution `win-x64` restore exit 0；五项目 assets 均匹配 `net10.0` / `net10.0-windows` 和 `win-x64`。release workflow声明 `10.0.x`，普通PR Native gate仍开放（ENG-001）；未运行构建或测试。仅更新任务/证据记录，未改产品行为。
+- 2026-11-15：澄清根README与Native README的C#现行产品/Python历史工具边界、Native工程版本来源、SDK和自包含目标；校正release tag版本来源、release.py省略参数的历史默认版本、Native测试过滤范围与PR gate缺口。仅文档更新；未改工具/工作流/产品行为，未运行发布、构建或测试。
+- 2026-11-15：完成 ENG-001 Native PR Gate 文档同步：普通 PR 与 main push 配置独立 Windows/.NET 10 Native job，原 Python 3.11/3.12 matrix 保留；Native job restore/build，按 `Category!=Hardware` 测试并上传 TRX 与运行元数据。离线本机证据：SDK 10.0.401 Release solution build exit 0（0 warnings/0 errors）、Native Core tests 207/207、合成编译错误和断言错误注入均触发预期失败。远端 GitHub Actions 未运行，本条不表示远端 CI 已执行。本次仅文档同步，未运行构建或测试。
+- 2026-11-15：ENG-014 的 Native 硬件测试分层与门禁代码已实现：硬件用例按 `Category=Hardware` 分类并要求显式授权、无设备时Skip；PR Native job 排除该类测试，配置20分钟job/2分钟hang timeout，并在always条件下上传TRX与dirty/SDK/OS/filter等元数据。SDK 10.0.401 Release solution build exit 0（0 warnings/0 errors）；临时xUnit过滤器的安全/Hardware分类选择各1/1通过；合成编译/断言故障日志显示相应失败。复审 approve（0 Critical/0 Major，1 Minor：麦克风枚举超时不取消原生枚举，可能遗留延迟异常）。真实设备/桌面与远端GitHub Actions未运行；TODO ENG-014保持In Progress，不代表完整现场验收。
+- 2026-11-15：完成 NAT-T009 资料快照发布实现验收：每次reload以新内置基础层和指定外部root overlay重建，generation排序阻止旧结果覆盖新快照；load失败/取消保留当前快照并保持报告一致，发布后当前草稿立即重解析且QTH刷新失败/取消不抑制新解析；InputParser/CatalogSnapshot热路径不调用磁盘、SQLite、网络或Loader。SDK 10.0.401 Release solution build exit 0（14 warnings/0 errors）；CatalogLoaderTests 15/15、CatalogPublicationViewModelTests 7/7 passed（均0 failed/0 skipped）；correctness review无Critical/Major。仅覆盖NAT-T009；NAT-T010、LB-T06、PLAN-P3-CATALOG仍开放。真实桌面UI未验证。
+
 ## 1.0.19 (2026-10-06)
 
 - 修复主窗口和快捷小窗在输入中间修改时覆盖后缀的问题；解析器、候选查询和后台任务不再写回用户原文，旧修订结果不会覆盖新草稿。

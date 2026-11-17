@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
@@ -21,6 +23,8 @@ public sealed record LegacyImportResult(
 public static class LegacyPythonMigration
 {
     private const string MigrationKey = "legacy_python_import";
+    private const string SessionMappingKeyPrefix = "legacy_python_session_map:";
+    private const int MappingVersion = 1;
 
     public static async Task<LegacyImportResult> TryImportAsync(
         string nativeDatabasePath,
@@ -28,61 +32,140 @@ public static class LegacyPythonMigration
         string backupRoot,
         CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(legacyDatabasePath))
+        var hasLegacyDatabase = File.Exists(legacyDatabasePath);
+        if (!hasLegacyDatabase && !File.Exists(nativeDatabasePath))
         {
             return new(false, false, 0, 0, 0, "", "没有发现旧版 Python 数据库。");
         }
 
         var nativeDirectory = Path.GetDirectoryName(nativeDatabasePath)
             ?? throw new InvalidOperationException("无法确定原生数据库目录。");
-        Directory.CreateDirectory(nativeDirectory);
-        Directory.CreateDirectory(backupRoot);
-
-        await using var native = await OpenAsync(nativeDatabasePath, SqliteOpenMode.ReadWriteCreate,
+        if (hasLegacyDatabase)
+        {
+            Directory.CreateDirectory(nativeDirectory);
+        }
+        await using var native = await OpenAsync(nativeDatabasePath,
+            hasLegacyDatabase ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadWrite,
             cancellationToken).ConfigureAwait(false);
-        if (await HasCompletedMarkerAsync(native, cancellationToken).ConfigureAwait(false))
+        var hasNativeMeta = await TableExistsAsync(native, "native_meta", cancellationToken).ConfigureAwait(false);
+        if (!hasNativeMeta)
         {
-            return new(true, false, 0, 0, 0, "", "旧版数据库已经完成过迁移。");
+            return new(hasLegacyDatabase, false, 0, 0, 0, "",
+                hasLegacyDatabase ? "原生数据库尚未初始化，未导入旧版数据。" : "没有发现旧版 Python 数据库。");
         }
 
-        var nativeCheckinCount = await ScalarIntAsync(native,
-            "SELECT COUNT(*) FROM checkins WHERE is_deleted = 0", cancellationToken).ConfigureAwait(false);
-        if (nativeCheckinCount > 0)
+        var marker = await ReadMigrationMarkerAsync(native, cancellationToken).ConfigureAwait(false);
+        if (marker is not null)
         {
-            await WriteMarkerAsync(native, new
+            if (marker.Status is "completed" or "skipped-native-data-exists")
             {
-                status = "skipped-native-data-exists",
-                source = legacyDatabasePath,
-                at = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
-            }, cancellationToken).ConfigureAwait(false);
-            return new(true, false, 0, 0, 0, "", "原生数据库已有签到记录，未自动合并旧库；旧库保持不变。");
+                var mappingCount = marker.MappingVersion == MappingVersion
+                    && !string.IsNullOrWhiteSpace(marker.Source)
+                    && marker.MappedSessions.HasValue
+                    ? await CountSessionMappingsAsync(native, marker.Source, cancellationToken)
+                        .ConfigureAwait(false)
+                    : -1;
+                var traceable = marker.MappingVersion == MappingVersion
+                    && marker.MappedSessions == mappingCount;
+                var message = marker.Status == "skipped-native-data-exists"
+                    ? "原生数据库已有数据，未导入旧版数据库；该标记不能证明旧版数据库已经完成过迁移，历史映射不可追溯。"
+                    : traceable
+                        ? "旧版数据库已经完成过迁移。"
+                        : "旧版数据库已经完成过迁移；历史映射不可追溯。";
+                return new(true, false, 0, 0, 0, "", message);
+            }
+
+            return new(true, false, 0, 0, 0, "",
+                "原生迁移标记状态无法识别，已拒绝重复导入。");
         }
 
-        var backupPath = await CreateBackupAsync(legacyDatabasePath, backupRoot, cancellationToken)
-            .ConfigureAwait(false);
-        var legacy = await ReadLegacyAsync(legacyDatabasePath, cancellationToken).ConfigureAwait(false);
-        if (!legacy.HasRequiredTables)
+        if (!hasLegacyDatabase)
         {
-            return new(true, false, 0, 0, 0, backupPath, "旧版数据库缺少 sessions/checkins 表，未导入。");
+            return new(false, false, 0, 0, 0, "", "没有发现旧版 Python 数据库。");
+        }
+
+        if (!await TableExistsAsync(native, "sessions", cancellationToken).ConfigureAwait(false)
+            || !await TableExistsAsync(native, "checkins", cancellationToken).ConfigureAwait(false))
+        {
+            return new(true, false, 0, 0, 0, "", "原生数据库尚未初始化，未导入旧版数据。");
+        }
+
+        var source = Path.GetFullPath(legacyDatabasePath);
+        var legacy = await ReadLegacyAsync(legacyDatabasePath, cancellationToken).ConfigureAwait(false);
+        var validationError = ValidateLegacy(legacy);
+        if (validationError is not null)
+        {
+            return new(true, false, 0, 0, 0, "", validationError);
         }
 
         await using var transaction = await native.BeginTransactionAsync(
             System.Data.IsolationLevel.Serializable, cancellationToken).ConfigureAwait(false);
         var sqliteTransaction = (SqliteTransaction)transaction;
-        var sessionMap = new Dictionary<long, long>();
-        var importedSessions = 0;
-        var importedCheckins = 0;
-        var skippedCheckins = 0;
-
+        var sessionPlans = new List<LegacySessionPlan>(legacy.Sessions.Count);
         foreach (var oldSession in legacy.Sessions)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var date = string.IsNullOrWhiteSpace(oldSession.Date) ? "1970-01-01" : oldSession.Date;
             var name = string.IsNullOrWhiteSpace(oldSession.Name) ? "旧版场次" : oldSession.Name;
+            var mapping = await ReadSessionMappingAsync(
+                native, sqliteTransaction, source, oldSession.Id, cancellationToken).ConfigureAwait(false);
+            if (mapping is not null && !MatchesMapping(mapping, source, oldSession, date, name))
+            {
+                return new(true, false, 0, 0, 0, "", "旧场次映射与源记录不一致，已拒绝整批导入。");
+            }
+
             var existing = await FindSessionAsync(native, sqliteTransaction, date, name, cancellationToken)
                 .ConfigureAwait(false);
-            if (existing is null)
+            if (existing.HasValue)
             {
+                if (mapping is null || mapping.NativeSessionId != existing.Value)
+                {
+                    return new(true, false, 0, 0, 0, "",
+                        "原生数据库存在同日同名场次，但没有精确且已持久化的旧场次映射；已拒绝整批导入。");
+                }
+
+                sessionPlans.Add(new(oldSession, date, name, existing));
+                continue;
+            }
+
+            if (mapping is not null)
+            {
+                if (!await SessionMatchesAsync(native, sqliteTransaction, mapping.NativeSessionId,
+                        date, name, cancellationToken).ConfigureAwait(false))
+                {
+                    return new(true, false, 0, 0, 0, "",
+                        "已持久化旧场次映射的原生目标不存在或不匹配；已拒绝整批导入。");
+                }
+
+                sessionPlans.Add(new(oldSession, date, name, mapping.NativeSessionId));
+                continue;
+            }
+
+            sessionPlans.Add(new(oldSession, date, name, null));
+        }
+
+        Directory.CreateDirectory(backupRoot);
+        var backupPath = await CreateBackupAsync(legacyDatabasePath, backupRoot, cancellationToken)
+            .ConfigureAwait(false);
+        var sessionMap = new Dictionary<long, long>();
+        var importedSessions = 0;
+        var importedCheckins = 0;
+        var skippedCheckins = 0;
+        foreach (var plan in sessionPlans)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            long nativeSessionId;
+            string decision;
+            string reason;
+            if (plan.NativeSessionId.HasValue)
+            {
+                nativeSessionId = plan.NativeSessionId.Value;
+                decision = "reused-exact-map";
+                reason = "exact-persisted-old-to-native-session-mapping";
+            }
+            else
+            {
+                var oldSession = plan.Session;
                 await using var insert = native.CreateCommand();
                 insert.Transaction = sqliteTransaction;
                 insert.CommandText = """
@@ -92,8 +175,8 @@ public static class LegacyPythonMigration
                     VALUES($name, $date, $status, $operator, $repeater,
                            $workbook, $sheet, $started, $ended, $created, $updated)
                     """;
-                Add(insert, "$name", name);
-                Add(insert, "$date", date);
+                Add(insert, "$name", plan.Name);
+                Add(insert, "$date", plan.Date);
                 Add(insert, "$status", NormalizeStatus(oldSession.Status));
                 Add(insert, "$operator", oldSession.OperatorCallsign);
                 Add(insert, "$repeater", oldSession.RepeaterName);
@@ -104,15 +187,21 @@ public static class LegacyPythonMigration
                 Add(insert, "$created", FallbackNow(oldSession.CreatedAt));
                 Add(insert, "$updated", FallbackNow(oldSession.UpdatedAt));
                 await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                nativeSessionId = await FindSessionAsync(native, sqliteTransaction, plan.Date, plan.Name,
+                    cancellationToken).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("已插入的原生场次无法重新读取。");
                 importedSessions++;
-                existing = await FindSessionAsync(native, sqliteTransaction, date, name, cancellationToken)
-                    .ConfigureAwait(false);
+                decision = "created";
+                reason = GetIdentityType(oldSession) == "none"
+                    ? "new-native-session-without-external-identity"
+                    : "new-native-session-with-external-identity";
             }
 
-            if (existing is not null)
-            {
-                sessionMap[oldSession.Id] = existing.Value;
-            }
+            sessionMap[plan.Session.Id] = nativeSessionId;
+            await WriteSessionMappingAsync(native, sqliteTransaction, new LegacySessionMapping(
+                source, backupPath, plan.Session.Id, nativeSessionId, plan.Date, plan.Name,
+                GetIdentityType(plan.Session), plan.Session.ExternalSource, plan.Session.ExternalUid,
+                plan.Session.ExternalKey, decision, reason), cancellationToken).ConfigureAwait(false);
         }
 
         foreach (var oldCheckin in legacy.Checkins)
@@ -134,9 +223,7 @@ public static class LegacyPythonMigration
                 continue;
             }
 
-            var sequence = oldCheckin.SequenceNo > 0
-                ? oldCheckin.SequenceNo
-                : 1;
+            var sequence = oldCheckin.SequenceNo > 0 ? oldCheckin.SequenceNo : 1;
             while (await ExistsAsync(native, sqliteTransaction,
                        "SELECT 1 FROM checkins WHERE session_id = $session AND sequence_no = $sequence AND is_deleted = 0 LIMIT 1",
                        new[] { ("$session", (object)sessionId), ("$sequence", (object)sequence) },
@@ -187,7 +274,9 @@ public static class LegacyPythonMigration
         await WriteMarkerAsync(native, new
         {
             status = "completed",
-            source = legacyDatabasePath,
+            mappingVersion = MappingVersion,
+            mappedSessions = legacy.Sessions.Count,
+            source,
             backup = backupPath,
             sessions = importedSessions,
             checkins = importedCheckins,
@@ -205,22 +294,27 @@ public static class LegacyPythonMigration
     {
         await using var connection = await OpenAsync(path, SqliteOpenMode.ReadOnly, cancellationToken)
             .ConfigureAwait(false);
+        var userVersion = await ScalarIntAsync(connection, "PRAGMA user_version", cancellationToken)
+            .ConfigureAwait(false);
         if (!await TableExistsAsync(connection, "sessions", cancellationToken).ConfigureAwait(false)
             || !await TableExistsAsync(connection, "checkins", cancellationToken).ConfigureAwait(false))
         {
-            return new(false, Array.Empty<LegacySession>(), Array.Empty<LegacyCheckin>());
+            return new(false, userVersion, 0, Array.Empty<LegacySession>(), Array.Empty<LegacyCheckin>());
         }
 
         var sessionColumns = await ColumnsAsync(connection, "sessions", cancellationToken).ConfigureAwait(false);
+        var identityColumnCount = new[] { "external_source", "external_uid", "external_key" }
+            .Count(sessionColumns.Contains);
         var checkinColumns = await ColumnsAsync(connection, "checkins", cancellationToken).ConfigureAwait(false);
         var sessions = await ReadSessionsAsync(connection, sessionColumns, cancellationToken).ConfigureAwait(false);
         var checkins = await ReadCheckinsAsync(connection, checkinColumns, cancellationToken).ConfigureAwait(false);
-        return new(true, sessions, checkins);
+        return new(true, userVersion, identityColumnCount, sessions, checkins);
     }
 
     private static async Task<IReadOnlyList<LegacySession>> ReadSessionsAsync(
         SqliteConnection connection, IReadOnlySet<string> columns, CancellationToken cancellationToken)
     {
+        var orderBy = columns.Contains("id") ? " ORDER BY id" : string.Empty;
         var sql = $"""
             SELECT {Expr(columns, "id", "0")} AS id,
                    {Expr(columns, "name")} AS name,
@@ -233,8 +327,11 @@ public static class LegacyPythonMigration
                    {Expr(columns, "status", "'active'")} AS status,
                    {Expr(columns, "created_at")} AS created_at,
                    {Expr(columns, "updated_at")} AS updated_at,
-                   {Expr(columns, "excel_sheet_name")} AS excel_sheet_name
-            FROM sessions ORDER BY id
+                   {Expr(columns, "excel_sheet_name")} AS excel_sheet_name,
+                   {Expr(columns, "external_source")} AS external_source,
+                   {Expr(columns, "external_uid")} AS external_uid,
+                   {Expr(columns, "external_key")} AS external_key
+            FROM sessions{orderBy}
             """;
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
@@ -245,7 +342,8 @@ public static class LegacyPythonMigration
             rows.Add(new(
                 GetLong(reader, 0), GetText(reader, 1), GetText(reader, 2), GetText(reader, 3),
                 GetText(reader, 4), GetText(reader, 5), GetText(reader, 6), GetText(reader, 7),
-                GetText(reader, 8), GetText(reader, 9), GetText(reader, 10), GetText(reader, 11)));
+                GetText(reader, 8), GetText(reader, 9), GetText(reader, 10), GetText(reader, 11),
+                GetText(reader, 12), GetText(reader, 13), GetText(reader, 14)));
         }
         return rows;
     }
@@ -253,6 +351,22 @@ public static class LegacyPythonMigration
     private static async Task<IReadOnlyList<LegacyCheckin>> ReadCheckinsAsync(
         SqliteConnection connection, IReadOnlySet<string> columns, CancellationToken cancellationToken)
     {
+        var orderByColumns = new List<string>();
+        if (columns.Contains("session_id"))
+        {
+            orderByColumns.Add("session_id");
+        }
+        if (columns.Contains("sequence_no"))
+        {
+            orderByColumns.Add("sequence_no");
+        }
+        if (columns.Contains("id"))
+        {
+            orderByColumns.Add("id");
+        }
+        var orderBy = orderByColumns.Count == 0
+            ? string.Empty
+            : $" ORDER BY {string.Join(", ", orderByColumns)}";
         var sql = $"""
             SELECT {Expr(columns, "id", "0")} AS id,
                    {Expr(columns, "session_id", "0")} AS session_id,
@@ -274,7 +388,7 @@ public static class LegacyPythonMigration
                    {Expr(columns, "is_deleted", "0")} AS is_deleted,
                    {Expr(columns, "created_at")} AS created_at,
                    {Expr(columns, "updated_at")} AS updated_at
-            FROM checkins ORDER BY session_id, sequence_no, id
+            FROM checkins{orderBy}
             """;
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
@@ -368,16 +482,57 @@ public static class LegacyPythonMigration
         return columns;
     }
 
-    private static async Task<bool> HasCompletedMarkerAsync(
+    private static async Task<MigrationMarker?> ReadMigrationMarkerAsync(
         SqliteConnection connection, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT value FROM native_meta WHERE key = $key LIMIT 1";
         Add(command, "$key", MigrationKey);
-        var value = Convert.ToString(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+        var result = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        if (result is null) return null;
+        var value = Convert.ToString(result, CultureInfo.InvariantCulture) ?? "";
+
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return new("", 0, null, null);
+            }
+
+            var status = root.TryGetProperty("status", out var statusValue)
+                && statusValue.ValueKind == JsonValueKind.String
+                ? statusValue.GetString() ?? ""
+                : "";
+            var source = root.TryGetProperty("source", out var sourceValue)
+                && sourceValue.ValueKind == JsonValueKind.String
+                ? sourceValue.GetString()
+                : null;
+            var mappingVersion = root.TryGetProperty("mappingVersion", out var mappingVersionValue)
+                && mappingVersionValue.TryGetInt32(out var parsedMappingVersion)
+                ? parsedMappingVersion
+                : 0;
+            int? mappedSessions = root.TryGetProperty("mappedSessions", out var mappedSessionsValue)
+                && mappedSessionsValue.TryGetInt32(out var parsedMappedSessions)
+                ? parsedMappedSessions
+                : null;
+            return new(status, mappingVersion, source, mappedSessions);
+        }
+        catch (JsonException)
+        {
+            return new("", 0, null, null);
+        }
+    }
+
+    private static async Task<int> CountSessionMappingsAsync(
+        SqliteConnection connection, string source, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM native_meta WHERE substr(key, 1, length($prefix)) = $prefix";
+        Add(command, "$prefix", SourceMappingKeyPrefix(source));
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
             CultureInfo.InvariantCulture);
-        return value?.Contains("\"status\":\"completed\"", StringComparison.Ordinal) == true
-            || value?.Contains("\"status\":\"skipped-native-data-exists\"", StringComparison.Ordinal) == true;
     }
 
     private static async Task WriteMarkerAsync(
@@ -394,6 +549,126 @@ public static class LegacyPythonMigration
         Add(command, "$value", JsonSerializer.Serialize(marker));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    private static string? ValidateLegacy(LegacySnapshot legacy)
+    {
+        if (!legacy.HasRequiredTables)
+        {
+            return "旧版数据库缺少 sessions/checkins 表，未导入。";
+        }
+
+        var expected = legacy.UserVersion >= 1 && legacy.UserVersion <= 5 ? 0
+            : legacy.UserVersion >= 6 && legacy.UserVersion <= 10 ? 3 : -1;
+        if (expected < 0)
+        {
+            return $"旧库 PRAGMA user_version={legacy.UserVersion} 不在已核实的 v1-v10 范围内，已拒绝整批导入。";
+        }
+        if (legacy.IdentityColumnCount != expected)
+        {
+            return $"旧库 v{legacy.UserVersion} 的身份列契约不匹配，已拒绝整批导入。";
+        }
+
+        var sessionIds = new HashSet<long>();
+        var names = new HashSet<(string Date, string Name)>();
+        var identities = new HashSet<(string Source, string Uid, string Key)>();
+        foreach (var session in legacy.Sessions)
+        {
+            if (!sessionIds.Add(session.Id))
+            {
+                return "旧库存在重复场次ID，已拒绝整批导入。";
+            }
+            var date = string.IsNullOrWhiteSpace(session.Date) ? "1970-01-01" : session.Date;
+            var name = string.IsNullOrWhiteSpace(session.Name) ? "旧版场次" : session.Name;
+            if (!names.Add((date, name)))
+            {
+                return "旧库存在同日同名的多个场次，已拒绝整批导入。";
+            }
+            var parts = new[] { session.ExternalSource, session.ExternalUid, session.ExternalKey }
+                .Count(value => !string.IsNullOrWhiteSpace(value));
+            if (parts is > 0 and < 3)
+            {
+                return "旧场次身份三元组部分为空，已拒绝整批导入。";
+            }
+            if (parts == 3 && !identities.Add((session.ExternalSource, session.ExternalUid, session.ExternalKey)))
+            {
+                return "旧库存在重复身份三元组，已拒绝整批导入。";
+            }
+        }
+        return null;
+    }
+
+    private static string GetIdentityType(LegacySession session) =>
+        string.IsNullOrWhiteSpace(session.ExternalSource)
+            && string.IsNullOrWhiteSpace(session.ExternalUid)
+            && string.IsNullOrWhiteSpace(session.ExternalKey) ? "none" : "external-triple";
+
+    private static bool MatchesMapping(
+        LegacySessionMapping mapping, string source, LegacySession session, string date, string name) =>
+        string.Equals(mapping.Source, source, StringComparison.Ordinal)
+        && mapping.OldSessionId == session.Id && mapping.NativeSessionId > 0
+        && !string.IsNullOrWhiteSpace(mapping.BackupPath)
+        && !string.IsNullOrWhiteSpace(mapping.Decision)
+        && !string.IsNullOrWhiteSpace(mapping.Reason)
+        && string.Equals(mapping.Date, date, StringComparison.Ordinal)
+        && string.Equals(mapping.Name, name, StringComparison.Ordinal)
+        && string.Equals(mapping.IdentityType, GetIdentityType(session), StringComparison.Ordinal)
+        && string.Equals(mapping.ExternalSource, session.ExternalSource, StringComparison.Ordinal)
+        && string.Equals(mapping.ExternalUid, session.ExternalUid, StringComparison.Ordinal)
+        && string.Equals(mapping.ExternalKey, session.ExternalKey, StringComparison.Ordinal);
+
+    private static string SourceMappingKeyPrefix(string source)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source)));
+        return $"{SessionMappingKeyPrefix}{hash}:";
+    }
+
+    private static string SessionMappingKey(string source, long oldSessionId) =>
+        $"{SourceMappingKeyPrefix(source)}{oldSessionId.ToString(CultureInfo.InvariantCulture)}";
+
+    private static async Task<LegacySessionMapping?> ReadSessionMappingAsync(
+        SqliteConnection connection, SqliteTransaction transaction, string source,
+        long oldSessionId, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT value FROM native_meta WHERE key = $key LIMIT 1";
+        Add(command, "$key", SessionMappingKey(source, oldSessionId));
+        var result = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        if (result is null) return null;
+        var value = Convert.ToString(result, CultureInfo.InvariantCulture) ?? "";
+        try
+        {
+            return JsonSerializer.Deserialize<LegacySessionMapping>(value)
+                ?? throw new JsonException("旧场次映射为空。");
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException("已持久化的旧场次映射无法读取。", exception);
+        }
+    }
+
+    private static async Task WriteSessionMappingAsync(
+        SqliteConnection connection, SqliteTransaction transaction, LegacySessionMapping mapping,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO native_meta(key, value) VALUES($key, $value)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """;
+        Add(command, "$key", SessionMappingKey(mapping.Source, mapping.OldSessionId));
+        Add(command, "$value", JsonSerializer.Serialize(mapping));
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> SessionMatchesAsync(
+        SqliteConnection connection, SqliteTransaction transaction, long id,
+        string date, string name, CancellationToken cancellationToken) =>
+        await ExistsAsync(connection, transaction,
+            "SELECT 1 FROM sessions WHERE id = $id AND date = $date AND name = $name LIMIT 1",
+            new[] { ("$id", (object)id), ("$date", (object)date), ("$name", (object)name) },
+            cancellationToken).ConfigureAwait(false);
 
     private static async Task<long?> FindSessionAsync(
         SqliteConnection connection, SqliteTransaction transaction,
@@ -454,13 +729,28 @@ public static class LegacyPythonMigration
 
     private sealed record LegacySnapshot(
         bool HasRequiredTables,
+        int UserVersion,
+        int IdentityColumnCount,
         IReadOnlyList<LegacySession> Sessions,
         IReadOnlyList<LegacyCheckin> Checkins);
+
+    private sealed record LegacySessionPlan(
+        LegacySession Session, string Date, string Name, long? NativeSessionId);
+
+    private sealed record LegacySessionMapping(
+        string Source, string BackupPath, long OldSessionId, long NativeSessionId,
+        string Date, string Name, string IdentityType,
+        string ExternalSource, string ExternalUid, string ExternalKey,
+        string Decision, string Reason);
+
+    private sealed record MigrationMarker(
+        string Status, int MappingVersion, string? Source, int? MappedSessions);
 
     private sealed record LegacySession(
         long Id, string Name, string Date, string OperatorCallsign, string RepeaterName,
         string StartedAt, string EndedAt, string ExcelPath, string Status,
-        string CreatedAt, string UpdatedAt, string ExcelSheetName);
+        string CreatedAt, string UpdatedAt, string ExcelSheetName,
+        string ExternalSource, string ExternalUid, string ExternalKey);
 
     private sealed record LegacyCheckin(
         long Id, long SessionId, int SequenceNo, string CheckinTime, string Callsign,

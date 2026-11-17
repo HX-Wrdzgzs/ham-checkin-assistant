@@ -93,7 +93,35 @@ public sealed record CatalogLoadReport(
     int QthPlaceCount,
     int MiitModelCount,
     long ElapsedMilliseconds,
-    string Message);
+    string Message)
+{
+    public long Generation { get; init; }
+    public bool Succeeded { get; init; } = true;
+    public bool Published { get; init; }
+
+    public bool Equals(CatalogLoadReport? other) =>
+        other is not null
+        && EqualityComparer<string>.Default.Equals(DataRoot, other.DataRoot)
+        && DeviceAliasCount == other.DeviceAliasCount
+        && QthAliasCount == other.QthAliasCount
+        && QthPlaceCount == other.QthPlaceCount
+        && MiitModelCount == other.MiitModelCount
+        && ElapsedMilliseconds == other.ElapsedMilliseconds
+        && EqualityComparer<string>.Default.Equals(Message, other.Message);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(DataRoot);
+        hash.Add(DeviceAliasCount);
+        hash.Add(QthAliasCount);
+        hash.Add(QthPlaceCount);
+        hash.Add(MiitModelCount);
+        hash.Add(ElapsedMilliseconds);
+        hash.Add(Message);
+        return hash.ToHashCode();
+    }
+}
 
 public enum FieldKind
 {

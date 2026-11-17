@@ -209,6 +209,11 @@ internal sealed class Mp4FileWriter : IDisposable
                 MediaFoundationNative.MfMediaTypeVideo,
                 MediaFoundationNative.MfVideoFormatRgb32);
             SetRatio(inputType, MediaFoundationNative.MfMtFrameSize, _width, _height);
+            // ScreenCapture returns a contiguous top-down RGB32 buffer.  Without
+            // an explicit positive stride, Media Foundation may interpret RGB32
+            // using its bottom-up default and the finished MP4 appears upside down.
+            SetUInt32(inputType, MediaFoundationNative.MfMtDefaultStride,
+                checked((uint)(_width * 4)));
             SetRatio(inputType, MediaFoundationNative.MfMtFrameRate, _framesPerSecond, 1);
             SetRatio(inputType, MediaFoundationNative.MfMtPixelAspectRatio, 1, 1);
             SetUInt32(inputType, MediaFoundationNative.MfMtInterlaceMode, Progressive);

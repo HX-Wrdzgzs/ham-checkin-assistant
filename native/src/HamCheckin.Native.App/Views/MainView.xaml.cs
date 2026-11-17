@@ -10,6 +10,7 @@ using HamCheckin.Native.App.Infrastructure;
 using HamCheckin.Native.App.Media;
 using HamCheckin.Native.App.ViewModels;
 using HamCheckin.Native.Core;
+using HamCheckin.Native.Core.Export;
 using HamCheckin.Native.Core.Parsing;
 using HamCheckin.Native.Core.Updates;
 using Microsoft.Win32;
@@ -110,6 +111,7 @@ public partial class MainView : UserControl, IDisposable
             _viewModel.SubmissionSucceeded -= ViewModel_SubmissionSucceeded;
             _viewModel.QuickWindowRequested -= ViewModel_QuickWindowRequested;
             _viewModel.InputDraftChanged -= ViewModel_InputDraftChanged;
+            _viewModel.ExportRequested -= ViewModel_ExportRequested;
         }
         _viewModel = e.NewValue as MainViewModel;
         if (_viewModel is not null)
@@ -118,7 +120,44 @@ public partial class MainView : UserControl, IDisposable
             _viewModel.SubmissionSucceeded += ViewModel_SubmissionSucceeded;
             _viewModel.QuickWindowRequested += ViewModel_QuickWindowRequested;
             _viewModel.InputDraftChanged += ViewModel_InputDraftChanged;
+            _viewModel.ExportRequested += ViewModel_ExportRequested;
             SyncInputBox(_viewModel.InputDraft, moveCaretToEnd: false);
+        }
+    }
+
+    private async void ViewModel_ExportRequested(SessionInfo snapshot)
+    {
+        var viewModel = _viewModel;
+        if (viewModel is null) return;
+        var owner = Window.GetWindow(this);
+        try
+        {
+            var dialog = new SaveFileDialog
+            {
+                Title = "导出当前场次",
+                Filter = "Excel 工作簿 (*.xlsx)|*.xlsx",
+                DefaultExt = ".xlsx",
+                AddExtension = true,
+                OverwritePrompt = false,
+                CheckPathExists = true,
+                FileName = ExcelExportService.CreateDefaultFileName(snapshot)
+            };
+            if (dialog.ShowDialog(owner) != true) return;
+            var directory = Path.GetDirectoryName(dialog.FileName)
+                ?? throw new InvalidOperationException("无法确定导出目录。");
+            var fileName = Path.GetFileName(dialog.FileName);
+            var overwriteConfirmed = File.Exists(Path.Combine(directory, fileName));
+            if (overwriteConfirmed &&
+                MessageBox.Show(owner,
+                    "目标文件已存在。\n确认后，导出会替换此路径在实际提交时的当前文件；即便确认后被其他程序修改或替换，变化也可能被覆盖。\n是否继续？",
+                    "确认覆盖", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)
+                != MessageBoxResult.Yes) return;
+            await viewModel.ExportSnapshotAsync(
+                snapshot, new ExcelExportTarget(directory, fileName, overwriteConfirmed));
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(owner, exception.Message, "无法导出");
         }
     }
 

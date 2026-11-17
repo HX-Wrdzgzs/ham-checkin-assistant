@@ -1,13 +1,12 @@
 # 江苏省中继 HAM 智能点名录入助手
 
-Windows 本地点名辅助程序：通过**缩写 + 规则解析 + SQLite 历史 + 模糊匹配**大幅减少主控
-录入操作，支持 Excel 场后导出/可选同步、365dt 历史同步。
+现行 Native 本地点名程序通过**缩写 + 规则解析 + SQLite 历史 + 模糊匹配**减少主控录入操作，支持 Excel 场后导出/可选同步。旧 Python 0.9.4 的 365dt 历史同步见文末历史版章节，不属于 Native 能力。
 
 **核心点名功能纯本地，无任何 AI / LLM / 语音识别依赖，断网可用；可选的 QTH 后台联网同步需要用户自行配置数据源。**
 
-当前候选版本：**Native 1.0.19**（C# / .NET 10 / WPF / SQLite）。旧 Python 版 **0.9.4** 仍作为兼容代码保留，Native 版不依赖 Python、Qt 或 Excel COM。
+当前唯一现行产品为 **C# / .NET 10 / WPF / SQLite Native**；Native 工程源码版本为 **1.0.20**（版本字段来自 [App 项目文件](native/src/HamCheckin.Native.App/HamCheckin.Native.App.csproj#L17-L19)；当前 `1.0.20` 产物未动态验收，远端 Release 状态亦未核验）。历史 Python 版 **0.9.4** 保留为兼容与维护工具，不是 Native 的目标机运行依赖；Native EXE 不依赖 Python、Qt 或 Excel COM。
 
-Native 1.0.19 将原生数据写入 `%LOCALAPPDATA%\\HAM点名助手\\data\\ham_checkin_native.db`；旧版 Python 数据库仍是同目录的 `ham_checkin.db`。如果存在旧版 Python 数据库，程序会先在 `backup\\legacy-python-*.db` 生成备份，再只读导入场次和签到；旧数据库不会被删除或覆盖。程序启动即在后台检查 GitHub Release，快速录入仍不等待网络；设置页的“关于 / 检查更新”可手动重试。录屏默认只采集软件客户区，麦克风必须明确勾选，输出为 MP4。
+以下为历史候选说明（Native 1.0.19-r29；不代表当前 `1.0.20` 产物已动态验收）：该候选将原生数据写入 `%LOCALAPPDATA%\\HAM点名助手\\data\\ham_checkin_native.db`；旧版 Python 数据库仍是同目录的 `ham_checkin.db`。如果存在旧版 Python 数据库，候选程序会先在 `backup\\legacy-python-*.db` 生成备份，再只读导入场次和签到；旧数据库不会被删除或覆盖。候选程序启动即在后台检查 GitHub Release，快速录入仍不等待网络；设置页的“关于 / 检查更新”可手动重试。录屏默认只采集软件客户区，麦克风必须明确勾选，输出为 MP4。
 
 ## 功能
 
@@ -28,8 +27,7 @@ Native 1.0.19 将原生数据写入 `%LOCALAPPDATA%\\HAM点名助手\\data\\ham_
 - Excel 表头自动识别（不写死列）+ schema 校验（缺序号/时间/呼号/QTH 拒绝连接）
 - 「重新同步本场」「导出本场」重建；`rewrite_all` 只清理受管列，保留用户列/公式列/备注列
 - 历史 Excel 批量导入（`.xlsx` only，单文件/文件夹）+ 原子导入 + 跨文件去重
-- 365dt 历史同步：**真增量**（按每呼号 count 变化 / 未同步 / 上次失败决定拉取），
-  默认单次上限 200，部分失败可重试，UID 切换自动隔离
+- 历史 Python 0.9.4 专属（非 Native）365dt 历史同步：**真增量**（按每呼号 count 变化 / 未同步 / 上次失败决定拉取），默认单次上限 200，部分失败可重试，UID 切换自动隔离
 - 一键撤销（软删除）、修改审计、数据库每日备份（quick_check + 原子改名）、
   正常启动默认本地第 1 场；异常中断仍显示恢复选项，用户可随时手动选择其它本地场次
 - 悬浮快速录入窗：置顶 / 可拖动 / 可调透明度 / 全局快捷键呼出
@@ -39,9 +37,9 @@ Native 1.0.19 将原生数据写入 `%LOCALAPPDATA%\\HAM点名助手\\data\\ham_
 
 ![HAM 点名助手使用流程](docs/usage-flow.svg)
 
-### 1. Native 1.0.19 第一次使用
+### 1. 历史候选：Native 1.0.19-r29 第一次使用
 
-Native 版启动后直接进入“快速点名”，不要求先生成画像、不打开历史画像页，也不自动连接 Excel。全国行政区和已验证的本地设备别名先可用，其余资料在后台加载。
+以下描述仅适用于上述 `1.0.19-r29` 历史候选：该候选启动后直接进入“快速点名”，不要求先生成画像、不打开历史画像页，也不自动连接 Excel。全国行政区和已验证的本地设备别名先可用，其余资料在后台加载。
 
 1. 启动后先确认顶部场次、日期、主控呼号和中继名称。
 2. 在“快速点名”或“快速小窗”输入现场原文并按 Enter。
@@ -81,7 +79,7 @@ Space 模式专门照顾只录呼号的高频点名：输入一个有效呼号�
 
 ### 3.1 设备缩写的两条来源
 
-> 兼容说明：本节中“历史数据 → 生成词典建议”等入口属于旧 Python 版。Native 1.0.19 目前通过“资料库”的本地型号搜索、内置现场别名和字段编辑器完成同一类操作，不在输入热路径访问网络。
+> 兼容说明：本节中“历史数据 → 生成词典建议”等入口属于旧 Python 版。Native `1.0.19-r29` 历史候选通过“资料库”的本地型号搜索、内置现场别名和字段编辑器完成同一类操作；该候选的输入热路径不访问网络。
 
 设备是否被工信部型号核准，不决定它能不能参加点名。程序把设备缩写分成两类：
 
@@ -135,8 +133,8 @@ Space 模式专门照顾只录呼号的高频点名：输入一个有效呼号�
 - 如果下载内容遇到 CDN 瞬态异常导致校验不一致，会清理临时文件并绕过缓存重试，最多尝试 3 次；连续失败才提示错误。
 - 下载完成后，更新程序等待当前 EXE 正常退出，再替换并重新启动；运行数据位于 `%LOCALAPPDATA%\HAM点名助手\`，不依赖 EXE 所在目录，也不会被更新包覆盖。
 - GitHub API 暂时限流时会读取 `main/updates/latest.json` 稳定更新清单；0.9.2/0.9.3 使用过的 `codex/ham-checkin-release` 清单会在正式 Release 时同步刷新，帮助旧客户端完成一次跨版本升级。两条路径都不可用时只跳过本次检查，本地点名、Excel 和 SQLite 不受影响。也可以从托盘菜单点击“检查更新”。
-- 发布流程由 `.github/workflows/release.yml` 自动执行：推送与 `version.py` 一致的 `vX.Y.Z` Tag 后，会先跑完整测试，再构建单文件 EXE、生成主/兼容完全相同的附件（兼容附件使用 ASCII 物理名 + 中文 label）、生成双条目真实 SHA256、创建/刷新 GitHub Release，并自动把最新清单写回 `main/updates/latest.json`。无需手工填写 SHA256。
-- 手动测试发布可以使用 `HX-HAM-X.Y.Z` 标签，例如 `HX-HAM-0.0.2`；测试 Release 应标记为 Pre-release，不会写入稳定 `latest.json`，也不会让正式版用户误装测试包。
+- 自动发布流程见 [.github/workflows/release.yml](.github/workflows/release.yml)：触发 `v*.*.*` 标签；Native 版本从 App `.csproj` 读取并校验 tag，再显式传给 `release.py --version`。直调脚本省略参数时用历史 `version.py` 默认 0.9.4。工作流配置运行旧 Python 回归和 Native build/test（过滤三个录屏/麦克风用例），发布 win-x64 自包含单文件；不等同完整设备/UI验收。
+- 当前自动工作流仅触发 `v*.*.*`；`HX-HAM-*` 标签不会触发该流程。普通 PR workflow 保留 Python 3.11/3.12 matrix，并在 `pull_request` 与 `main` push 时增加独立 Windows/.NET 10 Native job（restore、Release build、`Category!=Hardware` tests、20 分钟 job/2 分钟 hang timeout、TRX 与运行元数据 artifact）。本机合成编译/断言故障注入确认错误会使步骤失败；远端 GitHub Actions 未运行（ENG-001）。
 - 测试版 EXE 会内置完整的 `HX-HAM-X.Y.Z` 版本；测试版启动时按精确 tag 查询对应 Release，关于页面会显示测试版本和该 Release 的更新说明，不会回退显示稳定版版本。
 - 用 `python app.py` 源码运行时不自动替换 Python 源码；托盘中的“检查更新”仍可打开 Release 页面。
 
@@ -163,7 +161,7 @@ Space 模式专门照顾只录呼号的高频点名：输入一个有效呼号�
 
 如果 Windows SmartScreen 第一次提示未知发布者，请先确认文件来自上面的 Release 页面，并核对发布页的 SHA256 校验文件；不要从其他链接下载同名 EXE。
 
-## 运行
+## 历史 Python 版 0.9.4 运行（非 Native）
 
 ```bash
 pip install -r requirements.txt
@@ -214,7 +212,7 @@ python app.py
 - 记录身份含 `source_uid`；切换 UID 进入全新同步命名空间。
 - 数据库 `UNIQUE(source, source_record_id)` 负责最终去重。
 
-## 备份 / 恢复
+## 历史 Python 版 0.9.4 备份 / 恢复（非 Native）
 
 - 每天首次启动自动备份到 `%LOCALAPPDATA%\HAM点名助手\backup\`（temp → SQLite backup → `PRAGMA quick_check` → 原子改名），
   并生成 `metadata.json`（版本 / schema / checksum）。
@@ -229,7 +227,7 @@ python -m unittest discover -s tests -v
 
 测试全部使用隔离的临时配置/数据库/Mock Excel，绝不触碰真实 `config.json`、`data/`、`backup/`。
 
-## 打包 EXE
+## 历史 Python 版 0.9.4 打包 EXE（非 Native）
 
 ```bash
 pip install pyinstaller pillow

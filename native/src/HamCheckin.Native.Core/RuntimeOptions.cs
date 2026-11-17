@@ -12,6 +12,22 @@ public static class RuntimeOptions
     private static int _storeDelayMilliseconds;
     private static bool _disableNetwork;
 
+    internal readonly record struct Snapshot(
+        DateTimeOffset? FixedNow,
+        int StoreDelayMilliseconds,
+        bool DisableNetwork);
+
+    internal static Snapshot CaptureSnapshot()
+    {
+        lock (Gate)
+        {
+            return new Snapshot(_fixedNow, _storeDelayMilliseconds, _disableNetwork);
+        }
+    }
+
+    internal static void RestoreSnapshot(Snapshot snapshot) =>
+        Configure(snapshot.FixedNow, snapshot.StoreDelayMilliseconds, snapshot.DisableNetwork);
+
     public static DateTimeOffset Now
     {
         get

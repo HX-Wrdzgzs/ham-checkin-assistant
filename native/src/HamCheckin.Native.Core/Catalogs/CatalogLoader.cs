@@ -248,6 +248,7 @@ public static class CatalogLoader
     {
         var timer = Stopwatch.StartNew();
         var messages = new List<string>();
+        var hasReadErrors = false;
         var devices = new Dictionary<string, DeviceCandidate>(baseline.DeviceAliases, StringComparer.Ordinal);
         var miit = new Dictionary<string, DeviceCandidate>(StringComparer.Ordinal);
         foreach (var item in baseline.MiitModels)
@@ -265,12 +266,13 @@ public static class CatalogLoader
 
         // 正式版使用 qth_admin.db；兼容此前已下载的 qth_places.db，避免
         // 用户升级后丢失已经安装的全国行政区/地点索引。
-        var qthPath = File.Exists(Path.Combine(dataRoot, "qth_admin.db"))
-            ? Path.Combine(dataRoot, "qth_admin.db")
-            : Path.Combine(dataRoot, "qth_places.db");
-        if (File.Exists(qthPath))
+        try
         {
-            try
+            var qthAdminPath = Path.Combine(dataRoot, "qth_admin.db");
+            var qthPlacesPath = Path.Combine(dataRoot, "qth_places.db");
+            var hasQthAdmin = PathEntryExists(qthAdminPath);
+            var qthPath = hasQthAdmin ? qthAdminPath : qthPlacesPath;
+            if (hasQthAdmin || PathEntryExists(qthPlacesPath))
             {
                 qthPlaceCount = 0;
                 using var connection = OpenReadOnly(qthPath);
@@ -306,20 +308,21 @@ public static class CatalogLoader
                 }
                 messages.Add($"全国地点 {qthPlaceCount:N0} 条");
             }
-            catch (Exception exception) when (exception is SqliteException or IOException)
+            else
             {
-                messages.Add($"地点库未载入：{exception.Message}");
+                messages.Add("未找到本地地点库");
             }
         }
-        else
+        catch (Exception exception) when (IsCatalogReadException(exception))
         {
-            messages.Add("未找到本地地点库");
+            hasReadErrors = true;
+            messages.Add($"地点库未载入：{exception.Message}");
         }
 
         var legacyPath = Path.Combine(dataRoot, "ham_checkin.db");
-        if (File.Exists(legacyPath))
+        try
         {
-            try
+            if (PathEntryExists(legacyPath))
             {
                 using var connection = OpenReadOnly(legacyPath);
                 LoadDeviceAliases(connection, devices, cancellationToken);
@@ -328,16 +331,17 @@ public static class CatalogLoader
                 LoadQthAliases(connection, qths, cancellationToken);
                 messages.Add("旧版自定义别名已只读载入");
             }
-            catch (Exception exception) when (exception is SqliteException or IOException)
-            {
-                messages.Add($"旧别名未载入：{exception.Message}");
-            }
+        }
+        catch (Exception exception) when (IsCatalogReadException(exception))
+        {
+            hasReadErrors = true;
+            messages.Add($"旧别名未载入：{exception.Message}");
         }
 
         var miitPath = Path.Combine(dataRoot, "miit_radio_catalog.db");
-        if (File.Exists(miitPath))
+        try
         {
-            try
+            if (PathEntryExists(miitPath))
             {
                 using var connection = OpenReadOnly(miitPath);
                 using var command = connection.CreateCommand();
@@ -382,14 +386,15 @@ public static class CatalogLoader
                 }
                 messages.Add($"工信部型号 {miit.Count:N0} 个");
             }
-            catch (Exception exception) when (exception is SqliteException or IOException)
+            else
             {
-                messages.Add($"工信部库未载入：{exception.Message}");
+                messages.Add("未找到工信部型号库");
             }
         }
-        else
+        catch (Exception exception) when (IsCatalogReadException(exception))
         {
-            messages.Add("未找到工信部型号库");
+            hasReadErrors = true;
+            messages.Add($"工信部库未载入：{exception.Message}");
         }
 
         timer.Stop();
@@ -401,8 +406,30 @@ public static class CatalogLoader
             snapshot.QthPlaceCount,
             snapshot.MiitModelCount,
             timer.ElapsedMilliseconds,
-            string.Join("；", messages));
+            string.Join("；", messages))
+        { Succeeded = !hasReadErrors };
         return (snapshot, report);
+    }
+
+    private static bool IsCatalogReadException(Exception exception) =>
+        exception is SqliteException or IOException or UnauthorizedAccessException or System.Security.SecurityException
+            or ArgumentException or NotSupportedException;
+
+    private static bool PathEntryExists(string path)
+    {
+        try
+        {
+            _ = File.GetAttributes(path);
+            return true;
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return false;
+        }
     }
 
     private static void LoadDeviceAliases(
@@ -415,7 +442,7 @@ public static class CatalogLoader
             SELECT alias, standard_value, source
             FROM device_aliases
             WHERE enabled = 1
-            ORDER BY CASE WHEN source = 'user' THEN 0 ELSE 1 END, priority DESC, id DESC
+            ORDER BY CASE WHEN source = 'user' THEN 1 ELSE 0 END, priority ASC, id ASC
             """;
         using var reader = command.ExecuteReader();
         while (reader.Read())

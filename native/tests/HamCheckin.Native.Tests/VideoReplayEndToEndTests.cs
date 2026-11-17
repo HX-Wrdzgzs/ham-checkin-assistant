@@ -198,7 +198,11 @@ public sealed class VideoReplayEndToEndTests
                 Assert.Equal("ok", check);
 
                 var exportRows = await store.LoadAllForExportAsync(session.Id);
-                await new ExcelExportService().ExportAsync(session, exportRows, exportPath);
+                var exportDirectory = Path.GetDirectoryName(exportPath)!;
+                Directory.CreateDirectory(exportDirectory);
+                await new ExcelExportService().ExportAsync(
+                    session, exportRows,
+                    new ExcelExportTarget(exportDirectory, Path.GetFileName(exportPath), false));
                 Assert.True(File.Exists(exportPath));
                 AssertVideoWorkbook(exportPath, session, exportRows.Count);
             }

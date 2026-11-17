@@ -9,36 +9,69 @@ namespace HamCheckin.Native.Core.Export;
 
 public sealed record ExcelExportResult(string Path, int RowCount, string SheetName);
 
+public sealed record ExcelExportTarget(
+    string DirectoryPath,
+    string FileName,
+    bool OverwriteConfirmed);
+
 /// <summary>
 /// 使用 Open XML SDK 生成标准 .xlsx。Excel 不在现场录入热路径中，
 /// 未识别内容只保存在 SQLite 和编辑审计中。
 /// </summary>
 public sealed class ExcelExportService
 {
+    private static readonly HashSet<char> InvalidWindowsFileNameCharacters = "<>:\"/\\|?*".ToHashSet();
+    private static readonly HashSet<string> ReservedWindowsDeviceNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³"
+    };
+
     public static readonly string[] Headers =
     {
         "序号", "时间", "呼号", "QTH", "设备", "天线", "功率", "信号", "来源"
     };
 
+    public static string CreateDefaultFileName(SessionInfo session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        var source = string.Join("_", new[] { session.Name, session.Date }
+            .Where(static value => !string.IsNullOrWhiteSpace(value)));
+        var sanitized = new string(source.Select(character =>
+                char.IsControl(character) || InvalidWindowsFileNameCharacters.Contains(character)
+                    ? '_'
+                    : character)
+            .ToArray())
+            .Trim()
+            .TrimEnd(' ', '.');
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            return $"session-{session.Id}.xlsx";
+        }
+
+        var deviceName = sanitized.Split('.')[0].TrimEnd(' ', '.');
+        if (ReservedWindowsDeviceNames.Contains(deviceName))
+        {
+            sanitized = "_" + sanitized;
+        }
+        return sanitized + ".xlsx";
+    }
+
     public async Task<ExcelExportResult> ExportAsync(
         SessionInfo session,
         IReadOnlyList<CheckinEntry> rows,
-        string outputPath,
+        ExcelExportTarget target,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(outputPath))
-        {
-            throw new ArgumentException("导出路径不能为空。", nameof(outputPath));
-        }
-
-        var fullPath = Path.GetFullPath(outputPath);
-        var directory = Path.GetDirectoryName(fullPath)
-            ?? throw new InvalidOperationException("无法确定导出目录。");
-        Directory.CreateDirectory(directory);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(target);
+        var fullPath = GetFullTargetPath(target.DirectoryPath, target.FileName);
+        var directory = Path.GetDirectoryName(fullPath)!;
         var sheetName = SafeSheetName(session.Name);
-        var temporaryPath = Path.Combine(
-            directory,
-            "." + Path.GetFileName(fullPath) + ".tmp-" + Guid.NewGuid().ToString("N"));
+        var temporaryPath = Path.Combine(directory, $".ham-export-{Guid.NewGuid():N}.tmp");
 
         try
         {
@@ -50,12 +83,20 @@ public sealed class ExcelExportService
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                File.Move(temporaryPath, fullPath, true);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (target.OverwriteConfirmed && File.Exists(fullPath))
+                {
+                    File.Replace(temporaryPath, fullPath, null);
+                }
+                else
+                {
+                    File.Move(temporaryPath, fullPath);
+                }
             }
             catch (IOException exception)
             {
                 throw new IOException(
-                    $"无法替换 Excel 文件“{fullPath}”。如果同名文件正在 Excel 中打开，请先关闭它后重试。",
+                    $"无法提交 Excel 文件“{fullPath}”。如果同名文件正在 Excel 中打开，请先关闭它后重试。",
                     exception);
             }
 
@@ -65,6 +106,44 @@ public sealed class ExcelExportService
         {
             TryDelete(temporaryPath);
         }
+    }
+
+    private static string GetFullTargetPath(string directoryPath, string fileName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directoryPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+        if (Path.IsPathRooted(fileName) || fileName is "." or ".." ||
+            fileName.Contains('/') || fileName.Contains('\\') ||
+            fileName.Any(character => char.IsControl(character) ||
+                InvalidWindowsFileNameCharacters.Contains(character)) ||
+            !string.Equals(fileName, fileName.TrimEnd(' ', '.'), StringComparison.Ordinal) ||
+            !string.Equals(Path.GetExtension(fileName), ".xlsx", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(Path.GetFileNameWithoutExtension(fileName)))
+        {
+            throw new ArgumentException("导出文件名必须是安全的单个 .xlsx 文件名。", nameof(fileName));
+        }
+
+        var deviceName = fileName.Split('.')[0].TrimEnd(' ', '.');
+        if (ReservedWindowsDeviceNames.Contains(deviceName))
+        {
+            throw new ArgumentException("导出文件名不能使用 Windows 保留设备名。", nameof(fileName));
+        }
+
+        var fullDirectory = Path.GetFullPath(directoryPath);
+        if (!Directory.Exists(fullDirectory))
+        {
+            throw new DirectoryNotFoundException($"导出目录不存在： {fullDirectory}");
+        }
+
+        var fullPath = Path.GetFullPath(Path.Combine(fullDirectory, fileName));
+        if (!string.Equals(
+                Path.GetDirectoryName(fullPath),
+                fullDirectory,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("导出文件不能离开所选目录。", nameof(fileName));
+        }
+        return fullPath;
     }
 
     private static void WriteAndValidateWorkbook(

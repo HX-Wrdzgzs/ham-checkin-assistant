@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using System.IO;
+using System.IO.Compression;
 using System.Text;
 using NativeApplication = HamCheckin.Native.App.App;
 using HamCheckin.Native.App.Media;
@@ -12,6 +13,8 @@ using HamCheckin.Native.App.ViewModels;
 using HamCheckin.Native.App.Views;
 using HamCheckin.Native.Core;
 using HamCheckin.Native.Core.Catalogs;
+using HamCheckin.Native.Core.Export;
+using HamCheckin.Native.Core.Parsing;
 using HamCheckin.Native.Core.Storage;
 using HamCheckin.Native.Core.Updates;
 using Microsoft.Data.Sqlite;
@@ -21,6 +24,7 @@ namespace HamCheckin.Native.UiTests;
 
 public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
 {
+    private static readonly TimeSpan HardwareProbeTimeout = TimeSpan.FromSeconds(10);
     private const string Original = "BA4RLL QYT6900 5W YZ YZ";
     private static readonly string[] HeaderActionNames =
     {
@@ -169,6 +173,80 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             {
                 Directory.Delete(root, recursive: true);
             }
+        }
+    }
+
+    [Fact]
+    public async Task ExportUsesCapturedSessionAfterSwitching()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "HAMCheckin.Native.UiTests", Guid.NewGuid().ToString("N"));
+        var databasePath = Path.Combine(root, "data", "ham_checkin_native.db");
+        Directory.CreateDirectory(root);
+        var previousNetworkMode = RuntimeOptions.DisableNetwork;
+        MainViewModel? viewModel = null;
+        NativeStore? store = null;
+        try
+        {
+            RuntimeOptions.Configure(
+                fixedNow: new DateTimeOffset(2026, 10, 6, 21, 0, 0, TimeSpan.FromHours(8)),
+                disableNetwork: true);
+            store = new NativeStore(databasePath);
+            await store.InitializeAsync();
+            viewModel = new MainViewModel(
+                new CatalogService(), store,
+                catalogDataRoot: Path.Combine(root, "data"), importLegacyDatabase: false);
+            await viewModel.InitializeAsync();
+            var captured = await viewModel.GetSessionAsync()
+                ?? throw new InvalidOperationException("Initial session was not loaded.");
+            var other = await store.CreateSessionAsync("切换后的场次", "2026-10-07");
+            var parser = new InputParser(CatalogLoader.CreateBuiltIn());
+            await store.AddCheckinAsync(captured, parser.Parse("BA4AAA NJXW R6 5W"), "export-captured-row");
+            await store.AddCheckinAsync(other, parser.Parse("BA4AAB NJXW R6 5W"), "export-other-row");
+            SessionInfo? requested = null;
+            viewModel.ExportRequested += snapshot => requested = snapshot;
+            viewModel.ExportCommand.Execute(null);
+            Assert.Equal(captured.Id, requested?.Id);
+            await viewModel.SelectSessionAsync(other.Id);
+            Assert.Equal("切换后的场次", viewModel.SessionTitle);
+            var exportDirectory = Path.Combine(root, "exports");
+            Directory.CreateDirectory(exportDirectory);
+            var exportFileName = "captured-session.xlsx";
+            await viewModel.ExportSnapshotAsync(
+                requested ?? throw new InvalidOperationException("Export request was not captured."),
+                new ExcelExportTarget(exportDirectory, exportFileName, false));
+            Assert.True(File.Exists(Path.Combine(exportDirectory, exportFileName)));
+            var firstRows = await store.LoadAllForExportAsync(captured.Id);
+            var secondRows = await store.LoadAllForExportAsync(other.Id);
+            Assert.Single(firstRows);
+            Assert.Single(secondRows);
+            Assert.Equal(captured.Id, firstRows[0].SessionId);
+            Assert.Equal(other.Id, secondRows[0].SessionId);
+            Assert.Equal("切换后的场次", viewModel.SessionTitle);
+            var exportPath = Path.Combine(exportDirectory, exportFileName);
+            using var archive = ZipFile.OpenRead(exportPath);
+            using var sheetReader = new StreamReader(archive.GetEntry("xl/worksheets/sheet1.xml")!.Open(), Encoding.UTF8);
+            var sheetXml = await sheetReader.ReadToEndAsync();
+            Assert.Contains(captured.Name, sheetXml);
+            Assert.Contains(captured.Date, sheetXml);
+            Assert.Contains("BA4AAA", sheetXml);
+            Assert.DoesNotContain("BA4AAB", sheetXml);
+            Assert.DoesNotContain(other.Name, sheetXml);
+            using var coreReader = new StreamReader(archive.GetEntry("docProps/core.xml")!.Open(), Encoding.UTF8);
+            Assert.Contains($"<dc:subject>{captured.Name}</dc:subject>", await coreReader.ReadToEndAsync());
+        }
+        finally
+        {
+            if (viewModel is not null)
+            {
+                await viewModel.DisposeAsync();
+            }
+            else if (store is not null)
+            {
+                await store.DisposeAsync();
+            }
+            RuntimeOptions.Configure(fixedNow: null, storeDelayMilliseconds: 0, disableNetwork: previousNetworkMode);
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
 
@@ -718,7 +796,7 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
             var check = (Button)window.FindName("CheckButton")!;
             var sponsor = (Button)window.FindName("SponsorButton")!;
 
-            Assert.Equal("1.0.19", version.Text);
+            Assert.Equal("1.0.20", version.Text);
             Assert.Equal("开发者：BA4THG（HX-Wrdzgzs）", developer.Text);
             Assert.Contains("当前已是最新", status.Text);
             Assert.Contains("本地候选版", notes.Text);
@@ -1047,29 +1125,49 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
         }
     }
 
+    [Trait("Category", "Hardware")]
     [Fact]
-    public void MicrophoneEnumerationReturnsAUsableSnapshot()
+    public async Task MicrophoneEnumerationReturnsAUsableSnapshot()
     {
-        var devices = MicrophoneCapture.EnumerateDevices();
+        RequireHardwareAuthorization();
+        var devices = await EnumerateMicrophonesAsync();
+        if (devices.Count == 0)
+        {
+            throw Xunit.Sdk.SkipException.ForSkip("No microphone is available; hardware enumeration assertions were skipped.");
+        }
+
         Assert.NotNull(devices);
         Assert.All(devices, device => Assert.False(string.IsNullOrWhiteSpace(device.Name)));
     }
 
+    [Trait("Category", "Hardware")]
     [Fact]
     public async Task FirstMicrophoneCanOpenAndReturnPcmForDebugging()
     {
-        var devices = MicrophoneCapture.EnumerateDevices();
+        RequireHardwareAuthorization();
+        var devices = await EnumerateMicrophonesAsync();
         if (devices.Count == 0)
         {
             throw Xunit.Sdk.SkipException.ForSkip("当前 Windows 会话没有可用麦克风；屏幕录制仍可在关闭麦克风后使用。");
         }
 
         var bytes = 0;
+        var firstPcm = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var capture = new MicrophoneCapture(devices[0].Id);
-        capture.AudioData += data => Interlocked.Add(ref bytes, data.Length);
+        capture.AudioData += data =>
+        {
+            Interlocked.Add(ref bytes, data.Length);
+            if (!data.IsEmpty) firstPcm.TrySetResult(true);
+        };
         capture.Start();
-        await Task.Delay(700);
-        capture.Stop();
+        try
+        {
+            await firstPcm.Task.WaitAsync(HardwareProbeTimeout);
+        }
+        finally
+        {
+            capture.Stop();
+        }
 
         Assert.True(bytes > 0, "麦克风已打开但在测试窗口内没有返回 PCM 数据。");
     }
@@ -1205,10 +1303,12 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
         });
     }
 
+    [Trait("Category", "Hardware")]
     [Fact]
-    public void ApplicationAndMicrophoneRecordingWritesVideoAndAacStreams()
+    public async Task ApplicationAndMicrophoneRecordingWritesVideoAndAacStreams()
     {
-        var microphones = MicrophoneCapture.EnumerateDevices();
+        RequireHardwareAuthorization();
+        var microphones = await EnumerateMicrophonesAsync();
         if (microphones.Count == 0)
         {
             throw Xunit.Sdk.SkipException.ForSkip("当前 Windows 会话没有可用麦克风，未执行双流录制测试。");
@@ -1240,7 +1340,10 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
                 Assert.True(
                     WaitForVideoFrame(service, TimeSpan.FromSeconds(5)),
                     $"等待窗口录制器生成第一帧超时；状态={service.State}，视频帧={service.VideoFrames}，文件={service.OutputPath}" );
-                var result = service.StopAsync().GetAwaiter().GetResult();
+                Assert.True(
+                    SpinWait.SpinUntil(() => service.AudioBytes > 0, HardwareProbeTimeout),
+                    "Timed out waiting for microphone audio to reach the AAC writer.");
+                var result = service.StopAsync().WaitAsync(HardwareProbeTimeout).GetAwaiter().GetResult();
 
                 Assert.True(result is not null, stateMessage);
                 Assert.True(result!.VideoFrames > 0);
@@ -1317,6 +1420,7 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
                 Exception? stopFailure = null;
                 var stopFrame = new DispatcherFrame();
                 var dispatcher = Dispatcher.CurrentDispatcher;
+                var stopCompleted = false;
                 _ = Task.WhenAll(firstStop, secondStop).ContinueWith(completed =>
                 {
                     dispatcher.BeginInvoke(DispatcherPriority.Normal, new Action(() =>
@@ -1330,10 +1434,19 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
                             results = completed.Result;
                         }
 
+                        stopCompleted = true;
                         stopFrame.Continue = false;
                     }));
                 }, TaskScheduler.Default);
+                var stopTimeout = new DispatcherTimer(
+                    TimeSpan.FromSeconds(20),
+                    DispatcherPriority.Background,
+                    (_, _) => stopFrame.Continue = false,
+                    dispatcher);
+                stopTimeout.Start();
                 Dispatcher.PushFrame(stopFrame);
+                stopTimeout.Stop();
+                Assert.True(stopCompleted, "Timed out waiting for concurrent recording stop requests.");
                 if (stopFailure is not null)
                 {
                     throw stopFailure;
@@ -1429,31 +1542,97 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
         return count;
     }
 
+    private static void RequireHardwareAuthorization()
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("HAM_CHECKIN_NATIVE_HARDWARE_TEST"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            throw Xunit.Sdk.SkipException.ForSkip(
+                "Hardware tests require explicit local authorization with HAM_CHECKIN_NATIVE_HARDWARE_TEST=1.");
+        }
+    }
+
+    private static async Task<IReadOnlyList<MicrophoneDevice>> EnumerateMicrophonesAsync()
+    {
+        var enumeration = Task.Run(MicrophoneCapture.EnumerateDevices);
+        try
+        {
+            return await enumeration.WaitAsync(HardwareProbeTimeout);
+        }
+        catch (TimeoutException exception)
+        {
+            throw new TimeoutException(
+                "Microphone enumeration exceeded 10 seconds; the native device probe cannot be canceled.",
+                exception);
+        }
+    }
 }
 
 public sealed class WpfDispatcherFixture : IDisposable
 {
+    private static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan InvokeTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan JoinTimeout = TimeSpan.FromSeconds(10);
     private readonly Thread _thread;
     private readonly ManualResetEventSlim _ready = new();
-    private Dispatcher? _dispatcher;
+    private volatile Dispatcher? _dispatcher;
     private NativeApplication? _app;
+    private Exception? _startupFailure;
+    private int _startupAbandoned;
 
     public WpfDispatcherFixture()
     {
         _thread = new Thread(() =>
         {
-            _app = new NativeApplication
+            try
             {
-                ShutdownMode = ShutdownMode.OnExplicitShutdown
-            };
-            _app.InitializeComponent();
+                _app = new NativeApplication
+                {
+                    ShutdownMode = ShutdownMode.OnExplicitShutdown
+                };
+                _app.InitializeComponent();
+            }
+            catch (Exception exception)
+            {
+                _startupFailure = exception;
+                _ready.Set();
+                return;
+            }
+
             _dispatcher = Dispatcher.CurrentDispatcher;
             _ready.Set();
+            if (Volatile.Read(ref _startupAbandoned) != 0)
+            {
+                _app.Shutdown();
+                return;
+            }
+
             Dispatcher.Run();
         });
         _thread.SetApartmentState(ApartmentState.STA);
+        _thread.IsBackground = true;
         _thread.Start();
-        _ready.Wait();
+        if (!_ready.Wait(ReadyTimeout))
+        {
+            Interlocked.Exchange(ref _startupAbandoned, 1);
+            _dispatcher?.BeginInvokeShutdown(DispatcherPriority.Normal);
+            if (_thread.Join(JoinTimeout)) _ready.Dispose();
+            throw new TimeoutException("WPF Dispatcher did not become ready within 10 seconds.");
+        }
+
+        if (_startupFailure is not null)
+        {
+            if (!_thread.Join(JoinTimeout))
+            {
+                throw new TimeoutException("WPF Dispatcher startup failed but its thread did not stop within 10 seconds.", _startupFailure);
+            }
+
+            _ready.Dispose();
+            throw new InvalidOperationException("WPF Dispatcher startup failed.", _startupFailure);
+        }
     }
 
     public void Run(Action action)
@@ -1462,21 +1641,47 @@ public sealed class WpfDispatcherFixture : IDisposable
         {
             throw new InvalidOperationException("WPF Dispatcher 未启动。");
         }
-        _dispatcher.Invoke(action);
+        var operation = _dispatcher.BeginInvoke(DispatcherPriority.Normal, action);
+        WaitForOperation(operation, InvokeTimeout, "invoke");
     }
 
     public void Dispose()
     {
-        if (_dispatcher is not null)
+        try
         {
-            _dispatcher.Invoke(() =>
+            var dispatcher = _dispatcher;
+            if (dispatcher is not null)
             {
-                _app?.Shutdown();
-                _dispatcher.BeginInvokeShutdown(DispatcherPriority.Normal);
-            });
+                var shutdown = dispatcher.BeginInvoke(DispatcherPriority.Normal, new Action(() =>
+                {
+                    _app?.Shutdown();
+                    dispatcher.BeginInvokeShutdown(DispatcherPriority.Normal);
+                }));
+                WaitForOperation(shutdown, ShutdownTimeout, "shutdown");
+            }
+
+            if (!_thread.Join(JoinTimeout))
+            {
+                throw new TimeoutException("WPF Dispatcher thread did not stop within 10 seconds.");
+            }
         }
-        _thread.Join();
-        _ready.Dispose();
+        finally
+        {
+            _ready.Dispose();
+        }
+    }
+
+    private static void WaitForOperation(DispatcherOperation operation, TimeSpan timeout, string operationName)
+    {
+        try
+        {
+            operation.Task.WaitAsync(timeout).GetAwaiter().GetResult();
+        }
+        catch (TimeoutException) when (!operation.Task.IsCompleted)
+        {
+            operation.Abort();
+            throw new TimeoutException($"WPF Dispatcher {operationName} timed out after {timeout.TotalSeconds:0} seconds.");
+        }
     }
 }
 

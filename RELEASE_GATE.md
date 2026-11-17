@@ -2,6 +2,8 @@
 
 日期：2026-08-23　版本：0.9.4（跨版本更新兼容修复）　分支：`codex/ham-checkin-release`
 
+> **历史 Gate 快照（Python 0.9.4，2026-08-23）**：本文所有测试数量和 PASS 结论仅针对该日期/版本下的本地 Python 验证；不代表现行 Native C# 构建/测试或当前 GitHub Actions 已通过。
+
 ```
 STATUS: RELEASE_REPAIRED; REAL_V093_E2E_PENDING
 ```

@@ -25,6 +25,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly QuickInputDraftService _draftService = new();
     private readonly NativeUpdateService _updates;
     private CancellationTokenSource? _catalogCancellation;
+    private long _catalogOperationGeneration;
+    private long _catalogSyncGeneration;
     private CancellationTokenSource? _updateCancellation;
     private SessionInfo? _session;
     private ParseResult _parseResult = ParseResult.Empty;
@@ -87,7 +89,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             SetFailure);
         SearchCatalogCommand = new RelayCommand(SearchCatalog);
         ClearCommand = new RelayCommand(() => SetInputText(string.Empty));
-        ExportCommand = new AsyncRelayCommand(() => ExportCurrentAsync(), null, SetFailure);
+        ExportCommand = new RelayCommand(RequestExport);
         RefreshCatalogCommand = new AsyncRelayCommand(() => RefreshCatalogAsync(false), null, SetFailure);
         FirstMiitDownloadCommand = new AsyncRelayCommand(() => RefreshCatalogAsync(true), null, SetFailure);
         FullMiitDownloadCommand = new AsyncRelayCommand(() => RefreshCatalogAsync(true), null, SetFailure);
@@ -102,12 +104,15 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public event EventHandler? QuickWindowRequested;
     public event EventHandler<ShortcutChangedEventArgs>? ShortcutsChanged;
     public event EventHandler<QuickInputDraftChangedEventArgs>? InputDraftChanged;
+    public event Action<SessionInfo>? ExportRequested;
 
     /// <summary>
     /// Exposed only to isolated UI tests so the test can await the launch
     /// check without sleeping or relying on a real GitHub request.
     /// </summary>
     internal Task? StartupUpdateCheckTask { get; private set; }
+
+    internal Func<CancellationToken, Task>? QthPackageTreeRefreshForTesting { get; set; }
 
     private bool ImportLegacyDatabase { get; }
 
@@ -316,7 +321,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(IsQuickInputAvailable));
         IsReady = true;
         timer.Stop();
-        StatusMessage = bootstrap.LegacyImport.Imported
+        StatusMessage = bootstrap.LegacyImport.FoundLegacyDatabase
             ? $"{bootstrap.LegacyImport.Message} 本地录入已就绪"
             : "本地录入已就绪";
         TaskSummary = "资料库后台加载中 · 可继续点名";
@@ -477,7 +482,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         CheckinsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public async Task ExportCurrentAsync(string? requestedPath = null)
+    private void RequestExport()
     {
         if (_session is null || _store is null)
         {
@@ -485,18 +490,31 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        var path = requestedPath;
-        if (string.IsNullOrWhiteSpace(path))
+        var snapshot = _session;
+        ExportRequested?.Invoke(snapshot);
+    }
+
+    public async Task ExportSnapshotAsync(
+        SessionInfo snapshot,
+        ExcelExportTarget target,
+        CancellationToken cancellationToken = default)
+    {
+        if (_store is null)
         {
-            var downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-            path = Path.Combine(downloads, $"{_session.Name}_{_session.Date}.xlsx");
+            StatusMessage = "效果图模式不执行文件导出";
+            return;
         }
+
         StatusMessage = "正在后台生成 Excel，不会阻塞现场录入…";
         TaskSummary = "Excel 导出进行中 · SQLite 仍可继续提交";
         try
         {
-            var rows = await _store.LoadAllForExportAsync(_session.Id).ConfigureAwait(true);
-            var result = await _exporter.ExportAsync(_session, rows, path).ConfigureAwait(true);
+            var rows = await _store.LoadAllForExportAsync(snapshot.Id, cancellationToken).ConfigureAwait(true);
+            if (!rows.All(row => row.SessionId == snapshot.Id))
+            {
+                throw new InvalidDataException("导出记录包含其他场次，已停止导出。");
+            }
+            var result = await _exporter.ExportAsync(snapshot, rows, target, cancellationToken).ConfigureAwait(true);
             StatusMessage = $"已导出 {result.RowCount} 条；Excel 不包含未识别列：{result.Path}";
         }
         catch (OperationCanceledException)
@@ -580,28 +598,62 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             "*", previousGlobal, GetShortcut("quick-window")?.Gesture ?? string.Empty, true));
     }
 
+    private long BeginCatalogOperation() => Interlocked.Increment(ref _catalogOperationGeneration);
+
+    private bool IsCurrentCatalogOperation(long operation) =>
+        Volatile.Read(ref _catalogOperationGeneration) == operation;
+
+    private long BeginCatalogSyncOperation() => Interlocked.Increment(ref _catalogSyncGeneration);
+
+    private bool IsCurrentCatalogSyncOperation(long operation) =>
+        Volatile.Read(ref _catalogSyncGeneration) == operation;
+
     public async Task RefreshCatalogAsync(bool firstDownload)
     {
         if (IsCatalogBusy)
         {
             return;
         }
+
+        var operation = BeginCatalogOperation();
+        var syncOperation = BeginCatalogSyncOperation();
         IsCatalogBusy = true;
         _catalogCancellation?.Cancel();
+        var syncCompleted = false;
         _catalogCancellation?.Dispose();
         _catalogCancellation = new CancellationTokenSource();
         try
         {
             MiitStatus = firstDownload ? "正在连接工信部并准备完整同步…" : "正在检查工信部最新页面…";
             TaskSummary = "工信部资料库同步进行中 · 录入不受阻";
-            var progress = new Progress<MiitSyncProgress>(UpdateMiitProgress);
+            var progress = new Progress<MiitSyncProgress>(value => UpdateMiitProgress(operation, syncOperation, value));
             var syncReport = await _miitSyncService.StartAsync(
                 full: firstDownload,
                 progress,
                 _catalogCancellation.Token).ConfigureAwait(true);
-            var report = await _catalogService.ReloadExistingDataAsync(_catalogDataRoot).ConfigureAwait(true);
-            CatalogSummary = $"本地别名 {report.DeviceAliasCount:N0} 个；行政地点别名 {report.QthAliasCount:N0} 个；地点记录 {report.QthPlaceCount:N0} 条；工信部 {report.MiitModelCount:N0} 个";
+            if (!IsCurrentCatalogOperation(operation) || !IsCurrentCatalogSyncOperation(syncOperation))
+            {
+                return;
+            }
+
+            syncCompleted = true;
             MiitStatus = $"{(firstDownload ? "完整同步" : "检查更新")}完成 · 扫描 {syncReport.ScannedCount:N0} · 保留 {syncReport.RetainedCount:N0} · 排除 {syncReport.ExcludedCount:N0}";
+            var report = await _catalogService.ReloadExistingDataAsync(
+                _catalogDataRoot, _catalogCancellation.Token).ConfigureAwait(true);
+            if (!IsCurrentCatalogOperation(operation) || !IsCurrentCatalogSyncOperation(syncOperation))
+            {
+                return;
+            }
+
+            if (!report.Published)
+            {
+                StatusMessage = report.Succeeded
+                    ? "工信部同步完成；该资料快照请求已过期，当前目录未更改"
+                    : $"工信部同步完成；本地资料快照载入失败：{report.Message}";
+                return;
+            }
+
+            CatalogSummary = $"本地别名 {report.DeviceAliasCount:N0} 个；行政地点别名 {report.QthAliasCount:N0} 个；地点记录 {report.QthPlaceCount:N0} 条；工信部 {report.MiitModelCount:N0} 个";
             LocationStatus = report.QthPlaceCount > 0
                 ? $"全国行政区已载入；详细地点 {report.QthPlaceCount:N0} 条；省市包可独立更新"
                 : "全国省市行政区已载入；尚未安装道路/地标地点包";
@@ -610,18 +662,48 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
-            MiitStatus = "已取消；上一份完整资料库继续使用，断点已保留";
-            StatusMessage = "工信部同步已取消，快速录入不受影响";
+            if (!IsCurrentCatalogOperation(operation) || !IsCurrentCatalogSyncOperation(syncOperation))
+            {
+                return;
+            }
+
+            if (syncCompleted)
+            {
+                StatusMessage = "工信部同步已完成，但本地资料快照刷新已取消";
+            }
+            else
+            {
+                MiitStatus = "已取消；上一份完整资料库继续使用，断点已保留";
+                StatusMessage = "工信部同步已取消，快速录入不受影响";
+            }
         }
         catch (Exception exception)
         {
-            MiitStatus = "同步失败；上一份完整资料库继续使用";
-            StatusMessage = $"工信部同步失败：{exception.Message}";
+            if (!IsCurrentCatalogOperation(operation) || !IsCurrentCatalogSyncOperation(syncOperation))
+            {
+                return;
+            }
+
+            if (syncCompleted)
+            {
+                StatusMessage = $"工信部同步已完成，但本地资料快照刷新失败：{exception.Message}";
+            }
+            else
+            {
+                MiitStatus = "同步失败；上一份完整资料库继续使用";
+                StatusMessage = $"工信部同步失败：{exception.Message}";
+            }
         }
         finally
         {
-            IsCatalogBusy = false;
-            TaskSummary = "无后台任务 · 快速录入只查本地资料";
+            if (IsCurrentCatalogSyncOperation(syncOperation))
+            {
+                IsCatalogBusy = false;
+            }
+            if (IsCurrentCatalogOperation(operation) && IsCurrentCatalogSyncOperation(syncOperation))
+            {
+                TaskSummary = "无后台任务 · 快速录入只查本地资料";
+            }
         }
     }
 
@@ -632,38 +714,96 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
+        var operation = BeginCatalogOperation();
+        var syncOperation = BeginCatalogSyncOperation();
         IsCatalogBusy = true;
         _catalogCancellation?.Cancel();
+        var syncCompleted = false;
         _catalogCancellation?.Dispose();
         _catalogCancellation = new CancellationTokenSource();
         try
         {
             MiitStatus = "正在从上次成功页继续同步…";
             TaskSummary = "工信部断点续传进行中 · 录入不受阻";
-            var progress = new Progress<MiitSyncProgress>(UpdateMiitProgress);
+            var progress = new Progress<MiitSyncProgress>(value => UpdateMiitProgress(operation, syncOperation, value));
             var syncReport = await _miitSyncService.ResumeAsync(progress, _catalogCancellation.Token).ConfigureAwait(true);
-            var report = await _catalogService.ReloadExistingDataAsync(_catalogDataRoot).ConfigureAwait(true);
-            CatalogSummary = $"本地别名 {report.DeviceAliasCount:N0} 个；行政地点 {report.QthPlaceCount:N0} 条；工信部 {report.MiitModelCount:N0} 个";
+            if (!IsCurrentCatalogOperation(operation) || !IsCurrentCatalogSyncOperation(syncOperation))
+            {
+                return;
+            }
+
+            syncCompleted = true;
             MiitStatus = $"断点续传完成 · 扫描 {syncReport.ScannedCount:N0} · 保留 {syncReport.RetainedCount:N0}";
+            var report = await _catalogService.ReloadExistingDataAsync(
+                _catalogDataRoot, _catalogCancellation.Token).ConfigureAwait(true);
+            if (!IsCurrentCatalogOperation(operation) || !IsCurrentCatalogSyncOperation(syncOperation))
+            {
+                return;
+            }
+
+            if (!report.Published)
+            {
+                StatusMessage = report.Succeeded
+                    ? "工信部断点续传完成；该资料快照请求已过期，当前目录未更改"
+                    : $"工信部断点续传完成；本地资料快照载入失败：{report.Message}";
+                return;
+            }
+
+            CatalogSummary = $"本地别名 {report.DeviceAliasCount:N0} 个；行政地点 {report.QthPlaceCount:N0} 条；工信部 {report.MiitModelCount:N0} 个";
             ReparseCurrentInput();
         }
         catch (OperationCanceledException)
         {
-            MiitStatus = "已取消；可继续上次断点";
+            if (!IsCurrentCatalogOperation(operation) || !IsCurrentCatalogSyncOperation(syncOperation))
+            {
+                return;
+            }
+
+            if (syncCompleted)
+            {
+                StatusMessage = "工信部断点续传已完成，但本地资料快照刷新已取消";
+            }
+            else
+            {
+                MiitStatus = "已取消；可继续上次断点";
+            }
         }
         catch (Exception exception)
         {
-            MiitStatus = "没有可用断点或同步失败：" + exception.Message;
+            if (!IsCurrentCatalogOperation(operation) || !IsCurrentCatalogSyncOperation(syncOperation))
+            {
+                return;
+            }
+
+            if (syncCompleted)
+            {
+                StatusMessage = $"工信部断点续传已完成，但本地资料快照刷新失败：{exception.Message}";
+            }
+            else
+            {
+                MiitStatus = "没有可用断点或同步失败：" + exception.Message;
+            }
         }
         finally
         {
-            IsCatalogBusy = false;
-            TaskSummary = "无后台任务 · 快速录入只查本地资料";
+            if (IsCurrentCatalogSyncOperation(syncOperation))
+            {
+                IsCatalogBusy = false;
+            }
+            if (IsCurrentCatalogOperation(operation) && IsCurrentCatalogSyncOperation(syncOperation))
+            {
+                TaskSummary = "无后台任务 · 快速录入只查本地资料";
+            }
         }
     }
 
-    private void UpdateMiitProgress(MiitSyncProgress progress)
+    private void UpdateMiitProgress(long operation, long syncOperation, MiitSyncProgress progress)
     {
+        if (!IsCurrentCatalogOperation(operation) || !IsCurrentCatalogSyncOperation(syncOperation))
+        {
+            return;
+        }
+
         var total = progress.TotalPages > 0 ? $"{progress.CurrentPage}/{progress.TotalPages} 页" : $"第 {progress.CurrentPage} 页";
         MiitStatus = $"{total} · 扫描 {progress.ScannedCount:N0}/{progress.TotalCount:N0} · 保留 {progress.RetainedCount:N0}";
         TaskSummary = $"工信部同步 · {progress.Message}";
@@ -671,16 +811,24 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     public void CancelCatalog()
     {
+        BeginCatalogOperation();
+        BeginCatalogSyncOperation();
         _catalogCancellation?.Cancel();
         IsCatalogBusy = false;
-        TaskSummary = "资料库任务已请求取消 · 上一份完整数据继续可用";
-        MiitStatus = "已取消，未替换上一份本地资料库";
+        TaskSummary = "资料库任务已请求取消 · 当前目录可能已更新";
+        StatusMessage = "资料操作已取消；当前目录可能已更新";
+        MiitStatus = "已取消；当前目录可能已更新";
     }
 
     public async Task RefreshQthPackagesAsync(string? message = null,
         CancellationToken cancellationToken = default)
     {
         var tree = await QthPackageService.LoadInstalledTreeAsync(_catalogDataRoot, cancellationToken).ConfigureAwait(true);
+        ApplyQthPackageTree(tree, message);
+    }
+
+    private void ApplyQthPackageTree(IReadOnlyList<QthPackageNode> tree, string? message)
+    {
         QthPackages.Clear();
         foreach (var node in tree)
         {
@@ -696,25 +844,92 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private async Task LoadCatalogInBackgroundAsync(CancellationToken cancellationToken)
+    internal async Task LoadCatalogInBackgroundAsync(CancellationToken cancellationToken)
     {
+        var operation = BeginCatalogOperation();
         try
         {
             var report = await _catalogService.ReloadExistingDataAsync(_catalogDataRoot, cancellationToken).ConfigureAwait(true);
+            if (!report.Published)
+            {
+                if (!IsCurrentCatalogOperation(operation))
+                {
+                    return;
+                }
+
+                if (!report.Succeeded)
+                {
+                    CatalogSummary = "内置现场词典继续可用；资料库加载失败：" + report.Message;
+                    StatusMessage = "资料库加载失败，但 SQLite 录入仍可用";
+                    TaskSummary = "资料库任务失败 · 可重试";
+                }
+                return;
+            }
+
+            if (!IsCurrentCatalogOperation(operation))
+            {
+                ReparseCurrentInput();
+                return;
+            }
+
             CatalogSummary = $"本地别名 {report.DeviceAliasCount:N0} 个；行政地点 {report.QthPlaceCount:N0} 条；工信部 {report.MiitModelCount:N0} 个";
             MiitStatus = report.MiitModelCount > 0 ? $"本地工信部电台型号 {report.MiitModelCount:N0} 个" : "工信部电台型号库尚未下载";
             LocationStatus = report.QthPlaceCount > 0
                 ? $"全国行政区基础索引可用；详细地点 {report.QthPlaceCount:N0} 条已载入"
                 : "全国行政区基础索引可用；详细地点包尚未安装";
-            await RefreshQthPackagesAsync(cancellationToken: cancellationToken).ConfigureAwait(true);
-            TaskSummary = "无后台任务 · 本地资料库已就绪";
             ReparseCurrentInput();
+            if (!IsCurrentCatalogOperation(operation))
+            {
+                return;
+            }
+
+            TaskSummary = "本地资料库已更新 · 正在刷新地点包树";
+            try
+            {
+                var refreshTree = QthPackageTreeRefreshForTesting is { } testRefresh
+                    ? testRefresh(cancellationToken)
+                    : RefreshQthPackagesAsync(cancellationToken: cancellationToken);
+                await refreshTree.ConfigureAwait(true);
+                if (!IsCurrentCatalogOperation(operation))
+                {
+                    return;
+                }
+
+                TaskSummary = "无后台任务 · 本地资料库已就绪";
+            }
+            catch (OperationCanceledException)
+            {
+                if (!IsCurrentCatalogOperation(operation))
+                {
+                    return;
+                }
+
+                LocationStatus = "全国行政区基础索引可用；地点包树刷新已取消";
+                StatusMessage = "资料库已更新；地点包树刷新已取消";
+                TaskSummary = "地点包树刷新已取消 · 本地资料库已就绪";
+            }
+            catch (Exception exception)
+            {
+                if (!IsCurrentCatalogOperation(operation))
+                {
+                    return;
+                }
+
+                LocationStatus = "全国行政区基础索引可用；地点包树刷新失败";
+                StatusMessage = $"资料库已更新；地点包树刷新失败：{exception.Message}";
+                TaskSummary = "地点包树刷新失败 · 本地资料库已就绪";
+            }
         }
         catch (OperationCanceledException)
         {
         }
         catch (Exception exception)
         {
+            if (!IsCurrentCatalogOperation(operation))
+            {
+                return;
+            }
+
             CatalogSummary = "内置现场词典继续可用；资料库加载失败：" + exception.Message;
             StatusMessage = "资料库加载失败，但 SQLite 录入仍可用";
             TaskSummary = "资料库任务失败 · 可重试";
