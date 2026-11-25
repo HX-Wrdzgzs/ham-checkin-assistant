@@ -1,5 +1,6 @@
 using System.Data;
 using System.Globalization;
+using HamCheckin.Native.Core.Lan;
 using HamCheckin.Native.Core.Memory;
 using HamCheckin.Native.Core.Parsing;
 using Microsoft.Data.Sqlite;
@@ -351,6 +352,7 @@ public sealed class NativeStore : IAsyncDisposable
         SessionInfo session,
         ParseResult result,
         string? submissionId = null,
+        string source = LanSources.Local,
         CancellationToken cancellationToken = default)
     {
         if (!result.CanSubmit)
@@ -359,6 +361,7 @@ public sealed class NativeStore : IAsyncDisposable
         }
 
         submissionId ??= Guid.NewGuid().ToString("N");
+        source = string.IsNullOrWhiteSpace(source) ? LanSources.Local : source;
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -389,8 +392,11 @@ public sealed class NativeStore : IAsyncDisposable
                     $submission, $session, $sequence, $time, $callsign,
                     $qthRaw, $qth, $deviceRaw, $device,
                     $antennaRaw, $antenna, $powerRaw, $power,
-                    $signal, 'local', $raw, $unmatched, $now, $now);
-                SELECT last_insert_rowid();
+                    $signal, $source, $raw, $unmatched, $now, $now)
+                ON CONFLICT(submission_id) DO NOTHING;
+                SELECT id FROM checkins
+                WHERE submission_id = $submission AND is_deleted = 0
+                LIMIT 1;
                 """;
             AddParameter(command, "$submission", submissionId);
             AddParameter(command, "$session", session.Id);
@@ -406,23 +412,41 @@ public sealed class NativeStore : IAsyncDisposable
             AddParameter(command, "$powerRaw", result.Power.Raw);
             AddParameter(command, "$power", result.Power.Value);
             AddParameter(command, "$signal", result.Signal.Value);
+            AddParameter(command, "$source", source);
             AddParameter(command, "$raw", result.RawText);
             AddParameter(command, "$unmatched", result.UnmatchedText);
             AddParameter(command, "$now", now.ToString("O", CultureInfo.InvariantCulture));
             var scalar = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+            if (scalar is null or DBNull)
+            {
+                throw new InvalidOperationException("提交编号已存在，但对应记录不可读。");
+            }
+
             var id = Convert.ToInt64(scalar, CultureInfo.InvariantCulture);
+            var row = await ReadCheckinByIdAsync(connection, sqliteTransaction, id, cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new InvalidOperationException("写入后无法读取记录。");
 
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new CheckinEntry(
-                id, session.Id, sequence, checkinTime, result.Callsign.Value,
-                result.Qth.Value, result.Device.Value, result.Antenna.Value,
-                result.Power.Value, result.Signal.Value, "local", result.RawText,
-                result.UnmatchedText, now.ToString("O", CultureInfo.InvariantCulture));
+            return row;
         }
         finally
         {
             _writeGate.Release();
         }
+    }
+
+    /// <summary>
+    /// 手机提交的幂等读回：按 submission_id 取既存记录，不写入。
+    /// </summary>
+    public async Task<CheckinEntry?> GetCheckinBySubmissionIdAsync(
+        string submissionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(submissionId);
+        await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        return await ReadCheckinBySubmissionIdAsync(connection, null, submissionId, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<CheckinEntry>> LoadRecentAsync(
@@ -640,6 +664,27 @@ public sealed class NativeStore : IAsyncDisposable
             FROM checkins WHERE id = $id AND is_deleted = 0 LIMIT 1
             """;
         AddParameter(command, "$id", id);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+            ? ReadCheckin(reader)
+            : null;
+    }
+
+    private async Task<CheckinEntry?> ReadCheckinBySubmissionIdAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        string submissionId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT id, session_id, sequence_no, checkin_time, callsign,
+                   qth_standard, device_standard, antenna_standard, power_standard,
+                   signal, source, raw_input, unmatched, updated_at
+            FROM checkins WHERE submission_id = $submission AND is_deleted = 0 LIMIT 1
+            """;
+        AddParameter(command, "$submission", submissionId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
             ? ReadCheckin(reader)

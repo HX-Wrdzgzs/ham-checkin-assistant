@@ -16,5 +16,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\HamCheckin.Native.Core\HamCheckin.Native.Core.csproj" />
+    <ProjectReference Include="..\..\src\HamCheckin.Native.LanServer\HamCheckin.Native.LanServer.csproj" />
   </ItemGroup>
 </Project>

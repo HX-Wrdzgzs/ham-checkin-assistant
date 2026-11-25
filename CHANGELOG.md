@@ -9,6 +9,8 @@
 - 2026-11-22：完成 Native 主界面页面切换与五个二级窗口入口过渡：页面 180 ms、窗口 160 ms 的淡入+位移，统一由 `WindowMotion` 处理，尊重 `SystemParameters.ClientAreaAnimation` 与“过渡动画”开关；快速切页可取消，结束无回跳。新增 WPF UI 测试覆盖启用、禁用和快速切换；SDK 10.0.401 Release `--no-restore` 构建 0 errors，`Category!=Hardware` 测试 Core 250 + UI 55 = 305/305 通过。硬件/真实网络/生产迁移/安装发布未运行。
 - 2026-11-22：为快速点名页和快速小窗加入呼号历史记忆：从已确认 `checkins` 按呼号派生 QTH/设备/天线/功率字段提示，半透明 chip 仅在显式点击时逐字段应用，不改输入框原文、不自动提交；支持撤销并在输入修订变化后失效。SDK 10.0.401 Release 构建 0 errors，`Category!=Hardware` 测试 Core 253 + UI 64 = 317/317 通过；隔离界面截图确认提示行可见。
 
+- 2026-11-25：加入手机内网点名 S2 服务骨架：Kestrel/LanServer、7 个回环端点、PIN/令牌、内存待确认队列与 PC 批准后才写 SQLite、内嵌手机页；App 尚未引用或自动启动。SDK 10.0.401 Release 构建 0 errors；LAN 66 + Native 308 + UI 64 = 372 passed / 0 failed / 0 skipped。真实 LAN、S3 收件页和手机实测未完成。
+
 ### 修复
 
 - 2026-11-22：关于页删除“Windows 原生版 · 快速、离线、键盘优先”副标题；版本、更新渠道和数据位置等内容保留。UI 测试与隔离视觉树断言通过。

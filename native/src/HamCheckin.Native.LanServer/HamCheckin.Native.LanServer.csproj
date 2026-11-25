@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>HamCheckin.Native.LanServer</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\HamCheckin.Native.Core\HamCheckin.Native.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\mobile.html" LogicalName="HamCheckin.Native.LanServer.Assets.mobile.html" />
+    <EmbeddedResource Include="Assets\app.js" LogicalName="HamCheckin.Native.LanServer.Assets.app.js" />
+    <EmbeddedResource Include="Assets\app.css" LogicalName="HamCheckin.Native.LanServer.Assets.app.css" />
+  </ItemGroup>
+</Project>

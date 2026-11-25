@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>江苏中继 · 手机点名</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">江苏中继点名</div>
+  <div id="pc-name" class="pc-name"></div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main>
+  <section id="view-pair" class="view">
+    <h1>连接电脑</h1>
+    <p class="hint">在电脑「手机收件」页查看 6 位 PIN，然后在下面输入。手机与电脑必须在同一局域网。</p>
+    <form id="pair-form" autocomplete="off">
+      <label for="pin">6 位 PIN</label>
+      <input id="pin" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+             autocomplete="one-time-code" required>
+      <label for="device-label">设备名称（可选）</label>
+      <input id="device-label" type="text" maxlength="40" placeholder="例如：志愿者的手机">
+      <button id="pair-button" type="submit">连接</button>
+    </form>
+    <p id="pair-error" class="error" role="alert" hidden></p>
+  </section>
+
+  <section id="view-input" class="view" hidden>
+    <div class="session">
+      <span id="session-name"></span>
+      <span id="session-status" class="badge"></span>
+    </div>
+    <label for="draft">点名原文</label>
+    <textarea id="draft" rows="4" maxlength="2000"
+              placeholder="例如：BD4XYZ NJGL QYT6900 4.2m 25w 59"></textarea>
+    <div class="actions">
+      <button id="preview-button" type="button">预览</button>
+    </div>
+    <p id="input-error" class="error" role="alert" hidden></p>
+
+    <div id="preview-card" class="card" hidden>
+      <h2>解析结果</h2>
+      <dl id="preview-fields"></dl>
+      <div id="preview-unmatched" class="unmatched" hidden></div>
+      <div class="actions">
+        <button id="submit-button" type="button">提交给主持人</button>
+        <button id="edit-button" type="button" class="secondary">继续修改</button>
+      </div>
+      <p id="preview-error" class="error" role="alert" hidden></p>
+    </div>
+  </section>
+
+  <section id="view-waiting" class="view" hidden>
+    <h1>已提交，等待主持人确认</h1>
+    <p class="hint">主持人确认后才会记入本场点名，请稍候。请不要关闭本页。</p>
+    <div class="waiting"><span class="spinner"></span><span id="waiting-elapsed">0 秒</span></div>
+    <pre id="waiting-raw" class="raw"></pre>
+    <p id="waiting-error" class="error" role="alert" hidden></p>
+    <div class="actions">
+      <button id="waiting-back" type="button" class="secondary">返回修改</button>
+    </div>
+  </section>
+
+  <section id="view-approved" class="view" hidden>
+    <h1>已记入本场点名</h1>
+    <p id="approved-line" class="result-line"></p>
+    <pre id="approved-raw" class="raw"></pre>
+    <div class="actions">
+      <button id="approved-new" type="button">继续下一条</button>
+    </div>
+  </section>
+
+  <section id="view-rejected" class="view" hidden>
+    <h1 id="rejected-title">主持人未确认</h1>
+    <p id="rejected-reason" class="result-line"></p>
+    <pre id="rejected-raw" class="raw"></pre>
+    <div class="actions">
+      <button id="rejected-edit" type="button">修改后重新提交</button>
+    </div>
+  </section>
+</main>
+
+<footer>仅限现场私网使用 · 不做公网映射</footer>
+</body>
+</html>

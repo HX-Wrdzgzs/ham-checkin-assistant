@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HamCheckin.Native.Core", "src\HamCheckin.Native.Core\HamCheckin.Native.Core.csproj", "{61E4402D-5183-4638-B5A8-B86773C918E5}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HamCheckin.Native.LanServer", "src\HamCheckin.Native.LanServer\HamCheckin.Native.LanServer.csproj", "{3F4B2C1A-9D7E-4A62-8B15-0C6E2D8A7F41}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HamCheckin.Native.App", "src\HamCheckin.Native.App\HamCheckin.Native.App.csproj", "{C0649E3C-1261-46B0-9A1C-4060964599DE}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HamCheckin.Native.Benchmarks", "src\HamCheckin.Native.Benchmarks\HamCheckin.Native.Benchmarks.csproj", "{9C716C73-A970-4017-AC1C-5CF1A7A5D898}"
@@ -23,6 +25,10 @@ Global
 		{61E4402D-5183-4638-B5A8-B86773C918E5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{61E4402D-5183-4638-B5A8-B86773C918E5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{61E4402D-5183-4638-B5A8-B86773C918E5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3F4B2C1A-9D7E-4A62-8B15-0C6E2D8A7F41}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3F4B2C1A-9D7E-4A62-8B15-0C6E2D8A7F41}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3F4B2C1A-9D7E-4A62-8B15-0C6E2D8A7F41}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3F4B2C1A-9D7E-4A62-8B15-0C6E2D8A7F41}.Release|Any CPU.Build.0 = Release|Any CPU
 		{C0649E3C-1261-46B0-9A1C-4060964599DE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{C0649E3C-1261-46B0-9A1C-4060964599DE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C0649E3C-1261-46B0-9A1C-4060964599DE}.Release|Any CPU.ActiveCfg = Release|Any CPU
