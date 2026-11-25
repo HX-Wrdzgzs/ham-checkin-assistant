@@ -4,7 +4,7 @@
         Title="关于 / 版本"
         Width="650" Height="560" MinWidth="560" MinHeight="460"
         WindowStartupLocation="CenterOwner"
-        Background="{StaticResource AppBackgroundBrush}"
+        Background="{DynamicResource AppBackgroundBrush}"
         FontFamily="Microsoft YaHei UI"
         UseLayoutRounding="True">
     <Grid Margin="20">
@@ -18,14 +18,13 @@
         <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="HAM 点名助手" FontSize="24" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
-                <TextBlock Text="Windows 原生版 · 快速、离线、键盘优先" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0"/>
-                <TextBlock x:Name="DeveloperText" Text="开发者：BA4THG（HX-Wrdzgzs）" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,4,0,0" AutomationProperties.AutomationId="about-developer"/>
+                <TextBlock Text="HAM 点名助手" FontSize="24" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}"/>
+                <TextBlock x:Name="DeveloperText" Text="开发者：BA4THG（HX-Wrdzgzs）" Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,4,0,0" AutomationProperties.AutomationId="about-developer"/>
             </StackPanel>
-            <Border Grid.Column="1" Background="{StaticResource AccentSoftBrush}" CornerRadius="12" Padding="14,8" VerticalAlignment="Center">
+            <Border Grid.Column="1" Background="{DynamicResource AccentSoftBrush}" CornerRadius="12" Padding="14,8" VerticalAlignment="Center">
                 <StackPanel>
-                    <TextBlock Text="当前版本" FontSize="10" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center"/>
-                <TextBlock x:Name="CurrentVersionText" Text="1.0.20" FontSize="20" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="当前版本" FontSize="10" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center"/>
+                <TextBlock x:Name="CurrentVersionText" Text="1.0.20" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center"/>
                 </StackPanel>
             </Border>
         </Grid>
@@ -35,12 +34,12 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="125"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="更新渠道" FontWeight="Bold"/>
-                    <TextBlock Text="本地候选版" Foreground="{StaticResource SuccessBrush}" FontSize="11" Margin="0,4,0,0"/>
+                    <TextBlock Text="本地候选版" Foreground="{DynamicResource SuccessBrush}" FontSize="11" Margin="0,4,0,0"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1">
-                    <TextBlock Text="GitHub Release · main/updates/latest.json · SHA-256" Foreground="{StaticResource TextBrush}"/>
-                    <TextBlock Text="HX-Wrdzgzs/ham-checkin-assistant" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,5,0,0"/>
-                    <TextBlock x:Name="DataPathText" Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                    <TextBlock Text="GitHub Release · main/updates/latest.json · SHA-256" Foreground="{DynamicResource TextBrush}"/>
+                    <TextBlock Text="HX-Wrdzgzs/ham-checkin-assistant" Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,5,0,0"/>
+                    <TextBlock x:Name="DataPathText" Foreground="{DynamicResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -55,10 +54,10 @@
                 </Grid.RowDefinitions>
                 <TextBlock Text="版本检查" FontSize="16" FontWeight="Bold"/>
                 <TextBlock x:Name="StatusText" Grid.Row="1" Text="点击“检查更新”读取公开 Release 信息；不会影响快速点名。"
-                           Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,6,0,10"/>
+                           Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,6,0,10"/>
                 <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
-                    <TextBox x:Name="ReleaseNotesText" IsReadOnly="True" BorderThickness="0" Background="{StaticResource SurfaceAltBrush}"
-                             Padding="10" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontSize="12" Foreground="{StaticResource TextBrush}"/>
+                    <TextBox x:Name="ReleaseNotesText" IsReadOnly="True" BorderThickness="0" Background="{DynamicResource SurfaceAltBrush}"
+                             Padding="10" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontSize="12" Foreground="{DynamicResource TextBrush}"/>
                 </ScrollViewer>
                 <ProgressBar x:Name="DownloadProgress" Grid.Row="3" Height="6" Minimum="0" Maximum="1" Value="0" Visibility="Collapsed" Margin="0,12,0,0"/>
             </Grid>

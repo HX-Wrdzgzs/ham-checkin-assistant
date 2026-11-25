@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Input;
+using HamCheckin.Native.App.Infrastructure;
 using HamCheckin.Native.Core;
 
 namespace HamCheckin.Native.App.Views;
@@ -12,6 +13,7 @@ public partial class SessionPickerWindow : Window
     public SessionPickerWindow(IReadOnlyList<SessionInfo> sessions)
     {
         InitializeComponent();
+        SourceInitialized += (_, _) => WindowsBackdrop.Apply(this);
         SessionList.ItemsSource = sessions;
         if (sessions.Count > 0)
         {

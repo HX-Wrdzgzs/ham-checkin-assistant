@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
@@ -27,6 +28,9 @@ public partial class MainView : UserControl, IDisposable
     private long _appliedInputRevision;
     private string? _lastShownPage;
     private bool _isVisualReady;
+    private bool? _recordLayoutCompact;
+    private bool _showRecordDetails = true;
+    private bool _changingThemePreference;
     private readonly ScreenRecordingService _recordingService = new();
     private readonly DispatcherTimer _recordingTimer;
     private MicrophoneCapture? _microphoneTest;
@@ -35,6 +39,10 @@ public partial class MainView : UserControl, IDisposable
     public MainView()
     {
         InitializeComponent();
+        ThemePreferenceComboBox.SelectedValue =
+            (Application.Current as HamCheckin.Native.App.App)?.Themes?.Preference.ToString()
+            ?? ThemePreference.FollowSystem.ToString();
+        ThemePreferenceComboBox.SelectionChanged += ThemePreferenceComboBox_SelectionChanged;
         TextCompositionManager.AddPreviewTextInputStartHandler(InputBox, InputBox_TextInputStart);
         TextCompositionManager.AddPreviewTextInputUpdateHandler(InputBox, InputBox_TextInputUpdate);
         TextCompositionManager.AddTextInputHandler(InputBox, InputBox_TextInput);
@@ -101,6 +109,40 @@ public partial class MainView : UserControl, IDisposable
                 ? HorizontalAlignment.Center
                 : HorizontalAlignment.Left;
         }
+
+        UpdateRecordDetailsLayout();
+    }
+
+    private void UpdateRecordDetailsLayout()
+    {
+        if (RecordsListColumn is null || RecordDetailsColumn is null)
+        {
+            return;
+        }
+
+        var compact = ActualWidth < 1_180;
+        if (_recordLayoutCompact != compact)
+        {
+            _recordLayoutCompact = compact;
+            _showRecordDetails = !compact;
+        }
+
+        var showDetails = !compact || _showRecordDetails;
+        RecordsListColumn.Width = showDetails
+            ? new GridLength(compact ? 1.45 : 1.8, GridUnitType.Star)
+            : new GridLength(1, GridUnitType.Star);
+        RecordDetailsColumn.Width = showDetails
+            ? new GridLength(compact ? 1.0 : 1, GridUnitType.Star)
+            : new GridLength(0);
+        RecordDetailsBorder.Visibility = showDetails ? Visibility.Visible : Visibility.Collapsed;
+        ToggleRecordDetailsButton.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
+        ToggleRecordDetailsButton.Content = _showRecordDetails ? "收起详情" : "显示详情";
+    }
+
+    private void ToggleRecordDetails_Click(object sender, RoutedEventArgs e)
+    {
+        _showRecordDetails = !_showRecordDetails;
+        UpdateRecordDetailsLayout();
     }
 
     private void Root_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -108,6 +150,7 @@ public partial class MainView : UserControl, IDisposable
         if (_viewModel is not null)
         {
             _viewModel.ParseUpdated -= ViewModel_ParseUpdated;
+            _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
             _viewModel.SubmissionSucceeded -= ViewModel_SubmissionSucceeded;
             _viewModel.QuickWindowRequested -= ViewModel_QuickWindowRequested;
             _viewModel.InputDraftChanged -= ViewModel_InputDraftChanged;
@@ -117,11 +160,13 @@ public partial class MainView : UserControl, IDisposable
         if (_viewModel is not null)
         {
             _viewModel.ParseUpdated += ViewModel_ParseUpdated;
+            _viewModel.PropertyChanged += ViewModel_PropertyChanged;
             _viewModel.SubmissionSucceeded += ViewModel_SubmissionSucceeded;
             _viewModel.QuickWindowRequested += ViewModel_QuickWindowRequested;
             _viewModel.InputDraftChanged += ViewModel_InputDraftChanged;
             _viewModel.ExportRequested += ViewModel_ExportRequested;
             SyncInputBox(_viewModel.InputDraft, moveCaretToEnd: false);
+            UpdateRecordEditButtonState();
         }
     }
 
@@ -198,6 +243,23 @@ public partial class MainView : UserControl, IDisposable
         }
 
         _viewModel.SelectQthCandidate(candidate);
+        InputBox.Focus();
+    }
+
+    private void CallsignHint_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null || sender is not Button { Tag: CallsignHintChip chip })
+        {
+            return;
+        }
+
+        _viewModel.ApplyCallsignHint(chip);
+        InputBox.Focus();
+    }
+
+    private void UndoCallsignHint_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel?.UndoCallsignHint();
         InputBox.Focus();
     }
 
@@ -702,6 +764,10 @@ public partial class MainView : UserControl, IDisposable
 
     public void Dispose()
     {
+        if (_viewModel is not null)
+        {
+            _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        }
         StopMicrophoneTest();
         _recordingTimer.Stop();
         _recordingService.StateChanged -= RecordingService_StateChanged;
@@ -767,6 +833,60 @@ public partial class MainView : UserControl, IDisposable
         }
     }
 
+    private void RecordsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not DataGrid grid)
+        {
+            return;
+        }
+
+        var selected = grid.SelectedItem as CheckinEntry;
+        RecordDetailsBorder.DataContext = selected;
+        RecordEmptyState.Visibility = selected is null ? Visibility.Visible : Visibility.Collapsed;
+        RecordSelectedState.Visibility = selected is null ? Visibility.Collapsed : Visibility.Visible;
+        UpdateRecordEditButtonState();
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (string.Equals(e.PropertyName, nameof(MainViewModel.IsSessionWritable), StringComparison.Ordinal))
+        {
+            UpdateRecordEditButtonState();
+        }
+    }
+
+    private void UpdateRecordEditButtonState()
+    {
+        if (RecordsGrid is null || EditSelectedFieldButton is null)
+        {
+            return;
+        }
+
+        var selected = RecordsGrid.SelectedItem as CheckinEntry;
+        var columnIndex = RecordsGrid.SelectedCells.Count > 0
+            ? RecordsGrid.SelectedCells[0].Column.DisplayIndex
+            : -1;
+        EditSelectedFieldButton.IsEnabled = selected is not null
+            && _viewModel?.IsSessionWritable == true
+            && FieldFromColumn(columnIndex, false) is not null;
+    }
+
+    private void EditSelectedField_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel?.IsSessionWritable != true
+            || RecordsGrid.SelectedItem is not CheckinEntry row
+            || RecordsGrid.SelectedCells.Count == 0)
+        {
+            return;
+        }
+
+        var field = FieldFromColumn(RecordsGrid.SelectedCells[0].Column.DisplayIndex, false);
+        if (field is not null)
+        {
+            _ = OpenFieldEditorAsync(row, field.Value);
+        }
+    }
+
     private async Task OpenFieldEditorAsync(CheckinEntry row, FieldKind field)
     {
         if (_viewModel is null)
@@ -784,6 +904,7 @@ public partial class MainView : UserControl, IDisposable
             {
                 Owner = Window.GetWindow(this)
             };
+            WindowMotion.Attach(window, () => _viewModel?.AnimationsEnabled ?? true);
             if (window.ShowDialog() == true && window.Commit is not null)
             {
                 await _viewModel.ApplyFieldEditAsync(window.Commit);
@@ -797,9 +918,60 @@ public partial class MainView : UserControl, IDisposable
 
     private void OpenQuickWindow_Click(object sender, RoutedEventArgs e) => ToggleQuickWindow();
 
+    private void ThemePreferenceComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_changingThemePreference
+            || sender is not ComboBox { SelectedItem: ComboBoxItem { Tag: string value } }
+            || !Enum.TryParse(value, ignoreCase: true, out ThemePreference preference)
+            || !Enum.IsDefined(typeof(ThemePreference), preference))
+        {
+            return;
+        }
+
+        if (Application.Current is not HamCheckin.Native.App.App app || app.Themes is not { } themes)
+        {
+            _changingThemePreference = true;
+            try
+            {
+                ThemePreferenceComboBox.SelectedValue = ThemePreference.FollowSystem.ToString();
+            }
+            finally
+            {
+                _changingThemePreference = false;
+            }
+
+            ThemePreferenceStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorBrush");
+            ThemePreferenceStatusText.Text = "主题服务尚不可用，未保存更改。";
+            return;
+        }
+
+        if (themes.TrySetPreference(preference, out var error))
+        {
+            ThemePreferenceStatusText.SetResourceReference(TextBlock.ForegroundProperty, "SuccessBrush");
+            ThemePreferenceStatusText.Text = themes.CurrentTheme == EffectiveTheme.HighContrast
+                ? "主题偏好已保存；Windows 高对比配色优先。"
+                : "主题偏好已保存。";
+            return;
+        }
+
+        _changingThemePreference = true;
+        try
+        {
+            ThemePreferenceComboBox.SelectedValue = themes.Preference.ToString();
+        }
+        finally
+        {
+            _changingThemePreference = false;
+        }
+
+        ThemePreferenceStatusText.SetResourceReference(TextBlock.ForegroundProperty, "ErrorBrush");
+        ThemePreferenceStatusText.Text = error ?? "主题设置未保存。";
+    }
+
     private void OpenAbout_Click(object sender, RoutedEventArgs e)
     {
         var window = new AboutWindow { Owner = Window.GetWindow(this) };
+        WindowMotion.Attach(window, () => _viewModel?.AnimationsEnabled ?? true);
         window.ShowDialog();
     }
 
@@ -829,6 +1001,7 @@ public partial class MainView : UserControl, IDisposable
                 DataContext = _viewModel,
                 Owner = Window.GetWindow(this)
             };
+            WindowMotion.Attach(_quickWindow, () => _viewModel?.AnimationsEnabled ?? true);
             _quickWindow.Closed += (_, _) => _quickWindow = null;
         }
         if (_quickWindow.IsVisible)
@@ -888,6 +1061,7 @@ public partial class MainView : UserControl, IDisposable
         }
 
         var dialog = new SessionEditorWindow(null) { Owner = Window.GetWindow(this) };
+        WindowMotion.Attach(dialog, () => _viewModel?.AnimationsEnabled ?? true);
         if (dialog.ShowDialog() == true && dialog.Result is { } result)
         {
             try
@@ -913,6 +1087,7 @@ public partial class MainView : UserControl, IDisposable
         {
             var sessions = await _viewModel.ListSessionsAsync();
             var dialog = new SessionPickerWindow(sessions) { Owner = Window.GetWindow(this) };
+            WindowMotion.Attach(dialog, () => _viewModel?.AnimationsEnabled ?? true);
             if (dialog.ShowDialog() == true && dialog.SelectedSession is { } selected)
             {
                 await _viewModel.SelectSessionAsync(selected.Id);
@@ -939,6 +1114,7 @@ public partial class MainView : UserControl, IDisposable
                 return;
             }
             var dialog = new SessionEditorWindow(session) { Owner = Window.GetWindow(this) };
+            WindowMotion.Attach(dialog, () => _viewModel?.AnimationsEnabled ?? true);
             if (dialog.ShowDialog() == true && dialog.Result is { } result)
             {
                 await _viewModel.UpdateCurrentSessionInfoAsync(result.OperatorCallsign,
@@ -980,19 +1156,11 @@ public partial class MainView : UserControl, IDisposable
         }
     }
 
-    private void AnimatePage(FrameworkElement page)
-    {
-        if (!ShouldAnimate()) { page.Opacity = 1; page.RenderTransform = Transform.Identity; return; }
-        var translate = new TranslateTransform(3, 0);
-        page.RenderTransform = translate; page.Opacity = 0.92;
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        page.BeginAnimation(OpacityProperty, new DoubleAnimation(0.92, 1, TimeSpan.FromMilliseconds(70)) { EasingFunction = ease });
-        translate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(3, 0, TimeSpan.FromMilliseconds(75)) { EasingFunction = ease });
-    }
+    private void AnimatePage(FrameworkElement page) =>
+        WindowMotion.PlayPageEntrance(page, ShouldAnimate());
 
     private bool ShouldAnimate() => _isVisualReady
-        && SystemParameters.ClientAreaAnimation
-        && (_viewModel?.AnimationsEnabled ?? true);
+        && WindowMotion.IsMotionEnabled(_viewModel?.AnimationsEnabled ?? true);
 
     private static FieldKind? FieldFromColumn(int column, bool quickGrid) => column switch
     {
@@ -1025,10 +1193,13 @@ internal sealed class ShortcutCaptureWindow : Window
     public ShortcutCaptureWindow()
     {
         Title = "设置快捷键"; Width = 360; Height = 150; ResizeMode = ResizeMode.NoResize;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner; Background = Brushes.White;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        SourceInitialized += (_, _) => WindowsBackdrop.Apply(this);
+        SetResourceReference(Window.BackgroundProperty, "AppBackgroundBrush");
         var panel = new StackPanel { Margin = new Thickness(18) };
         panel.Children.Add(new TextBlock { Text = "请直接按下新的快捷键组合（Esc 取消）", Margin = new Thickness(0, 0, 0, 12) });
-        _display = new TextBlock { Text = "等待按键…", FontSize = 22, FontWeight = FontWeights.SemiBold, Foreground = Brushes.DodgerBlue, HorizontalAlignment = HorizontalAlignment.Center };
+        _display = new TextBlock { Text = "等待按键…", FontSize = 22, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center };
+        _display.SetResourceReference(TextBlock.ForegroundProperty, "AccentBrush");
         panel.Children.Add(_display);
         Content = panel;
         PreviewKeyDown += CaptureKeyDown;

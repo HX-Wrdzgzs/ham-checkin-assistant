@@ -4,10 +4,10 @@
         Title="字段编辑"
         Width="720" Height="620" MinWidth="560" MinHeight="480"
         WindowStartupLocation="CenterOwner"
-        Background="{StaticResource AppBackgroundBrush}"
+        Background="{DynamicResource AppBackgroundBrush}"
         FontFamily="Microsoft YaHei UI"
         UseLayoutRounding="True">
-    <Grid Margin="18" Background="{StaticResource AppBackgroundBrush}">
+    <Grid Margin="18" Background="{DynamicResource AppBackgroundBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
@@ -17,33 +17,33 @@
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel>
                 <TextBlock Text="{Binding DialogTitle}" FontSize="18" FontWeight="Bold"/>
-                <TextBlock Text="{Binding SessionLine}" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,4,0,0"/>
+                <TextBlock Text="{Binding SessionLine}" Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,4,0,0"/>
             </StackPanel>
-            <Border Grid.Column="1" Background="{StaticResource AccentSoftBrush}" CornerRadius="10" Padding="10,5">
-                <TextBlock Text="只修改当前字段" Foreground="{StaticResource AccentBrush}" FontSize="11" FontWeight="SemiBold"/>
+            <Border Grid.Column="1" Background="{DynamicResource AccentSoftBrush}" CornerRadius="10" Padding="10,5">
+                <TextBlock Text="只修改当前字段" Foreground="{DynamicResource AccentBrush}" FontSize="11" FontWeight="SemiBold"/>
             </Border>
         </Grid>
 
         <Border Grid.Row="1" Style="{StaticResource CardBorder}" Padding="12" Margin="0,13,0,9">
             <StackPanel>
-                <TextBlock Text="当前值" FontSize="10" Foreground="{StaticResource MutedBrush}"/>
+                <TextBlock Text="当前值" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
                 <TextBlock Text="{Binding CurrentValueDisplay}" FontSize="15" FontWeight="SemiBold" Margin="0,3,0,0" TextWrapping="Wrap"/>
             </StackPanel>
         </Border>
 
         <Border Grid.Row="2" Style="{StaticResource CardBorder}" Padding="12" Margin="0,0,0,9">
             <StackPanel>
-                <TextBlock Text="快捷输入" FontSize="10" Foreground="{StaticResource MutedBrush}"/>
+                <TextBlock Text="快捷输入" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
                 <TextBox x:Name="EditBox" Height="43" Style="{StaticResource InputTextBox}" FontSize="16" Margin="0,5,0,0"
                          Text="{Binding EditText, UpdateSourceTrigger=PropertyChanged}"
                          TextChanged="EditBox_TextChanged" PreviewKeyDown="EditBox_PreviewKeyDown"/>
-                <TextBlock Text="{Binding PreviewLine}" Margin="3,7,0,0" Foreground="{StaticResource AccentBrush}" FontSize="12" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding PreviewLine}" Margin="3,7,0,0" Foreground="{DynamicResource AccentBrush}" FontSize="12" TextWrapping="Wrap"/>
             </StackPanel>
         </Border>
 
         <Border Grid.Row="3" Style="{StaticResource CardBorder}" Padding="12" Margin="0,0,0,9">
             <StackPanel>
-                <TextBlock Text="候选" FontSize="10" Foreground="{StaticResource MutedBrush}"/>
+                <TextBlock Text="候选" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
                 <ListBox x:Name="CandidatesList" ItemsSource="{Binding Candidates}"
                          SelectedItem="{Binding SelectedCandidate}" BorderThickness="0" Background="Transparent"
                          Margin="0,4,0,0" MaxHeight="90" SelectionChanged="Candidates_SelectionChanged">
@@ -51,7 +51,7 @@
                         <DataTemplate><TextBlock Text="{Binding}" Padding="5,3"/></DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
-                <TextBlock Text="{Binding SourceLine}" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0"/>
+                <TextBlock Text="{Binding SourceLine}" FontSize="10" Foreground="{DynamicResource MutedBrush}" Margin="0,4,0,0"/>
             </StackPanel>
         </Border>
 
@@ -64,7 +64,7 @@
                     <Button Grid.Column="1" Content="复制全部  Ctrl+Shift+C" Style="{StaticResource BaseButton}" Padding="9,4" Click="CopyAll_Click" Margin="6,0,5,0"/>
                     <Button Grid.Column="2" Content="复制选中" Style="{StaticResource BaseButton}" Padding="9,4" Click="CopyOne_Click"/>
                 </Grid>
-                <TextBlock Grid.Row="1" Text="双击片段填入当前字段；仅明确采用的片段会在保存后移除。" FontSize="10" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,6"/>
+                <TextBlock Grid.Row="1" Text="双击片段填入当前字段；仅明确采用的片段会在保存后移除。" FontSize="10" Foreground="{DynamicResource MutedBrush}" Margin="0,4,0,6"/>
                 <ItemsControl Grid.Row="2" ItemsSource="{Binding UnmatchedTokens}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
@@ -75,7 +75,7 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBox Grid.Row="3" Text="{Binding RawInputDisplay, Mode=OneWay}" IsReadOnly="True" BorderBrush="{StaticResource BorderBrush}" Background="{StaticResource SurfaceAltBrush}" Padding="8" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,5,0,0"/>
+                <TextBox Grid.Row="3" Text="{Binding RawInputDisplay, Mode=OneWay}" IsReadOnly="True" BorderBrush="{DynamicResource BorderBrush}" Background="{DynamicResource SurfaceAltBrush}" Padding="8" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,5,0,0"/>
             </Grid>
         </Border>
 

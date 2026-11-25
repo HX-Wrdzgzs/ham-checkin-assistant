@@ -7,6 +7,7 @@ using HamCheckin.Native.App.Infrastructure;
 using HamCheckin.Native.Core;
 using HamCheckin.Native.Core.Catalogs;
 using HamCheckin.Native.Core.Export;
+using HamCheckin.Native.Core.Memory;
 using HamCheckin.Native.Core.Parsing;
 using HamCheckin.Native.Core.Storage;
 using HamCheckin.Native.Core.Updates;
@@ -15,10 +16,14 @@ namespace HamCheckin.Native.App.ViewModels;
 
 public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 {
+    private const int CallsignMemoryDebounceMilliseconds = 200;
+    private const string CallsignMemorySource = "呼号记忆";
+
     private readonly CatalogService _catalogService;
     private readonly InputParser _parser;
     private readonly FieldParser _fieldParser;
     private readonly NativeStore? _store;
+    private readonly CallsignMemoryService? _callsignMemory;
     private readonly MiitCatalogSyncService _miitSyncService;
     private readonly string? _catalogDataRoot;
     private readonly ExcelExportService _exporter = new();
@@ -61,6 +66,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string _selectedQthRaw = string.Empty;
     private string _selectedQthCanonical = string.Empty;
     private long _lastParseMicroseconds;
+    private CancellationTokenSource? _callsignMemoryCancellation;
+    private CallsignMemorySnapshot? _callsignMemorySnapshot;
+    private readonly List<CallsignHintOverride> _callsignHintOverrides = new();
+    private string _callsignMemoryCallsign = string.Empty;
+    private string _callsignMemoryPendingCallsign = string.Empty;
+    private string _callsignMemoryLastTime = string.Empty;
 
     public MainViewModel()
         : this(new CatalogService(), new NativeStore())
@@ -78,6 +89,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _parser = new InputParser(catalogService);
         _fieldParser = new FieldParser(catalogService);
         _store = store;
+        _callsignMemory = store is null ? null : new CallsignMemoryService(store);
         _updates = updates ?? new NativeUpdateService();
         _catalogDataRoot = catalogDataRoot;
         ImportLegacyDatabase = importLegacyDatabase;
@@ -122,6 +134,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public ObservableCollection<ShortcutBinding> ShortcutBindings { get; } = new();
     public ObservableCollection<QthPackageNode> QthPackages { get; } = new();
     public ObservableCollection<string> QthCandidates { get; } = new();
+    public ObservableCollection<CallsignHintChip> CallsignHints { get; } = new();
 
     public ICommand SubmitCommand { get; }
     public ICommand SearchCatalogCommand { get; }
@@ -180,6 +193,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public string CurrentUnmatchedDisplay => string.IsNullOrWhiteSpace(Unmatched) ? "无" : Unmatched;
     public bool HasQthCandidates => QthCandidates.Count > 0;
 
+    /// <summary>最近一次历史记录的到达时刻，只作参考，不可点击、不参与应用。</summary>
+    public string CallsignMemoryLastTimeDisplay => _callsignMemoryLastTime;
+    public bool HasCallsignMemoryHints => CallsignHints.Count > 0;
+    public bool CanUndoCallsignHint => _callsignHintOverrides.Count > 0;
+    public bool IsCallsignHintRowVisible => HasCallsignMemoryHints || CanUndoCallsignHint;
+
     /// <summary>
     /// Explicitly accepts one displayed QTH candidate without replacing the
     /// raw input.  The selected result is kept in the parsed snapshot so the
@@ -197,17 +216,131 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _selectedQthRevision = _draftService.Current.Revision;
         _selectedQthRaw = _parseResult.RawText;
         _selectedQthCanonical = canonical;
+        // 同字段只保留最后一次显式选择，避免后台重解析把记忆值又盖回来。
+        RemoveCallsignHintOverride(FieldKind.Qth);
         _parseResult = ApplySelectedQthCandidate(_parseResult, canonical);
         Qth = canonical;
         Unmatched = _parseResult.UnmatchedText;
         QthCandidates.Clear();
         OnPropertyChanged(nameof(HasQthCandidates));
         OnPropertyChanged(nameof(CurrentUnmatchedDisplay));
+        RebuildCallsignHints();
         StatusMessage = $"已选择 QTH：{canonical}；原始输入未改写";
         if (SubmitCommand is AsyncRelayCommand command)
         {
             command.RaiseCanExecuteChanged();
         }
+        ParseUpdated?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// 应用一条呼号记忆提示：只改该字段的解析结果，输入框原文、token、
+    /// 未识别项与其它字段都不动；绝不自动触发，只有显式点击才会走到这里。
+    /// </summary>
+    public void ApplyCallsignHint(CallsignHintChip? hint)
+    {
+        if (hint is null
+            || _callsignMemorySnapshot is null
+            || !string.Equals(
+                _callsignMemorySnapshot.Callsign,
+                TextNormalizer.NormalizeCallsign(_parseResult.Callsign.Value),
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var current = FieldOf(_parseResult, hint.Field);
+        if (string.Equals(current.Value, hint.Value, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var existingIndex = _callsignHintOverrides.FindIndex(item => item.Field == hint.Field);
+        var previous = existingIndex >= 0
+            ? _callsignHintOverrides[existingIndex].PreviousField
+            : current;
+        var selectedQthRevision = -1L;
+        var selectedQthRaw = string.Empty;
+        var selectedQthCanonical = string.Empty;
+        if (hint.Field == FieldKind.Qth)
+        {
+            if (existingIndex >= 0)
+            {
+                // 重复应用 QTH 提示时沿用首次捕获的标记，撤销才能回到最初的显式选择。
+                var existing = _callsignHintOverrides[existingIndex];
+                selectedQthRevision = existing.SelectedQthRevision;
+                selectedQthRaw = existing.SelectedQthRaw;
+                selectedQthCanonical = existing.SelectedQthCanonical;
+            }
+            else
+            {
+                selectedQthRevision = _selectedQthRevision;
+                selectedQthRaw = _selectedQthRaw;
+                selectedQthCanonical = _selectedQthCanonical;
+            }
+
+            // QTH 候选与记忆覆盖只能留一个，先点的那次让位给后点的那次。
+            ClearSelectedQthCandidate();
+        }
+
+        var applied = current with
+        {
+            Value = hint.Value,
+            Source = CallsignMemorySource,
+            Confidence = 1.0
+        };
+        if (existingIndex >= 0)
+        {
+            _callsignHintOverrides.RemoveAt(existingIndex);
+        }
+
+        _callsignHintOverrides.Add(new CallsignHintOverride(
+            hint.Field,
+            applied,
+            previous,
+            _parsedInputRevision,
+            _parseResult.RawText,
+            selectedQthRevision,
+            selectedQthRaw,
+            selectedQthCanonical));
+        _parseResult = WithField(_parseResult, hint.Field, applied);
+        PublishParsedFields();
+        if (hint.Field == FieldKind.Qth)
+        {
+            QthCandidates.Clear();
+            OnPropertyChanged(nameof(HasQthCandidates));
+        }
+
+        RebuildCallsignHints();
+        OnPropertyChanged(nameof(CanUndoCallsignHint));
+        OnPropertyChanged(nameof(IsCallsignHintRowVisible));
+        StatusMessage = $"已应用呼号记忆 {hint.FieldLabel}：{hint.Value}；输入框原文未改写";
+        ParseUpdated?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>撤销最近一次提示应用，恢复该字段原来的值与来源。</summary>
+    public void UndoCallsignHint()
+    {
+        if (_callsignHintOverrides.Count == 0)
+        {
+            return;
+        }
+
+        var hintOverride = _callsignHintOverrides[^1];
+        _callsignHintOverrides.RemoveAt(_callsignHintOverrides.Count - 1);
+        _parseResult = WithField(_parseResult, hintOverride.Field, hintOverride.PreviousField);
+        if (hintOverride.Field == FieldKind.Qth)
+        {
+            // 恢复应用提示前的显式选择标记，同修订重解析才不会丢掉用户的选择。
+            _selectedQthRevision = hintOverride.SelectedQthRevision;
+            _selectedQthRaw = hintOverride.SelectedQthRaw;
+            _selectedQthCanonical = hintOverride.SelectedQthCanonical;
+        }
+        PublishParsedFields();
+        RebuildCallsignHints();
+        OnPropertyChanged(nameof(CanUndoCallsignHint));
+        OnPropertyChanged(nameof(IsCallsignHintRowVisible));
+        StatusMessage = "已撤销呼号记忆填充；字段恢复为解析结果";
         ParseUpdated?.Invoke(this, EventArgs.Empty);
     }
 
@@ -967,6 +1100,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private void ParseInput(string value, long revision = -1)
     {
         var started = Stopwatch.GetTimestamp();
+        var effectiveRevision = revision >= 0 ? revision : _draftService.Current.Revision;
         var parsed = _parser.Parse(value);
         if (revision >= 0
             && revision == _selectedQthRevision
@@ -981,16 +1115,25 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             ClearSelectedQthCandidate();
         }
 
+        if (_callsignHintOverrides.Count > 0
+            && effectiveRevision == _callsignHintOverrides[0].Revision
+            && string.Equals(parsed.RawText, _callsignHintOverrides[0].RawText, StringComparison.Ordinal))
+        {
+            // 同一修订的后台重解析必须保住已应用的记忆字段，直到原文或修订变化。
+            foreach (var hintOverride in _callsignHintOverrides)
+            {
+                parsed = WithField(parsed, hintOverride.Field, hintOverride.AppliedField);
+            }
+        }
+        else if (_callsignHintOverrides.Count > 0)
+        {
+            ClearCallsignHintOverrides();
+        }
+
         _parseResult = parsed;
-        _parsedInputRevision = revision >= 0 ? revision : _draftService.Current.Revision;
+        _parsedInputRevision = effectiveRevision;
         LastParseMicroseconds = (long)(Stopwatch.GetElapsedTime(started).TotalMilliseconds * 1000);
-        Callsign = _parseResult.Callsign.Value;
-        Qth = _parseResult.Qth.Value;
-        Device = _parseResult.Device.Value;
-        Antenna = _parseResult.Antenna.Value;
-        Power = _parseResult.Power.Value;
-        Signal = _parseResult.Signal.Value;
-        Unmatched = _parseResult.UnmatchedText;
+        PublishParsedFields();
         QthCandidates.Clear();
         if (!string.Equals(_parseResult.Qth.Source, "用户选择", StringComparison.Ordinal))
         {
@@ -1000,13 +1143,208 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             }
         }
         OnPropertyChanged(nameof(HasQthCandidates));
+        ParseUpdated?.Invoke(this, EventArgs.Empty);
+        ScheduleCallsignMemoryLookup();
+    }
+
+    private void PublishParsedFields()
+    {
+        Callsign = _parseResult.Callsign.Value;
+        Qth = _parseResult.Qth.Value;
+        Device = _parseResult.Device.Value;
+        Antenna = _parseResult.Antenna.Value;
+        Power = _parseResult.Power.Value;
+        Signal = _parseResult.Signal.Value;
+        Unmatched = _parseResult.UnmatchedText;
         OnPropertyChanged(nameof(CurrentUnmatchedDisplay));
         if (SubmitCommand is AsyncRelayCommand command)
         {
             command.RaiseCanExecuteChanged();
         }
-        ParseUpdated?.Invoke(this, EventArgs.Empty);
     }
+
+    private static ParseField FieldOf(ParseResult parsed, FieldKind field) => field switch
+    {
+        FieldKind.Qth => parsed.Qth,
+        FieldKind.Device => parsed.Device,
+        FieldKind.Antenna => parsed.Antenna,
+        FieldKind.Power => parsed.Power,
+        _ => throw new ArgumentOutOfRangeException(nameof(field), field, "呼号记忆只覆盖 QTH/设备/天线/功率")
+    };
+
+    private static ParseResult WithField(ParseResult parsed, FieldKind field, ParseField value) => field switch
+    {
+        FieldKind.Qth => parsed with { Qth = value },
+        FieldKind.Device => parsed with { Device = value },
+        FieldKind.Antenna => parsed with { Antenna = value },
+        FieldKind.Power => parsed with { Power = value },
+        _ => throw new ArgumentOutOfRangeException(nameof(field), field, "呼号记忆只覆盖 QTH/设备/天线/功率")
+    };
+
+    private void ClearCallsignHintOverrides()
+    {
+        _callsignHintOverrides.Clear();
+        OnPropertyChanged(nameof(CanUndoCallsignHint));
+        OnPropertyChanged(nameof(IsCallsignHintRowVisible));
+    }
+
+    private void RemoveCallsignHintOverride(FieldKind field)
+    {
+        if (_callsignHintOverrides.RemoveAll(item => item.Field == field) == 0)
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(CanUndoCallsignHint));
+        OnPropertyChanged(nameof(IsCallsignHintRowVisible));
+    }
+
+    /// <summary>
+    /// 每按键一次的入口：只在呼号变化时去抖查询；查询与聚合都在线程池里跑，
+    /// 键盘输入路径只做一次字符串归一化和一次判断。
+    /// </summary>
+    private void ScheduleCallsignMemoryLookup()
+    {
+        var callsign = TextNormalizer.NormalizeCallsign(_parseResult.Callsign.Value);
+        if (_callsignMemory is null || callsign.Length == 0)
+        {
+            ResetCallsignMemory();
+            return;
+        }
+
+        if (string.Equals(callsign, _callsignMemoryCallsign, StringComparison.Ordinal))
+        {
+            // 同一呼号：字段值可能变了，只重算 chip 文本，不重复查询。
+            RebuildCallsignHints();
+            return;
+        }
+
+        if (string.Equals(callsign, _callsignMemoryPendingCallsign, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _callsignMemoryPendingCallsign = callsign;
+        ClearCallsignMemorySnapshot();
+
+        _callsignMemoryCancellation?.Cancel();
+        _callsignMemoryCancellation?.Dispose();
+        _callsignMemoryCancellation = new CancellationTokenSource();
+        _ = LoadCallsignMemoryAsync(callsign, _parsedInputRevision, _callsignMemoryCancellation.Token);
+    }
+
+    private async Task LoadCallsignMemoryAsync(string callsign, long revision, CancellationToken cancellationToken)
+    {
+        var service = _callsignMemory;
+        if (service is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await Task.Delay(CallsignMemoryDebounceMilliseconds, cancellationToken).ConfigureAwait(true);
+            var snapshot = await Task.Run(
+                    () => service.LoadAsync(callsign, cancellationToken), cancellationToken)
+                .ConfigureAwait(true);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (!string.Equals(
+                    TextNormalizer.NormalizeCallsign(_parseResult.Callsign.Value),
+                    callsign,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (revision != _parsedInputRevision)
+            {
+                // 呼号没变但草稿已继续编辑：按当前修订重新去抖，停止输入后仍有提示。
+                _callsignMemoryPendingCallsign = string.Empty;
+                ScheduleCallsignMemoryLookup();
+                return;
+            }
+
+            _callsignMemorySnapshot = snapshot;
+            _callsignMemoryCallsign = callsign;
+            _callsignMemoryPendingCallsign = string.Empty;
+            _callsignMemoryLastTime = FormatLastCheckinTime(snapshot.LastCheckinTime);
+            OnPropertyChanged(nameof(CallsignMemoryLastTimeDisplay));
+            RebuildCallsignHints();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _callsignMemoryPendingCallsign = string.Empty;
+            ClearCallsignMemorySnapshot();
+            StatusMessage = "呼号记忆查询失败：" + exception.Message;
+        }
+    }
+
+    private void ResetCallsignMemory()
+    {
+        _callsignMemoryCancellation?.Cancel();
+        _callsignMemoryCancellation?.Dispose();
+        _callsignMemoryCancellation = null;
+        _callsignMemoryPendingCallsign = string.Empty;
+        ClearCallsignMemorySnapshot();
+    }
+
+    private void ClearCallsignMemorySnapshot()
+    {
+        _callsignMemorySnapshot = null;
+        _callsignMemoryCallsign = string.Empty;
+        _callsignMemoryLastTime = string.Empty;
+        OnPropertyChanged(nameof(CallsignMemoryLastTimeDisplay));
+        RebuildCallsignHints();
+    }
+
+    private void RebuildCallsignHints()
+    {
+        var chips = new List<CallsignHintChip>();
+        if (_callsignMemorySnapshot is { } snapshot)
+        {
+            foreach (var hint in snapshot.Fields)
+            {
+                var current = FieldOf(_parseResult, hint.Field).Value;
+                if (string.Equals(current, hint.Value, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                chips.Add(new CallsignHintChip(hint, current.Length > 0));
+            }
+        }
+
+        if (chips.Count == CallsignHints.Count
+            && chips
+                .Select((chip, index) => string.Equals(
+                    chip.DisplayText, CallsignHints[index].DisplayText, StringComparison.Ordinal))
+                .All(unchanged => unchanged))
+        {
+            // 每次按键都会走到这里：提示没变化就不重建集合，避免输入热路径上的布局抖动。
+            return;
+        }
+
+        CallsignHints.Clear();
+        foreach (var chip in chips)
+        {
+            CallsignHints.Add(chip);
+        }
+
+        OnPropertyChanged(nameof(HasCallsignMemoryHints));
+        OnPropertyChanged(nameof(IsCallsignHintRowVisible));
+    }
+
+    private static string FormatLastCheckinTime(string checkinTime) =>
+        string.IsNullOrWhiteSpace(checkinTime)
+            ? string.Empty
+            : "上次 " + (checkinTime.Length >= 5 ? checkinTime[..5] : checkinTime);
 
     private void ClearSelectedQthCandidate()
     {
@@ -1249,12 +1587,26 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _catalogCancellation?.Dispose();
         _updateCancellation?.Cancel();
         _updateCancellation?.Dispose();
+        _callsignMemoryCancellation?.Cancel();
+        _callsignMemoryCancellation?.Dispose();
+        _callsignMemoryCancellation = null;
         if (_store is not null)
         {
             await _store.DisposeAsync();
         }
         await _miitSyncService.DisposeAsync();
     }
+
+    // SelectedQth* 是应用提示前用户显式选择的 QTH 标记；当时没有选择则为 -1/空。
+    private sealed record CallsignHintOverride(
+        FieldKind Field,
+        ParseField AppliedField,
+        ParseField PreviousField,
+        long Revision,
+        string RawText,
+        long SelectedQthRevision,
+        string SelectedQthRaw,
+        string SelectedQthCanonical);
 }
 
 public sealed class ShortcutChangedEventArgs(

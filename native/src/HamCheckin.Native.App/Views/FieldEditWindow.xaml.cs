@@ -23,6 +23,7 @@ public partial class FieldEditWindow : Window, INotifyPropertyChanged
         _request = request;
         _parseResult = mainViewModel.ParseField(request.Field, request.CurrentValue);
         InitializeComponent();
+        SourceInitialized += (_, _) => WindowsBackdrop.Apply(this);
         DataContext = this;
         EditText = request.CurrentValue;
         UnmatchedTokens = new ObservableCollection<UnmatchedTokenView>(

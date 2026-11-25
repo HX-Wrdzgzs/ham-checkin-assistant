@@ -19,6 +19,7 @@ public partial class QuickWindow : Window
     public QuickWindow()
     {
         InitializeComponent();
+        SourceInitialized += (_, _) => WindowsBackdrop.Apply(this);
         TextCompositionManager.AddPreviewTextInputStartHandler(QuickInputBox, QuickInputBox_TextInputStart);
         TextCompositionManager.AddPreviewTextInputUpdateHandler(QuickInputBox, QuickInputBox_TextInputUpdate);
         TextCompositionManager.AddTextInputHandler(QuickInputBox, QuickInputBox_TextInput);
@@ -46,7 +47,7 @@ public partial class QuickWindow : Window
 
     private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (RecentCheckinsCard is null)
+        if (RecentCheckinsCard is null || CallsignMemoryHost is null)
         {
             return;
         }
@@ -57,6 +58,8 @@ public partial class QuickWindow : Window
         var compact = e.NewSize.Height < 235;
         RecentCheckinsCard.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         RecentCheckinsCard.IsHitTestVisible = !compact;
+        // 记忆提示是可选信息；低于既有收缩阈值时先让它让位，保证输入与提交不被挤压。
+        CallsignMemoryHost.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void QuickInputBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -95,6 +98,23 @@ public partial class QuickWindow : Window
             _viewModel.SelectQthCandidate(candidate);
             QuickInputBox.Focus();
         }
+    }
+
+    private void CallsignHint_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null || sender is not Button { Tag: CallsignHintChip chip })
+        {
+            return;
+        }
+
+        _viewModel.ApplyCallsignHint(chip);
+        QuickInputBox.Focus();
+    }
+
+    private void UndoCallsignHint_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel?.UndoCallsignHint();
+        QuickInputBox.Focus();
     }
 
     private void QuickInputBox_TextInputStart(object sender, TextCompositionEventArgs e) =>

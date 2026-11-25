@@ -4,18 +4,22 @@ using System.Threading;
 using System.Windows;
 using HamCheckin.Native.Core;
 using HamCheckin.Native.Core.Storage;
+using HamCheckin.Native.App.Infrastructure;
 using HamCheckin.Native.App.ViewModels;
 using HamCheckin.Native.App.Views;
 
 namespace HamCheckin.Native.App;
 
 [SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable",
-    Justification = "WPF Application releases the mutex and async view model from OnExit.")]
+    Justification = "WPF Application releases the mutex, theme subscriptions, and async view model from OnExit.")]
 public partial class App : Application
 {
     private Mutex? _singleInstance;
     private bool _ownsSingleInstance;
     private MainViewModel? _viewModel;
+    private ThemeService? _themeService;
+
+    internal ThemeService? Themes => _themeService;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -62,6 +66,20 @@ public partial class App : Application
                 Shutdown(2);
                 return;
             }
+        }
+
+        _themeService = new ThemeService();
+        try
+        {
+            _themeService.Initialize();
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                $"主题初始化失败，应用未创建窗口。\n\n{exception.Message}",
+                "HAM 点名助手", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(2);
+            return;
         }
 
         var setIndex = Array.FindIndex(e.Args,
@@ -140,6 +158,8 @@ public partial class App : Application
         }
         _singleInstance?.Dispose();
         _singleInstance = null;
+        _themeService?.Dispose();
+        _themeService = null;
         base.OnExit(e);
     }
 

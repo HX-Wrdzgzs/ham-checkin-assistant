@@ -4,7 +4,7 @@
         Title="场次信息"
         Width="560" Height="500" MinWidth="500" MinHeight="440"
         WindowStartupLocation="CenterOwner"
-        Background="{StaticResource AppBackgroundBrush}"
+        Background="{DynamicResource AppBackgroundBrush}"
         FontFamily="Microsoft YaHei UI"
         UseLayoutRounding="True">
     <Window.Resources>
@@ -23,7 +23,7 @@
         </Grid.RowDefinitions>
         <TextBlock x:Name="TitleText" FontSize="20" FontWeight="Bold"/>
         <TextBlock Grid.Row="1" Text="场次元数据只写入本地 SQLite；Excel 路径仅在导出/补同步时使用。"
-                   Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,6,0,16" TextWrapping="Wrap"/>
+                   Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,6,0,16" TextWrapping="Wrap"/>
         <Grid Grid.Row="2" Margin="0,0,0,10">
             <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock Text="场次名称" VerticalAlignment="Center"/>
@@ -49,7 +49,7 @@
             <Grid.ColumnDefinitions><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock Text="Excel 路径" VerticalAlignment="Center"/>
             <TextBox x:Name="WorkbookBox" Grid.Column="1" Style="{StaticResource SessionInputTextBox}"/>
-            <TextBlock Grid.Row="1" Grid.Column="1" Text="可留空；启动和快速录入不会打开 Excel。" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="2,4,0,0"/>
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="可留空；启动和快速录入不会打开 Excel。" Foreground="{DynamicResource MutedBrush}" FontSize="10" Margin="2,4,0,0"/>
         </Grid>
         <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="取消  Esc" Style="{StaticResource BaseButton}" Padding="14,7" Margin="0,0,8,0" Click="Cancel_Click"/>

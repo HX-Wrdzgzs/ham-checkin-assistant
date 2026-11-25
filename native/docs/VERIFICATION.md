@@ -1,5 +1,55 @@
 # Windows 原生版开发验收记录
 
+## 当前工作树：2026-11-22 呼号历史提示 S1 与关于页修正（未发布）
+
+- 验证日期：2026-11-22；Windows 11 build 26300 x64；工作树 dirty，未暂存、未提交。
+- 被测产物：Release WPF apphost `native/src/HamCheckin.Native.App/bin/Release/net10.0-windows/HAM点名助手.exe`（本次构建）；实现为 `Core/Memory/CallsignMemoryService` 从 `checkins` 只读派生 QTH/设备/天线/功率，WPF 主页面与 QuickWindow 显示半透明 chip；不新建表、不改写路径。
+- 构建：SDK `10.0.401`；`dotnet build native/HamCheckin.Native.sln -c Release --no-restore` exit 0，0 errors；日志 `%LOCALAPPDATA%\Temp\opencode\s1-rerun-build.log`（增量 0 warnings）及 `s1b-build.log`（全量既有分析器 warnings）。
+- 测试：`HAM_CHECKIN_NATIVE_UI_TEST=1`；`dotnet test native/HamCheckin.Native.sln -c Release --no-build --filter "Category!=Hardware"` exit 0；Core `253/253`、UI `64/64`，合计 `317 passed / 0 failed / 0 skipped`；日志 `s1-rerun-test.log`、`s1b-test2.log`。新增覆盖：CallsignMemoryService top3/正常化/50 条窗口/只读、提示去抖不改输入、逐字段应用、撤销、revision 失效、QTH 候选+记忆撤销后同修订重解析、QuickWindow 紧凑高度、About 副标题。
+- 隔离界面截图：`NAT-s1-hints-20261122-142159.png`（呼号 `BG4TKI`，提示行显示“记忆 / 上次 14:18 / QTH … / 天线 4.2米玻璃钢 / 功率 25W”，半透明），位于 `%LOCALAPPDATA%\Temp\opencode\`；About 无副标题由 UI 视觉树测试覆盖，未单独截图。
+- 关于页：删除整行副标题，版本、更新渠道、数据位置等内容保留；未修改窗口标题、侧栏文字或 App 错误文案。
+- 已知边界：用户已确认 `1907` 是设备型号（当前解析为 YAESU FT-1907R），不是时间；因此不新增时间字段。提示字段不包含时间/信号；`InputText` 与撤销栈不被改写。
+- `UI NOT VERIFIED:` 真实 DPI、多屏、实际 IME、读屏及 QuickWindow 真实视觉间距未做人工验收；首次全量运行曾出现既有动画测试取样时序抖动，单独及第二次全量通过，已记录为环境抖动，未见产品失败。硬件/真实网络/生产库/更新安装仍 `NOT_RUN`。
+
+## 当前工作树：2026-11-22 过渡动画与全功能离线测试（未发布）
+
+- 测试日期与机器：2026-11-22；Windows 11 build 26300，x64；工作树 dirty，未暂存、未提交。
+- 被测产物：Release WPF apphost `native/src/HamCheckin.Native.App/bin/Release/net10.0-windows/HAM点名助手.exe`，SHA-256 `045EA3211D59C24788623FECDC00B20262E4C6A029CD3B236D95246300EAE0D7`；应用程序集 `HAM点名助手.dll`，SHA-256 `087CAD1BED672AF736AD077B081FEEA3470CD6A7DADDDAE2FC6A28BDA2AC188C`。
+- 隔离启动：`--data-root "%LOCALAPPDATA%\Temp\opencode\NAT-animation-ui-20261122-115643" --disable-network`；未使用生产数据、用户配置、真实设备或网络。主页面与“本场记录”页截图分别见 `NAT-animation-main-20261122-115818.png`（SHA-256 `A8B0C22C435F6E76C3D0A97FD35C673E8C0028BBBBEB0F83C1E0EA75745A56AE`）和 `NAT-animation-records-20261122-115941.png`（SHA-256 `C42F1CDCC81A9C094CCB0CF32DC8BB6E3338F358BAD1117A84705BC0982144B6`），均位于 `%LOCALAPPDATA%\Temp\opencode\`。
+- 实现：`WindowMotion` 统一页面 180 ms / 窗口 160 ms 淡入+位移；`MainView.xaml.cs` 页面切换与六个窗口挂接点（About、FieldEdit、Quick、SessionEditor 新建/编辑、SessionPicker）使用该统一实现；尊重 `SystemParameters.ClientAreaAnimation` 与 `AnimationsEnabled`；快速切页取消旧动画，结束回落到 opacity 1 / 零偏移。`ShortcutCaptureWindow` 与 `PreviewRenderer` 不在本批范围。
+- 构建：SDK `10.0.401`；`dotnet build native/HamCheckin.Native.sln -c Release --no-restore` exit 0，0 errors、0 warnings（增量构建）；日志 `%LOCALAPPDATA%\Temp\opencode\animation-build-final.log`。
+- 测试：`HAM_CHECKIN_NATIVE_UI_TEST=1`；`dotnet test native/HamCheckin.Native.sln -c Release --no-build --filter "Category!=Hardware"` exit 0；Core `250/250`、UI `55/55`，合计 `305 passed / 0 failed / 0 skipped`；日志 `animation-full-test.log`。新增动效用例 `PageEntranceAnimatesThenSettlesAtRestWhenMotionIsEnabled`、`RapidPageSwitchesCancelAndSettleAtRestWhenMotionIsEnabled` 与既有禁用用例连续 3 轮 `3/3` 通过（`animation-targeted.log`、`animation-repeat-1..3.log`）。
+- 覆盖：解析器、字段解析、存储/场次、草稿、端到端、Excel 导出、目录/QTH/MIIT、更新服务、旧数据迁移、视频回放、UI/主题/快速输入均有自动化证据；硬件/麦克风 3 例 `NOT_RUN`（需 `HAM_CHECKIN_NATIVE_HARDWARE_TEST=1` 与真实设备）；真实网络、生产库迁移、更新安装/发布 `NOT_RUN`。
+- `UI NOT VERIFIED:` 五个二级窗口入口动画仅有静态代码审查，未做逐帧视觉抓取；真实桌面 DPI、多屏、实际 IME、读屏及更广可访问性矩阵仍 `NOT_RUN`。本记录不证明发布产物或远端 CI。
+
+## 当前工作树：2026-11-20 NAT-T022隔离 Windows 11 桌面主题验证（未发布）
+
+- 验证日期与机器：2026-11-20；Windows 11 build 26300，x64。
+- 被测产物：Release WPF apphost `native/src/HamCheckin.Native.App/bin/Release/net10.0-windows/HAM点名助手.exe`，SHA-256 `7E816CD80413CCF82FC97906BBBB7DB02EEA45C120D1324B571FCF85F7D96CFB`。使用本机已安装的 .NET 10 runtime 启动，参数为 `--data-root "%LOCALAPPDATA%\Temp\opencode\NAT-T022-desktop-20261120-174206" --disable-network`。
+- 隔离边界：data-root 指向上述临时目录；未使用生产数据或用户配置，网络禁用，未使用真实设备。隔离配置记录 `themePreference: FollowSystem`。
+- 截图审计证据位于 `%LOCALAPPDATA%\te-river\computeruse\audit\2026-11-20\abb53d0f\shots\`；仅引用文件名，不将截图复制到仓库。
+
+| 截图引用 | 可见观察 |
+| --- | --- |
+| `a0035.png`、`a0039.png`、`a0043.png` | 应用内 Light、Dark、FollowSystem 选项可见。 |
+| `a0049.png` | 合成未保存草稿可见，主题切换前。 |
+| `a0064.png` | Windows Apps theme 设为 Dark 后，应用可见变化；草稿仍在。 |
+| `a0082.png` | 启用 Windows Contrast theme“水生”后，应用可见切为高对比；草稿仍在。 |
+| `a0089.png` | Windows Contrast theme 已设回 None。 |
+| `a0097.png` | Windows Apps theme 已恢复 Light。 |
+| `a0101.png` | 应用恢复为 Light，草稿仍在。 |
+
+- 合成未保存草稿 `bg4tki njqx k6 y 5` 在主题变更前后均可见（`a0049.png`、`a0064.png`、`a0082.png`、`a0101.png`）；未按 Enter，也未保存。输入框焦点样式可见；未建立选择范围，因此选择保留为 `NOT_TESTED`。
+- 恢复与关闭：Windows Contrast theme 设为 None（`a0089.png`），Apps theme 恢复 Light（`a0097.png`），应用以 Light 和草稿显示（`a0101.png`）；通过应用正常关闭按钮退出。主会话独立核验 `AppsUseLightTheme=1`、WPF `SystemParameters.HighContrast=False`、精确 app executable 进程数为 0、关闭后 TCP connections 为 0。
+- 本次仅证明实际 Windows 设置变化时用户可见的主题响应；未捕获通知事件日志/trace。精确的 `SystemEvents.UserPreferenceChanged` / `SystemParameters.StaticPropertyChanged` 通知映射仍为 `NOT_VERIFIED`（ledger #116 仍阻塞）。
+- 覆盖范围仅为这台 Windows 11 build 26300 x64 机器。Windows 10、其他 DPI、多显示器/混合 DPI、实际 IME、Narrator 及更广可访问性矩阵均为 `NOT_RUN`；选择保留为 `NOT_TESTED`。NAT-T022 保持开放。
+- 本次运行未构建、未测试、未发布应用。下方 2026-11-17 源码构建/测试记录是独立证据，不证明本次桌面运行或发布。
+
+## 既有证据：2026-11-17 NAT-T022主题源码验证（未发布）
+
+- .NET SDK 10.0.401；Native Release build `--no-restore` PASS（exit 0，0 errors）；保留的 Release 构建日志含 54 行原始 warning 诊断记录（包含项目重复发出的诊断行），按项目/文件/行/列/代码/消息组合去重后，共 27 条项目范围内的不同诊断，涉及 8 种诊断代码；`Category!=Hardware` solution tests PASS（Core 250、UI 53，合计303 passed/0 failed/0 skipped）；correctness review PASS（0 Critical/0 Major）。
+- 未启动WPF应用；`UI NOT VERIFIED: WPF 应用未启动；真实桌面/系统主题通知矩阵未授权且未测试。` AppsUseLightTheme通知映射、DWM/Win10/11/DPI/多屏/IME/Narrator为NOT_VERIFIED/NOT_RUN。此记录仅绑定当前dirty源码树，不是EXE/Release/commit验收。
+
 ## 历史：1.0.19-r29 候选验证（2026-10-06）
 
 本节记录当时源码状态与 `1.0.19-r29` 候选包的历史验收；App 项目源码版本字段为 `1.0.20`（见 [App 项目文件](../src/HamCheckin.Native.App/HamCheckin.Native.App.csproj#L17-L19)），但没有当前 `1.0.20` 产物的动态验收证据，也不代表当前 Native 工作树、远端 Actions 或 Release 已验收。下方的 `1.0.18-r27` 及更早内容也保留为历史记录，不能与本候选混用。

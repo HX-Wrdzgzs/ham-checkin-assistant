@@ -2,13 +2,23 @@
 
 ## 未发布
 
+### 新增
+
+- 2026-11-17：为 Native WPF 添加 FollowSystem/Light/Dark 主题偏好、高对比优先与全窗口动态语义资源，并加入本地偏好持久化和合成测试。SDK 10.0.401 Release build exit 0（0 errors）；保留的 Release 构建日志含 54 行原始 warning 诊断记录（包含项目重复发出的诊断行），按项目/文件/行/列/代码/消息组合去重后，共 27 条项目范围内的不同诊断，涉及 8 种诊断代码；Category!=Hardware 测试 303/303 通过，correctness review 0 Critical/0 Major。真实 AppsUseLightTheme 通知映射及桌面矩阵仍 NOT_VERIFIED/NOT_RUN；NAT-T022 保持开放。
+- 2026-11-20：为 Native WPF 侧栏展示用户提供的完整海报，并配置 EXE 多尺寸 ICO 与窗口海报图标；为避免 WPF 解码 ICO 时启动崩溃，窗口图标使用已打包 JPEG。SDK 10.0.401 Release `--no-restore` 构建通过；隔离启动后侧栏海报未裁切、标题栏品牌图标可见。
+- 2026-11-22：完成 Native 主界面页面切换与五个二级窗口入口过渡：页面 180 ms、窗口 160 ms 的淡入+位移，统一由 `WindowMotion` 处理，尊重 `SystemParameters.ClientAreaAnimation` 与“过渡动画”开关；快速切页可取消，结束无回跳。新增 WPF UI 测试覆盖启用、禁用和快速切换；SDK 10.0.401 Release `--no-restore` 构建 0 errors，`Category!=Hardware` 测试 Core 250 + UI 55 = 305/305 通过。硬件/真实网络/生产迁移/安装发布未运行。
+- 2026-11-22：为快速点名页和快速小窗加入呼号历史记忆：从已确认 `checkins` 按呼号派生 QTH/设备/天线/功率字段提示，半透明 chip 仅在显式点击时逐字段应用，不改输入框原文、不自动提交；支持撤销并在输入修订变化后失效。SDK 10.0.401 Release 构建 0 errors，`Category!=Hardware` 测试 Core 253 + UI 64 = 317/317 通过；隔离界面截图确认提示行可见。
+
 ### 修复
 
+- 2026-11-22：关于页删除“Windows 原生版 · 快速、离线、键盘优先”副标题；版本、更新渠道和数据位置等内容保留。UI 测试与隔离视觉树断言通过。
+- 2026-11-21：修复主界面正文字重偏细：`MainWindow.xaml:14` 根节点继承 `FontWeight="SemiBold"`，使普通导航、字段标签、表头与状态文字和已选导航项一致；本机 Microsoft YaHei UI 仅有 Regular/Bold/Light，`Medium` 会落回 Regular，故改用 `SemiBold`。SDK 10.0.401 Release `--no-restore` 构建 exit 0（0 errors/24 warnings）；隔离实例截图确认主要区域文字变粗且无明显截断。完整 DPI/主题/读屏矩阵未验证。
 - 2026-11-14：Excel导出固定场次快照并使用净化后的单文件名和所选目录；先生成临时工作簿，再提交目标。仅经用户明确确认的既有目标才允许替换，确认授权的是该路径提交时的当前文件（非内容/文件ID CAS），确认提示警告此残余风险且默认 `MessageBoxResult.No`；未授权目标及竞争新建不覆盖、失败关闭。SDK 10.0.401 `--no-restore`：Native导出/E2E/VideoReplay窄测16/16、UI切场1/1、默认No改动后UI切场1/1（exit 0）；不代表完整UI验收。
 - 2026-11-15：修复 Native 启动时静默隐藏旧库迁移 marker 结果：completed/skipped marker 均可见；skipped 明确提示旧库未导入且该 marker 不能证明迁移完成；无旧库仍显示普通就绪状态，本地会话可用。使用临时 SQLite、禁网、测试全局状态序列化/恢复的隔离 ViewModel 测试 `CatalogPublicationViewModelTests` 11 passed/0 failed/0 skipped；.NET SDK 10.0.401 Release solution build exit 0（0 warnings/0 errors）；correctness review approve（0 Critical/0 Major）。真实桌面 UI 未验证（仅隔离 ViewModel 测试），不代表生产迁移验收。
 
 ### 文档
 
+- 2026-11-20：记录 NAT-T022 获准隔离桌面验证：Windows 11 build 26300 x64 上指定 Release apphost 的用户可见主题变化及恢复已核验；合成草稿未提交，通知映射与其余桌面矩阵仍未验证。本次未构建、测试或发布。详情见[验收记录](native/docs/VERIFICATION.md)。
 - 2026-11-15：ENG-018 阻塞状态记录：先前本地定向 `Test-Path`/`Get-Item`、`Get-ChildItem docs/audit -Recurse` 及隐藏 glob 检索均未发现被 `docs/audit/SOURCE_COVERAGE.md:127`、`docs/audit/ISSUE_INVENTORY.md:76` 引用的三个文件：`docs/audit/E/untracked-complete-6168.txt`（manifest）、`docs/audit/E/untracked-metadata-complete.json`（metadata）、`docs/audit/E/untracked-classification-complete-6168.csv`（classification）；`docs/audit/`仅见5份Markdown。该证据仅说明所列路径当前本机不存在，不推断其曾否生成/何时丢失或当前精确未跟踪数量。解除条件：恢复权威manifest/metadata/classification文件，或用户另行批准以新的只读方法重建清单；本次未重建或打开/哈希扫描资产。
 
 - 2026-11-15：完成 NAT-T010 别名优先级窄验收：按源码确认用户/本地/内置/MIIT优先序，合成测试验证本地胜同名MIIT、user/default碰撞与disabled过滤、同键异canonical QTH不猜，预览UI验证显式QTH选择保持。使用 .NET SDK 10.0.401、`--no-restore`，先Core后UI串行运行；Core 5/5、UI 2/2 passed，均0 failed/0 skipped、exit 0。先前并行运行曾因共享Core输出目录报CS2012，归类为测试编排问题，串行重跑通过；未访问真实目录、网络或设备。

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Windows;
+using HamCheckin.Native.App.Infrastructure;
 using HamCheckin.Native.Core;
 
 namespace HamCheckin.Native.App.Views;
@@ -21,6 +22,7 @@ public partial class SessionEditorWindow : Window
     {
         _isNew = session is null;
         InitializeComponent();
+        SourceInitialized += (_, _) => WindowsBackdrop.Apply(this);
         TitleText.Text = _isNew ? "新建场次" : "编辑场次信息";
         NameBox.Text = session?.Name ?? "第1场点名";
         DateBox.Text = session?.Date ?? DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);

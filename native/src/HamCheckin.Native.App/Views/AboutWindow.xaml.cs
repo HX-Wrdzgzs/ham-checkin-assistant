@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
+using HamCheckin.Native.App.Infrastructure;
 using HamCheckin.Native.Core.Storage;
 using HamCheckin.Native.Core.Updates;
 
@@ -17,6 +18,7 @@ public partial class AboutWindow : Window, IDisposable
     public AboutWindow(NativeUpdateService? updates = null)
     {
         InitializeComponent();
+        SourceInitialized += (_, _) => WindowsBackdrop.Apply(this);
         _updates = updates ?? new NativeUpdateService();
         CurrentVersionText.Text = NativeVersion.Current;
         DataPathText.Text = $"数据目录：{AppPaths.Root}";

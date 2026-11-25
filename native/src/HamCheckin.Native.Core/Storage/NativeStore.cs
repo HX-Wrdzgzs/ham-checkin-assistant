@@ -1,5 +1,6 @@
 using System.Data;
 using System.Globalization;
+using HamCheckin.Native.Core.Memory;
 using HamCheckin.Native.Core.Parsing;
 using Microsoft.Data.Sqlite;
 
@@ -579,6 +580,49 @@ public sealed class NativeStore : IAsyncDisposable
         command.CommandText = "PRAGMA quick_check";
         return Convert.ToString(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
             CultureInfo.InvariantCulture) ?? "unknown";
+    }
+
+    /// <summary>
+    /// 呼号记忆的只读查询：按既有 idx_checkins_callsign(callsign, id DESC)
+    /// 取最近的字段历史。调用方须传入 TextNormalizer.NormalizeCallsign 归一化后的呼号，
+    /// 与 Native 写入路径保持一致。无写入、无 schema 变更。
+    /// </summary>
+    public async Task<IReadOnlyList<CallsignHistoryRow>> LoadCallsignHistoryAsync(
+        string callsign,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(callsign))
+        {
+            return Array.Empty<CallsignHistoryRow>();
+        }
+
+        await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, checkin_time, qth_standard, device_standard,
+                   antenna_standard, power_standard
+            FROM checkins
+            WHERE callsign = $callsign AND is_deleted = 0
+            ORDER BY id DESC
+            LIMIT $limit
+            """;
+        AddParameter(command, "$callsign", callsign);
+        AddParameter(command, "$limit", Math.Clamp(limit, 1, 200));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var rows = new List<CallsignHistoryRow>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            rows.Add(new CallsignHistoryRow(
+                reader.GetInt64(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetString(4),
+                reader.GetString(5)));
+        }
+
+        return rows;
     }
 
     private async Task<CheckinEntry?> ReadCheckinByIdAsync(

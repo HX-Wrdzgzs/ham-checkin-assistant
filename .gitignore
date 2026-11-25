@@ -19,6 +19,7 @@ release/
 native/**/bin/
 native/**/obj/
 native/artifacts/
+artifacts/
 
 # IDE
 .vscode/

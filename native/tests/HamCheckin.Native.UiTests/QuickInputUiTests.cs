@@ -6,8 +6,10 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using System.IO;
 using System.IO.Compression;
+using System.Reflection;
 using System.Text;
 using NativeApplication = HamCheckin.Native.App.App;
+using HamCheckin.Native.App.Infrastructure;
 using HamCheckin.Native.App.Media;
 using HamCheckin.Native.App.ViewModels;
 using HamCheckin.Native.App.Views;
@@ -22,7 +24,13 @@ using Xunit;
 
 namespace HamCheckin.Native.UiTests;
 
-public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
+[CollectionDefinition("Native WPF application", DisableParallelization = true)]
+public sealed class NativeWpfApplicationFixtureGroup : ICollectionFixture<WpfDispatcherFixture>
+{
+}
+
+[Collection("Native WPF application")]
+public sealed class QuickInputUiTests
 {
     private static readonly TimeSpan HardwareProbeTimeout = TimeSpan.FromSeconds(10);
     private const string Original = "BA4RLL QYT6900 5W YZ YZ";
@@ -124,6 +132,121 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
 
             view.Dispose();
             window.Close();
+        });
+    }
+
+    [Fact]
+    public void PageEntranceAnimatesThenSettlesAtRestWhenMotionIsEnabled()
+    {
+        RequireClientAreaAnimation();
+
+        _fixture.Run(() =>
+        {
+            var viewModel = MainViewModel.CreatePreview();
+            Assert.True(viewModel.AnimationsEnabled);
+            var view = new MainView { DataContext = viewModel };
+            var window = new Window
+            {
+                Width = 1_440,
+                Height = 900,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                Content = view
+            };
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                PumpDispatcherUntil(() => view.IsLoaded, TimeSpan.FromSeconds(5));
+                Assert.True(view.IsLoaded, "MainView 未在 5 秒内完成加载，无法验证页面过渡。");
+
+                view.ShowPage("Records");
+                var recordsPage = (FrameworkElement)view.FindName("RecordsPage")!;
+                Assert.Equal(Visibility.Visible, recordsPage.Visibility);
+                // WPF 在第一次合成帧之前只报告基础值，因此“已开始”的确定信号是动画时钟已挂载；
+                // 实际插值在下方持续泵送期间采样验证。
+                Assert.True(
+                    recordsPage.HasAnimatedProperties,
+                    "页面过渡没有挂载动画时钟：ShowPage 未启动 RecordsPage 入场动画。");
+
+                var sample = SamplePageMotion(recordsPage, TimeSpan.FromMilliseconds(300));
+                Assert.True(sample.MinOpacity < 1d, $"页面过渡期间不透明度没有低于 1：min={sample.MinOpacity}");
+                Assert.True(sample.MaxOffset > 0d, $"页面过渡期间没有横向位移：max={sample.MaxOffset}");
+
+                var rest = SamplePageMotion(recordsPage, TimeSpan.FromMilliseconds(150));
+                Assert.Equal(1d, rest.MinOpacity);
+                Assert.Equal(0d, rest.MaxOffset);
+                Assert.Equal(1d, recordsPage.Opacity);
+                Assert.Equal(0d, PageOffset(recordsPage).X);
+                Assert.Equal(0d, PageOffset(recordsPage).Y);
+            }
+            finally
+            {
+                view.Dispose();
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public void RapidPageSwitchesCancelAndSettleAtRestWhenMotionIsEnabled()
+    {
+        RequireClientAreaAnimation();
+
+        _fixture.Run(() =>
+        {
+            var viewModel = MainViewModel.CreatePreview();
+            Assert.True(viewModel.AnimationsEnabled);
+            var view = new MainView { DataContext = viewModel };
+            var window = new Window
+            {
+                Width = 1_440,
+                Height = 900,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                Content = view
+            };
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                PumpDispatcherUntil(() => view.IsLoaded, TimeSpan.FromSeconds(5));
+                Assert.True(view.IsLoaded, "MainView 未在 5 秒内完成加载，无法验证页面过渡。");
+
+                var recordsPage = (FrameworkElement)view.FindName("RecordsPage")!;
+                var catalogPage = (FrameworkElement)view.FindName("CatalogPage")!;
+
+                view.ShowPage("Records");
+                Assert.True(recordsPage.HasAnimatedProperties, "第一次页面过渡没有挂载动画时钟。");
+
+                view.ShowPage("Catalog");
+                Assert.True(catalogPage.HasAnimatedProperties, "快速切换后的目标页过渡没有挂载动画时钟。");
+
+                view.ShowPage("Records");
+                Assert.True(recordsPage.HasAnimatedProperties, "返回已访问页面时过渡没有重新挂载动画时钟。");
+
+                var sample = SamplePageMotion(recordsPage, TimeSpan.FromMilliseconds(300));
+                Assert.True(sample.MinOpacity < 1d, $"快速切换后不透明度没有低于 1：min={sample.MinOpacity}");
+                Assert.True(sample.MaxOffset > 0d, $"快速切换后没有横向位移：max={sample.MaxOffset}");
+
+                var rest = SamplePageMotion(recordsPage, TimeSpan.FromMilliseconds(150));
+                Assert.Equal(1d, rest.MinOpacity);
+                Assert.Equal(0d, rest.MaxOffset);
+
+                Assert.Equal(Visibility.Visible, recordsPage.Visibility);
+                Assert.Equal(Visibility.Collapsed, catalogPage.Visibility);
+                Assert.Equal(1d, recordsPage.Opacity);
+                Assert.Equal(0d, PageOffset(recordsPage).X);
+                Assert.Equal(0d, PageOffset(recordsPage).Y);
+                Assert.Equal(1d, catalogPage.Opacity);
+                Assert.Equal(0d, PageOffset(catalogPage).X);
+                Assert.Equal(0d, PageOffset(catalogPage).Y);
+            }
+            finally
+            {
+                view.Dispose();
+                window.Close();
+            }
         });
     }
 
@@ -1508,6 +1631,614 @@ public sealed class QuickInputUiTests : IClassFixture<WpfDispatcherFixture>
         }
     }
 
+    private void RequireClientAreaAnimation()
+    {
+        var enabled = false;
+        _fixture.Run(() => enabled = WindowMotion.IsMotionEnabled(true));
+        if (!enabled)
+        {
+            throw Xunit.Sdk.SkipException.ForSkip(
+                "当前 Windows 会话关闭了客户端区域动画（SystemParameters.ClientAreaAnimation=false），跳过启用态过渡断言。");
+        }
+    }
+
+    private static (double MinOpacity, double MaxOffset) SamplePageMotion(
+        FrameworkElement page, TimeSpan duration)
+    {
+        var dispatcher = Dispatcher.CurrentDispatcher;
+        var frame = new DispatcherFrame();
+        var deadline = DateTime.UtcNow + duration;
+        var minOpacity = page.Opacity;
+        var maxOffset = PageOffset(page).X;
+        var timer = new DispatcherTimer(
+            TimeSpan.FromMilliseconds(5),
+            DispatcherPriority.Background,
+            (_, _) =>
+            {
+                minOpacity = Math.Min(minOpacity, page.Opacity);
+                maxOffset = Math.Max(maxOffset, PageOffset(page).X);
+                if (DateTime.UtcNow >= deadline)
+                {
+                    frame.Continue = false;
+                }
+            },
+            dispatcher);
+
+        timer.Start();
+        Dispatcher.PushFrame(frame);
+        timer.Stop();
+        return (minOpacity, maxOffset);
+    }
+
+    [Fact]
+    public async Task CallsignMemoryHintsAppearAfterDebounceWithoutTouchingInputOrRevision()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "HAMCheckin.Native.UiTests", Guid.NewGuid().ToString("N"));
+        var databasePath = Path.Combine(root, "data", "ham_checkin_native.db");
+        Directory.CreateDirectory(root);
+        var previousNetworkMode = RuntimeOptions.DisableNetwork;
+        MainViewModel? viewModel = null;
+        try
+        {
+            RuntimeOptions.Configure(disableNetwork: true);
+            var store = new NativeStore(databasePath);
+            await store.InitializeAsync();
+            var session = await store.GetOrCreateFirstSessionAsync(new DateOnly(2026, 11, 22));
+            await SeedCallsignHistoryAsync(store, session);
+
+            viewModel = new MainViewModel(
+                new CatalogService(),
+                store,
+                catalogDataRoot: Path.Combine(root, "data"),
+                importLegacyDatabase: false);
+            await viewModel.InitializeAsync();
+            if (viewModel.StartupUpdateCheckTask is not null)
+            {
+                await viewModel.StartupUpdateCheckTask;
+            }
+
+            viewModel.SetInputText("BA4RLL");
+            var revision = viewModel.InputRevision;
+
+            await WaitUntilAsync(() => viewModel.IsCallsignHintRowVisible, TimeSpan.FromSeconds(5));
+
+            Assert.Equal("BA4RLL", viewModel.Callsign);
+            Assert.NotEmpty(viewModel.CallsignHints);
+            Assert.StartsWith("上次", viewModel.CallsignMemoryLastTimeDisplay);
+            Assert.All(viewModel.CallsignHints, static chip => Assert.Contains(
+                chip.Field,
+                new[] { FieldKind.Qth, FieldKind.Device, FieldKind.Antenna, FieldKind.Power }));
+            Assert.All(viewModel.CallsignHints, static chip => Assert.True(chip.UseCount > 0));
+
+            // 去抖查询只读：输入原文与草稿修订都不变。
+            Assert.Equal("BA4RLL", viewModel.InputText);
+            Assert.Equal(revision, viewModel.InputRevision);
+        }
+        finally
+        {
+            if (viewModel is not null)
+            {
+                await viewModel.DisposeAsync();
+            }
+            SqliteConnection.ClearAllPools();
+            RuntimeOptions.Configure(disableNetwork: previousNetworkMode);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ApplyingCallsignHintChangesOnlyThatParsedFieldAndUndoRestoresIt()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "HAMCheckin.Native.UiTests", Guid.NewGuid().ToString("N"));
+        var databasePath = Path.Combine(root, "data", "ham_checkin_native.db");
+        Directory.CreateDirectory(root);
+        var previousNetworkMode = RuntimeOptions.DisableNetwork;
+        MainViewModel? viewModel = null;
+        try
+        {
+            RuntimeOptions.Configure(disableNetwork: true);
+            var store = new NativeStore(databasePath);
+            await store.InitializeAsync();
+            var session = await store.GetOrCreateFirstSessionAsync(new DateOnly(2026, 11, 22));
+            await SeedCallsignHistoryAsync(store, session);
+
+            viewModel = new MainViewModel(
+                new CatalogService(),
+                store,
+                catalogDataRoot: Path.Combine(root, "data"),
+                importLegacyDatabase: false);
+            await viewModel.InitializeAsync();
+            if (viewModel.StartupUpdateCheckTask is not null)
+            {
+                await viewModel.StartupUpdateCheckTask;
+            }
+
+            viewModel.SetInputText("BA4RLL");
+            await WaitUntilAsync(
+                () => viewModel.CallsignHints.Any(static chip => chip.Field == FieldKind.Device),
+                TimeSpan.FromSeconds(5));
+
+            var revision = viewModel.InputRevision;
+            var chip = viewModel.CallsignHints.First(static item => item.Field == FieldKind.Device);
+            Assert.Equal("海能达 PD-780", chip.Value);
+            var before = ParsedField(viewModel, FieldKind.Device);
+            var untouchedQth = viewModel.Qth;
+            var untouchedAntenna = viewModel.Antenna;
+            var untouchedPower = viewModel.Power;
+            var rowsBefore = await store.LoadRecentAsync(session.Id, 100);
+
+            viewModel.ApplyCallsignHint(chip);
+
+            var applied = ParsedField(viewModel, FieldKind.Device);
+            Assert.Equal(chip.Value, applied.Value);
+            Assert.Equal("呼号记忆", applied.Source);
+            Assert.Equal(chip.Value, viewModel.Device);
+            Assert.Equal(untouchedQth, viewModel.Qth);
+            Assert.Equal(untouchedAntenna, viewModel.Antenna);
+            Assert.Equal(untouchedPower, viewModel.Power);
+            Assert.Equal("BA4RLL", viewModel.InputText);
+            Assert.Equal(revision, viewModel.InputRevision);
+            Assert.True(viewModel.CanUndoCallsignHint);
+            Assert.True(viewModel.IsCallsignHintRowVisible);
+            Assert.Contains("呼号记忆", viewModel.StatusMessage, StringComparison.Ordinal);
+
+            // 应用提示不得写入新记录。
+            var rowsAfter = await store.LoadRecentAsync(session.Id, 100);
+            Assert.Equal(rowsBefore.Count, rowsAfter.Count);
+
+            viewModel.UndoCallsignHint();
+
+            var restored = ParsedField(viewModel, FieldKind.Device);
+            Assert.Equal(before.Value, restored.Value);
+            Assert.Equal(before.Source, restored.Source);
+            Assert.False(viewModel.CanUndoCallsignHint);
+            Assert.Equal("BA4RLL", viewModel.InputText);
+            Assert.Equal(revision, viewModel.InputRevision);
+        }
+        finally
+        {
+            if (viewModel is not null)
+            {
+                await viewModel.DisposeAsync();
+            }
+            SqliteConnection.ClearAllPools();
+            RuntimeOptions.Configure(disableNetwork: previousNetworkMode);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ChangingInputRevisionClearsAppliedCallsignHintOverride()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "HAMCheckin.Native.UiTests", Guid.NewGuid().ToString("N"));
+        var databasePath = Path.Combine(root, "data", "ham_checkin_native.db");
+        Directory.CreateDirectory(root);
+        var previousNetworkMode = RuntimeOptions.DisableNetwork;
+        MainViewModel? viewModel = null;
+        try
+        {
+            RuntimeOptions.Configure(disableNetwork: true);
+            var store = new NativeStore(databasePath);
+            await store.InitializeAsync();
+            var session = await store.GetOrCreateFirstSessionAsync(new DateOnly(2026, 11, 22));
+            await SeedCallsignHistoryAsync(store, session);
+
+            viewModel = new MainViewModel(
+                new CatalogService(),
+                store,
+                catalogDataRoot: Path.Combine(root, "data"),
+                importLegacyDatabase: false);
+            await viewModel.InitializeAsync();
+            if (viewModel.StartupUpdateCheckTask is not null)
+            {
+                await viewModel.StartupUpdateCheckTask;
+            }
+
+            viewModel.SetInputText("BA4RLL");
+            await WaitUntilAsync(
+                () => viewModel.CallsignHints.Any(static chip => chip.Field == FieldKind.Device),
+                TimeSpan.FromSeconds(5));
+
+            var chip = viewModel.CallsignHints.First(static item => item.Field == FieldKind.Device);
+            viewModel.ApplyCallsignHint(chip);
+            Assert.True(viewModel.CanUndoCallsignHint);
+            Assert.Equal("呼号记忆", ParsedField(viewModel, FieldKind.Device).Source);
+
+            viewModel.SetInputText("BA4RLL 5W");
+
+            Assert.True(viewModel.InputRevision > 0);
+            Assert.Equal("BA4RLL 5W", viewModel.InputText);
+            Assert.False(viewModel.CanUndoCallsignHint);
+            Assert.NotEqual("呼号记忆", ParsedField(viewModel, FieldKind.Device).Source);
+            Assert.NotEqual(chip.Value, ParsedField(viewModel, FieldKind.Device).Value);
+        }
+        finally
+        {
+            if (viewModel is not null)
+            {
+                await viewModel.DisposeAsync();
+            }
+            SqliteConnection.ClearAllPools();
+            RuntimeOptions.Configure(disableNetwork: previousNetworkMode);
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void CallsignMemoryStripExistsInVisualTreeAtReducedOpacity()
+    {
+        _fixture.Run(() =>
+        {
+            var viewModel = MainViewModel.CreatePreview();
+            var view = new MainView { DataContext = viewModel };
+            var window = new Window
+            {
+                Width = 1_440,
+                Height = 900,
+                Content = view,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false
+            };
+            window.Show();
+            window.UpdateLayout();
+            view.UpdateLayout();
+
+            var strip = view.FindName("CallsignMemoryStrip") as Grid;
+            Assert.NotNull(strip);
+            Assert.Equal(0.62, strip!.Opacity, 3);
+            Assert.False(viewModel.IsCallsignHintRowVisible);
+            Assert.Equal(Visibility.Collapsed, strip.Visibility);
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void QuickWindowCompactHeightHidesMemoryRowAndKeepsInputAndSubmitVisible()
+    {
+        _fixture.Run(() =>
+        {
+            var viewModel = MainViewModel.CreatePreview();
+            var window = new QuickWindow
+            {
+                Width = 560,
+                Height = 190,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                DataContext = viewModel
+            };
+            window.Show();
+            window.UpdateLayout();
+
+            var host = (FrameworkElement)window.FindName("CallsignMemoryHost")!;
+            var input = (TextBox)window.FindName("QuickInputBox")!;
+            var submit = (Button)window.FindName("QuickSubmitButton")!;
+
+            Assert.Equal(Visibility.Collapsed, host.Visibility);
+            Assert.True(input.IsVisible);
+            Assert.True(input.ActualHeight > 0);
+            Assert.True(submit.IsVisible);
+            Assert.True(submit.ActualHeight > 0);
+            var submitBottom = submit.TranslatePoint(new Point(0, submit.ActualHeight), window).Y;
+            Assert.True(
+                submitBottom <= window.ActualHeight + 0.5,
+                $"提交按钮底边 {submitBottom} 超出快捷窗口高度 {window.ActualHeight}");
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void AboutXamlNoLongerContainsTheRemovedSubtitleLine()
+    {
+        var path = LocateRepoFile(Path.Combine(
+            "native", "src", "HamCheckin.Native.App", "Views", "AboutWindow.xaml"));
+        var xaml = File.ReadAllText(path);
+
+        Assert.Contains("about-developer", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("快速、离线、键盘优先", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Windows 原生版 ·", xaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AboutWindowRendersWithoutTheRemovedSubtitleLine()
+    {
+        _fixture.Run(() =>
+        {
+            var window = new AboutWindow();
+            window.Show();
+            window.UpdateLayout();
+
+            var texts = VisualDescendants(window)
+                .OfType<TextBlock>()
+                .Select(static block => block.Text)
+                .ToArray();
+            Assert.Contains(texts, static text => text.Contains("开发者", StringComparison.Ordinal));
+            Assert.DoesNotContain(texts, static text => text.Contains("键盘优先", StringComparison.Ordinal));
+            Assert.DoesNotContain(texts, static text => text.Contains("快速、离线", StringComparison.Ordinal));
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public async Task QthMemoryHintUndoRestoresSelectedCandidateMarkerAcrossReparse()
+    {
+        var previousNetworkMode = RuntimeOptions.DisableNetwork;
+        QthMemoryHarness? harness = null;
+        try
+        {
+            RuntimeOptions.Configure(disableNetwork: true);
+            harness = await CreateQthMemoryHarnessAsync();
+            var viewModel = harness.ViewModel;
+
+            viewModel.SetInputText("ba4rll bj");
+            await WaitUntilAsync(
+                () => viewModel.CallsignHints.Any(static chip => chip.Field == FieldKind.Qth),
+                TimeSpan.FromSeconds(5));
+            viewModel.SelectQthCandidate("北京市");
+            var revision = viewModel.InputRevision;
+            Assert.Equal("用户选择", ParsedField(viewModel, FieldKind.Qth).Source);
+            Assert.Equal("北京市", viewModel.Qth);
+
+            var chip = viewModel.CallsignHints.First(static item => item.Field == FieldKind.Qth);
+            Assert.NotEqual("北京市", chip.Value);
+            viewModel.ApplyCallsignHint(chip);
+            Assert.Equal("呼号记忆", ParsedField(viewModel, FieldKind.Qth).Source);
+            Assert.Equal(chip.Value, viewModel.Qth);
+            Assert.Equal("ba4rll bj", viewModel.InputText);
+
+            viewModel.UndoCallsignHint();
+            Assert.False(viewModel.CanUndoCallsignHint);
+            Assert.Equal("用户选择", ParsedField(viewModel, FieldKind.Qth).Source);
+            Assert.Equal("北京市", viewModel.Qth);
+
+            // 同一修订的后台重解析必须保住撤销后的显式选择，而不是丢回自动解析值。
+            viewModel.ReparseCurrentInputForTesting();
+            Assert.Equal(revision, viewModel.InputRevision);
+            Assert.Equal("ba4rll bj", viewModel.InputText);
+            Assert.Equal("用户选择", ParsedField(viewModel, FieldKind.Qth).Source);
+            Assert.Equal("北京市", viewModel.Qth);
+        }
+        finally
+        {
+            if (harness is not null)
+            {
+                await harness.DisposeAsync();
+            }
+            RuntimeOptions.Configure(disableNetwork: previousNetworkMode);
+        }
+    }
+
+    [Fact]
+    public async Task TwoQthMemoryHintsUndoRestoresOriginalCandidateMarkerAcrossReparse()
+    {
+        var previousNetworkMode = RuntimeOptions.DisableNetwork;
+        QthMemoryHarness? harness = null;
+        try
+        {
+            RuntimeOptions.Configure(disableNetwork: true);
+            harness = await CreateQthMemoryHarnessAsync();
+            var viewModel = harness.ViewModel;
+
+            viewModel.SetInputText("ba4rll bj");
+            await WaitUntilAsync(
+                () => viewModel.CallsignHints.Any(static chip => chip.Field == FieldKind.Qth),
+                TimeSpan.FromSeconds(5));
+            viewModel.SelectQthCandidate("北京市");
+            var revision = viewModel.InputRevision;
+
+            var first = viewModel.CallsignHints.First(static item => item.Field == FieldKind.Qth);
+            viewModel.ApplyCallsignHint(first);
+            Assert.Equal("呼号记忆", ParsedField(viewModel, FieldKind.Qth).Source);
+            Assert.Equal(first.Value, viewModel.Qth);
+
+            var second = viewModel.CallsignHints.Single(static item => item.Field == FieldKind.Qth);
+            Assert.NotEqual(first.Value, second.Value);
+            viewModel.ApplyCallsignHint(second);
+            Assert.Equal("呼号记忆", ParsedField(viewModel, FieldKind.Qth).Source);
+            Assert.Equal(second.Value, viewModel.Qth);
+            Assert.True(viewModel.CanUndoCallsignHint);
+
+            // 两次 QTH 覆盖合成一条撤销：回到最初的“用户选择”而不是第一次覆盖值。
+            viewModel.UndoCallsignHint();
+            Assert.False(viewModel.CanUndoCallsignHint);
+            Assert.Equal("用户选择", ParsedField(viewModel, FieldKind.Qth).Source);
+            Assert.Equal("北京市", viewModel.Qth);
+            Assert.Equal("ba4rll bj", viewModel.InputText);
+            Assert.Equal(revision, viewModel.InputRevision);
+
+            viewModel.ReparseCurrentInputForTesting();
+            Assert.Equal("用户选择", ParsedField(viewModel, FieldKind.Qth).Source);
+            Assert.Equal("北京市", viewModel.Qth);
+        }
+        finally
+        {
+            if (harness is not null)
+            {
+                await harness.DisposeAsync();
+            }
+            RuntimeOptions.Configure(disableNetwork: previousNetworkMode);
+        }
+    }
+
+    private static async Task<QthMemoryHarness> CreateQthMemoryHarnessAsync()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "HAMCheckin.Native.UiTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var store = new NativeStore(Path.Combine(root, "data", "ham_checkin_native.db"));
+        await store.InitializeAsync();
+        var session = await store.GetOrCreateFirstSessionAsync(new DateOnly(2026, 11, 22));
+        await SeedCallsignHistoryAsync(store, session);
+        var viewModel = new MainViewModel(
+            new CatalogService(),
+            store,
+            catalogDataRoot: Path.Combine(root, "data"),
+            importLegacyDatabase: false);
+        await viewModel.InitializeAsync();
+        if (viewModel.StartupUpdateCheckTask is not null)
+        {
+            await viewModel.StartupUpdateCheckTask;
+        }
+
+        return new QthMemoryHarness(root, viewModel);
+    }
+
+    private sealed class QthMemoryHarness(string root, MainViewModel viewModel) : IAsyncDisposable
+    {
+        public MainViewModel ViewModel { get; } = viewModel;
+
+        public async ValueTask DisposeAsync()
+        {
+            await ViewModel.DisposeAsync();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    private static async Task SeedCallsignHistoryAsync(NativeStore store, SessionInfo session)
+    {
+        await store.AddCheckinAsync(session,
+            MemoryParse("BA4RLL", "江苏省南京市玄武区", "海能达 PD-780", "4.2米玻璃钢", "5W"));
+        await store.AddCheckinAsync(session,
+            MemoryParse("BA4RLL", "江苏省南京市玄武区", "海能达 PD-780", "4.2米玻璃钢", "5W"));
+        await store.AddCheckinAsync(session,
+            MemoryParse("BA4RLL", "江苏省苏州市姑苏区", "宝锋 UV-5RH", "原装天线", "8W"));
+    }
+
+    private static ParseResult MemoryParse(
+        string callsign,
+        string qth,
+        string device,
+        string antenna,
+        string power) => new(
+        $"{callsign} {qth} {device} {antenna} {power}".Trim(),
+        new[] { callsign },
+        MemoryField(callsign),
+        MemoryField(qth),
+        MemoryField(device),
+        MemoryField(antenna),
+        MemoryField(power),
+        ParseField.Empty,
+        Array.Empty<string>());
+
+    private static ParseField MemoryField(string value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? ParseField.Empty
+            : new ParseField(value, "测试", 1.0, value);
+
+    /// <summary>
+    /// 读取 MainViewModel 已发布的私有解析快照，验证字段来源。仅测试侧只读反射，
+    /// 不向产品代码添加任何测试钩子。
+    /// </summary>
+    private static ParseField ParsedField(MainViewModel viewModel, FieldKind field)
+    {
+        var parsed = typeof(MainViewModel)
+            .GetField("_parseResult", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(viewModel) as ParseResult
+            ?? throw new InvalidOperationException("MainViewModel 未持有解析快照。");
+
+        return field switch
+        {
+            FieldKind.Qth => parsed.Qth,
+            FieldKind.Device => parsed.Device,
+            FieldKind.Antenna => parsed.Antenna,
+            FieldKind.Power => parsed.Power,
+            _ => throw new ArgumentOutOfRangeException(nameof(field), field, "呼号记忆只覆盖 QTH/设备/天线/功率")
+        };
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (!condition() && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(20);
+        }
+
+        Assert.True(condition(), $"条件在 {timeout} 内未满足。");
+    }
+
+    private static string LocateRepoFile(string relativePath)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, relativePath);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new FileNotFoundException("找不到仓库文件。", relativePath);
+    }
+
+    private static IEnumerable<DependencyObject> VisualDescendants(DependencyObject root)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            yield return child;
+            foreach (var descendant in VisualDescendants(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
+    private static void PumpDispatcherUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        var dispatcher = Dispatcher.CurrentDispatcher;
+        var frame = new DispatcherFrame();
+        var deadline = DateTime.UtcNow + timeout;
+        var timer = new DispatcherTimer(
+            TimeSpan.FromMilliseconds(10),
+            DispatcherPriority.Background,
+            (_, _) =>
+            {
+                if (condition() || DateTime.UtcNow >= deadline)
+                {
+                    frame.Continue = false;
+                }
+            },
+            dispatcher);
+
+        timer.Start();
+        Dispatcher.PushFrame(frame);
+        timer.Stop();
+    }
+
+    private static Vector PageOffset(FrameworkElement page)
+    {
+        if (page.RenderTransform is null)
+        {
+            return default;
+        }
+
+        if (page.RenderTransform is TranslateTransform translate)
+        {
+            return new Vector(translate.X, translate.Y);
+        }
+
+        var point = page.RenderTransform.Transform(default(Point));
+        return new Vector(point.X, point.Y);
+    }
+
     private static bool WaitForVideoFrame(ScreenRecordingService service, TimeSpan timeout)
     {
         var dispatcher = Dispatcher.CurrentDispatcher;
@@ -1580,6 +2311,7 @@ public sealed class WpfDispatcherFixture : IDisposable
     private readonly ManualResetEventSlim _ready = new();
     private volatile Dispatcher? _dispatcher;
     private NativeApplication? _app;
+    private ThemeService? _themeService;
     private Exception? _startupFailure;
     private int _startupAbandoned;
 
@@ -1594,6 +2326,8 @@ public sealed class WpfDispatcherFixture : IDisposable
                     ShutdownMode = ShutdownMode.OnExplicitShutdown
                 };
                 _app.InitializeComponent();
+                _themeService = new ThemeService();
+                _themeService.ApplyEffectiveTheme(EffectiveTheme.Light);
             }
             catch (Exception exception)
             {
@@ -1654,6 +2388,8 @@ public sealed class WpfDispatcherFixture : IDisposable
             {
                 var shutdown = dispatcher.BeginInvoke(DispatcherPriority.Normal, new Action(() =>
                 {
+                    _themeService?.Dispose();
+                    _themeService = null;
                     _app?.Shutdown();
                     dispatcher.BeginInvokeShutdown(DispatcherPriority.Normal);
                 }));

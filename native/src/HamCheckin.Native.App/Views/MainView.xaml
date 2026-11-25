@@ -6,7 +6,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d"
              d:DesignWidth="1440" d:DesignHeight="900"
-             Background="{StaticResource AppBackgroundBrush}"
+             Background="{DynamicResource AppBackgroundBrush}"
              Focusable="True"
              PreviewKeyDown="Root_PreviewKeyDown"
              Loaded="Root_Loaded"
@@ -18,56 +18,54 @@
             <ColumnDefinition Width="*" MinWidth="0"/>
         </Grid.ColumnDefinitions>
 
-        <Border x:Name="SidebarPanel" Grid.Column="0" Background="#FBFCFE" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,1,0" ClipToBounds="True">
+        <Border x:Name="SidebarPanel" Grid.Column="0" Background="{DynamicResource SidebarBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,1,0" ClipToBounds="True">
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="82"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <StackPanel Orientation="Horizontal" Margin="16,18,8,14">
-                    <Border Width="38" Height="38" CornerRadius="10" Background="{StaticResource AccentBrush}">
-                        <TextBlock Text="H" Foreground="White" FontWeight="Bold" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
+                    <Image Width="48" Height="48" Source="pack://application:,,,/Assets/logo-poster.jpg" Stretch="Uniform"/>
                     <StackPanel x:Name="BrandTextPanel" Margin="9,0,0,0">
                         <TextBlock Text="HAM 点名助手" FontSize="15" FontWeight="Bold"/>
-                        <TextBlock Text="Windows 原生版" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,3,0,0"/>
+                        <TextBlock Text="Windows 原生版" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,3,0,0"/>
                     </StackPanel>
                 </StackPanel>
                 <StackPanel x:Name="NavigationPanel" Grid.Row="1" Margin="0,9,0,0">
-                    <TextBlock x:Name="WorkspaceLabel" Text="工作台" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource MutedBrush}" Margin="20,0,0,5"/>
-                    <RadioButton x:Name="QuickNav" GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Quick" IsChecked="True" Checked="Nav_Checked">
+                    <TextBlock x:Name="WorkspaceLabel" Text="工作台" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource MutedBrush}" Margin="20,0,0,5"/>
+                    <RadioButton x:Name="QuickNav" GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Quick" IsChecked="True" Checked="Nav_Checked" AutomationProperties.Name="快速点名" ToolTip="快速点名">
                         <StackPanel Orientation="Horizontal"><TextBlock Text="⌨" Width="25"/><TextBlock x:Name="QuickNavLabel" Text="快速点名"/></StackPanel>
                     </RadioButton>
-                    <RadioButton GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Records" Checked="Nav_Checked">
+                    <RadioButton GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Records" Checked="Nav_Checked" AutomationProperties.Name="本场记录" ToolTip="本场记录">
                         <StackPanel Orientation="Horizontal"><TextBlock Text="▤" Width="25"/><TextBlock x:Name="RecordsNavLabel" Text="本场记录"/></StackPanel>
                     </RadioButton>
-                    <RadioButton GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Catalog" Checked="Nav_Checked">
+                    <RadioButton GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Catalog" Checked="Nav_Checked" AutomationProperties.Name="资料库" ToolTip="资料库">
                         <StackPanel Orientation="Horizontal"><TextBlock Text="◫" Width="25"/><TextBlock x:Name="CatalogNavLabel" Text="资料库"/></StackPanel>
                     </RadioButton>
-                    <RadioButton x:Name="RecordingNav" GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Recording" Checked="Nav_Checked" AutomationProperties.AutomationId="nav-recording">
+                    <RadioButton x:Name="RecordingNav" GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Recording" Checked="Nav_Checked" AutomationProperties.Name="录屏和麦克风" AutomationProperties.AutomationId="nav-recording" ToolTip="录屏 / 麦克风">
                         <StackPanel Orientation="Horizontal"><TextBlock Text="●" Width="25"/><TextBlock x:Name="RecordingNavLabel" Text="录屏 / 麦克风"/></StackPanel>
                     </RadioButton>
-                    <RadioButton GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Settings" Checked="Nav_Checked">
+                    <RadioButton GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Settings" Checked="Nav_Checked" AutomationProperties.Name="设置" ToolTip="设置">
                         <StackPanel Orientation="Horizontal"><TextBlock Text="⚙" Width="25"/><TextBlock x:Name="SettingsNavLabel" Text="设置"/></StackPanel>
                     </RadioButton>
                 </StackPanel>
-                <Border x:Name="LocalStatusCard" Grid.Row="2" Margin="10,10,10,14" Padding="11" CornerRadius="9" Background="{StaticResource SuccessSoftBrush}">
-                    <TextBlock x:Name="LocalStatusTitle" Text="●  本地录入" Foreground="{StaticResource SuccessBrush}" FontSize="12" FontWeight="SemiBold"/>
+                <Border x:Name="LocalStatusCard" Grid.Row="2" Margin="10,10,10,14" Padding="11" CornerRadius="9" Background="{DynamicResource SuccessSoftBrush}">
+                    <TextBlock x:Name="LocalStatusTitle" Text="●  本地录入" Foreground="{DynamicResource SuccessBrush}" FontSize="12" FontWeight="SemiBold"/>
                 </Border>
             </Grid>
         </Border>
 
         <Grid Grid.Column="1" MinWidth="0" ClipToBounds="True">
             <Grid.RowDefinitions><RowDefinition Height="Auto" MinHeight="98"/><RowDefinition Height="*"/><RowDefinition Height="35"/></Grid.RowDefinitions>
-            <Border Grid.Row="0" Background="#FDFEFF" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="20,10">
+            <Border Grid.Row="0" Background="{DynamicResource HeaderBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="20,10">
                 <Grid x:Name="HeaderGrid">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="0"/><ColumnDefinition Width="1.05*" MinWidth="0"/></Grid.ColumnDefinitions>
                     <StackPanel Grid.Row="0" Grid.Column="0" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="{Binding SessionTitle}" FontSize="18" FontWeight="Bold"/>
-                            <Border Background="{StaticResource AccentSoftBrush}" CornerRadius="10" Padding="9,3" Margin="10,0,0,0">
-                                <TextBlock Text="{Binding SessionStatus}" FontSize="11" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"/>
+                            <Border Background="{DynamicResource AccentSoftBrush}" CornerRadius="10" Padding="9,3" Margin="10,0,0,0">
+                                <TextBlock Text="{Binding SessionStatus}" FontSize="11" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold"/>
                             </Border>
                         </StackPanel>
-                        <TextBlock Text="{Binding SessionMeta}" Margin="0,5,0,0" FontSize="12" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding SessionMeta}" Margin="0,5,0,0" FontSize="12" Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                     <WrapPanel x:Name="HeaderActionsPanel" Grid.Row="0" Grid.Column="1" MaxWidth="520" MinWidth="0" VerticalAlignment="Center" HorizontalAlignment="Right">
                         <Button x:Name="NewSessionButton" AutomationProperties.AutomationId="new-session" Style="{StaticResource BaseButton}" Content="新建场次" Margin="0,0,6,0" Click="NewSession_Click"/>
@@ -81,7 +79,7 @@
 
             <Grid x:Name="PageHost" Grid.Row="1" Margin="16,14,16,10" MinWidth="0" ClipToBounds="True">
                 <Grid x:Name="QuickPage" Tag="Quick">
-                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <Border Style="{StaticResource CardBorder}" Padding="15">
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="0"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -95,29 +93,65 @@
 
                     <Grid x:Name="ParseStrip" Grid.Row="1" Margin="0,10,0,8">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="1*"/><ColumnDefinition Width="1.35*"/><ColumnDefinition Width="1.55*"/><ColumnDefinition Width="1.1*"/><ColumnDefinition Width="0.7*"/></Grid.ColumnDefinitions>
-                        <Border Grid.Column="0" Style="{StaticResource CardBorder}" Padding="11,9" Margin="0,0,7,0"><StackPanel><TextBlock Text="呼号" FontSize="10" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Callsign, TargetNullValue=—}" AutomationProperties.Name="{Binding Callsign, TargetNullValue=—}" FontSize="15" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" AutomationProperties.AutomationId="parse-callsign-main"/></StackPanel></Border>
-                        <Border Grid.Column="1" Style="{StaticResource CardBorder}" Padding="11,9" Margin="0,0,7,0"><StackPanel><TextBlock Text="QTH" FontSize="10" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Qth, TargetNullValue=—}" AutomationProperties.Name="{Binding Qth, TargetNullValue=—}" FontSize="13" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" AutomationProperties.AutomationId="parse-qth-main"/></StackPanel></Border>
-                        <Border Grid.Column="2" Style="{StaticResource CardBorder}" Padding="11,9" Margin="0,0,7,0"><StackPanel><TextBlock Text="设备" FontSize="10" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Device, TargetNullValue=—}" AutomationProperties.Name="{Binding Device, TargetNullValue=—}" FontSize="13" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" AutomationProperties.AutomationId="parse-device-main"/></StackPanel></Border>
-                        <Border Grid.Column="3" Style="{StaticResource CardBorder}" Padding="11,9" Margin="0,0,7,0"><StackPanel><TextBlock Text="天线" FontSize="10" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Antenna, TargetNullValue=—}" AutomationProperties.Name="{Binding Antenna, TargetNullValue=—}" FontSize="13" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" AutomationProperties.AutomationId="parse-antenna-main"/></StackPanel></Border>
-                        <Border Grid.Column="4" Style="{StaticResource CardBorder}" Padding="11,9"><StackPanel><TextBlock Text="功率" FontSize="10" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Power, TargetNullValue=—}" AutomationProperties.Name="{Binding Power, TargetNullValue=—}" FontSize="15" FontWeight="Bold" Foreground="{StaticResource SuccessBrush}" Margin="0,4,0,0" AutomationProperties.AutomationId="parse-power-main"/></StackPanel></Border>
+                        <Border Grid.Column="0" Style="{StaticResource CardBorder}" Padding="11,9" Margin="0,0,7,0"><StackPanel><TextBlock Text="呼号" FontSize="10" Foreground="{DynamicResource MutedBrush}"/><TextBlock Text="{Binding Callsign, TargetNullValue=—}" AutomationProperties.Name="{Binding Callsign, TargetNullValue=—}" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" AutomationProperties.AutomationId="parse-callsign-main"/></StackPanel></Border>
+                        <Border Grid.Column="1" Style="{StaticResource CardBorder}" Padding="11,9" Margin="0,0,7,0"><StackPanel><TextBlock Text="QTH" FontSize="10" Foreground="{DynamicResource MutedBrush}"/><TextBlock Text="{Binding Qth, TargetNullValue=—}" AutomationProperties.Name="{Binding Qth, TargetNullValue=—}" FontSize="13" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" AutomationProperties.AutomationId="parse-qth-main"/></StackPanel></Border>
+                        <Border Grid.Column="2" Style="{StaticResource CardBorder}" Padding="11,9" Margin="0,0,7,0"><StackPanel><TextBlock Text="设备" FontSize="10" Foreground="{DynamicResource MutedBrush}"/><TextBlock Text="{Binding Device, TargetNullValue=—}" AutomationProperties.Name="{Binding Device, TargetNullValue=—}" FontSize="13" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" AutomationProperties.AutomationId="parse-device-main"/></StackPanel></Border>
+                        <Border Grid.Column="3" Style="{StaticResource CardBorder}" Padding="11,9" Margin="0,0,7,0"><StackPanel><TextBlock Text="天线" FontSize="10" Foreground="{DynamicResource MutedBrush}"/><TextBlock Text="{Binding Antenna, TargetNullValue=—}" AutomationProperties.Name="{Binding Antenna, TargetNullValue=—}" FontSize="13" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" AutomationProperties.AutomationId="parse-antenna-main"/></StackPanel></Border>
+                        <Border Grid.Column="4" Style="{StaticResource CardBorder}" Padding="11,9"><StackPanel><TextBlock Text="功率" FontSize="10" Foreground="{DynamicResource MutedBrush}"/><TextBlock Text="{Binding Power, TargetNullValue=—}" AutomationProperties.Name="{Binding Power, TargetNullValue=—}" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource SuccessBrush}" Margin="0,4,0,0" AutomationProperties.AutomationId="parse-power-main"/></StackPanel></Border>
                     </Grid>
 
-                    <Grid Grid.Row="2" MinHeight="0">
+                    <Grid x:Name="CallsignMemoryStrip" Grid.Row="2" Margin="0,0,0,8" Opacity="0.62" AutomationProperties.LiveSetting="Polite">
+                        <Grid.Style>
+                            <Style TargetType="Grid">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsCallsignHintRowVisible}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Grid.Style>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="记忆" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="2,0,10,0"/>
+                        <TextBlock Grid.Column="1" Text="{Binding CallsignMemoryLastTimeDisplay}" FontSize="11" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <ItemsControl Grid.Column="2" ItemsSource="{Binding CallsignHints}" VerticalAlignment="Center" AutomationProperties.AutomationId="callsign-memory-hints-main">
+                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Content="{Binding DisplayText}" Tag="{Binding}" Click="CallsignHint_Click" Style="{StaticResource BaseButton}" MinHeight="24" FontSize="11" Padding="8,1" Margin="0,1,6,1" AutomationProperties.Name="{Binding AutomationName}"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <Button Grid.Column="3" Content="撤销" FontSize="11" MinHeight="24" Padding="8,1" Margin="6,1,0,1" VerticalAlignment="Center" Click="UndoCallsignHint_Click" AutomationProperties.Name="撤销最近一次呼号记忆填充">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource BaseButton}">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding CanUndoCallsignHint}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
+
+                    <Grid Grid.Row="3" MinHeight="0">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="0"/><ColumnDefinition Width="218"/></Grid.ColumnDefinitions>
                         <Border Style="{StaticResource CardBorder}" Margin="0,0,10,0" ClipToBounds="True">
                             <Grid>
                                 <Grid.RowDefinitions><RowDefinition Height="43"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                                <Grid Margin="13,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="本场最近记录" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/><TextBlock Grid.Column="1" Text="{Binding NextSequence, StringFormat=下一序号 {0}}" FontSize="11" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/></Grid>
+                                <Grid Margin="13,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="本场最近记录" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/><TextBlock Grid.Column="1" Text="{Binding NextSequence, StringFormat=下一序号 {0}}" FontSize="11" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/></Grid>
                                 <DataGrid x:Name="RecentGrid" Grid.Row="1" ItemsSource="{Binding Checkins}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" SelectionUnit="Cell" PreviewMouseDoubleClick="RecordsGrid_PreviewMouseDoubleClick" PreviewKeyDown="RecordsGrid_PreviewKeyDown" MinWidth="0">
                                     <DataGrid.Columns>
-                                        <DataGridTextColumn Header="#" Binding="{Binding SequenceNo}" Width="38"/>
-                                        <DataGridTextColumn Header="时间" Binding="{Binding CheckinTime}" Width="65"/>
+                                        <DataGridTextColumn Header="#" Binding="{Binding SequenceNo}" Width="38" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                                        <DataGridTextColumn Header="时间" Binding="{Binding CheckinTime}" Width="65" ElementStyle="{StaticResource CenteredDataGridText}"/>
                                         <DataGridTextColumn Header="呼号" Binding="{Binding Callsign}" Width="80"/>
                                         <DataGridTextColumn Header="QTH" Binding="{Binding Qth}" Width="1.8*" MinWidth="110"/>
                                         <DataGridTextColumn Header="设备" Binding="{Binding Device}" Width="1.5*" MinWidth="95"/>
                                         <DataGridTextColumn Header="天线" Binding="{Binding Antenna}" Width="1.1*" MinWidth="75"/>
-                                        <DataGridTextColumn Header="功率" Binding="{Binding Power}" Width="54"/>
-                                        <DataGridTextColumn Header="待修正" Binding="{Binding UnmatchedCount}" Width="58"/>
+                                        <DataGridTextColumn Header="功率" Binding="{Binding Power}" Width="54" ElementStyle="{StaticResource RightAlignedDataGridText}"/>
+                                        <DataGridTextColumn Header="待修正" Binding="{Binding UnmatchedCount}" Width="58" ElementStyle="{StaticResource CenteredDataGridText}"/>
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </Grid>
@@ -125,7 +159,7 @@
                         <Border Grid.Column="1" Style="{StaticResource CardBorder}" Padding="13">
                             <StackPanel>
                                 <TextBlock Text="当前解析" FontSize="14" FontWeight="Bold"/>
-                                <TextBlock Text="QTH" FontSize="10" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Qth, TargetNullValue=—}" FontWeight="SemiBold" Margin="0,2,0,4" TextWrapping="Wrap"/>
+                                <TextBlock Text="QTH" FontSize="10" Foreground="{DynamicResource MutedBrush}"/><TextBlock Text="{Binding Qth, TargetNullValue=—}" FontWeight="SemiBold" Margin="0,2,0,4" TextWrapping="Wrap"/>
                                 <StackPanel x:Name="QthCandidatePanel" Margin="0,0,0,8">
                                     <StackPanel.Style>
                                         <Style TargetType="StackPanel">
@@ -135,7 +169,7 @@
                                             </Style.Triggers>
                                         </Style>
                                     </StackPanel.Style>
-                                    <TextBlock Text="QTH候选（点击确认）" FontSize="10" Foreground="{StaticResource AccentBrush}" Margin="0,0,0,3"/>
+                                    <TextBlock Text="QTH候选（点击确认）" FontSize="10" Foreground="{DynamicResource AccentBrush}" Margin="0,0,0,3"/>
                                     <ItemsControl ItemsSource="{Binding QthCandidates}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
@@ -144,9 +178,9 @@
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                 </StackPanel>
-                                <TextBlock Text="设备" FontSize="10" Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Device, TargetNullValue=—}" FontWeight="SemiBold" Margin="0,2,0,9" TextWrapping="Wrap"/>
-                                <TextBlock Text="天线 / 功率" FontSize="10" Foreground="{StaticResource MutedBrush}"/><StackPanel Orientation="Horizontal"><TextBlock Text="{Binding Antenna, TargetNullValue=—}" FontWeight="SemiBold"/><TextBlock Text="  ·  " Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Power, TargetNullValue=—}" FontWeight="SemiBold"/></StackPanel>
-                                <Border Background="{StaticResource WarningSoftBrush}" CornerRadius="8" Padding="9" Margin="0,2,0,0"><StackPanel><TextBlock Text="待处理原文" FontSize="10" Foreground="#9A6700"/><TextBlock Text="{Binding CurrentUnmatchedDisplay}" AutomationProperties.Name="{Binding CurrentUnmatchedDisplay}" FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" TextWrapping="Wrap" AutomationProperties.AutomationId="parse-unmatched-main"/></StackPanel></Border>
+                                <TextBlock Text="设备" FontSize="10" Foreground="{DynamicResource MutedBrush}"/><TextBlock Text="{Binding Device, TargetNullValue=—}" FontWeight="SemiBold" Margin="0,2,0,9" TextWrapping="Wrap"/>
+                                <TextBlock Text="天线 / 功率" FontSize="10" Foreground="{DynamicResource MutedBrush}"/><StackPanel Orientation="Horizontal"><TextBlock Text="{Binding Antenna, TargetNullValue=—}" FontWeight="SemiBold"/><TextBlock Text="  ·  " Foreground="{DynamicResource MutedBrush}"/><TextBlock Text="{Binding Power, TargetNullValue=—}" FontWeight="SemiBold"/></StackPanel>
+                                <Border Background="{DynamicResource WarningSoftBrush}" CornerRadius="8" Padding="9" Margin="0,2,0,0"><StackPanel><TextBlock Text="待处理原文" FontSize="10" Foreground="{DynamicResource WarningTextBrush}"/><TextBlock Text="{Binding CurrentUnmatchedDisplay}" AutomationProperties.Name="{Binding CurrentUnmatchedDisplay}" FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" TextWrapping="Wrap" AutomationProperties.AutomationId="parse-unmatched-main"/></StackPanel></Border>
                             </StackPanel>
                         </Border>
                     </Grid>
@@ -154,13 +188,78 @@
 
                 <Grid x:Name="RecordsPage" Tag="Records" Visibility="Collapsed">
                     <Border Style="{StaticResource CardBorder}" ClipToBounds="True">
-                        <Grid><Grid.RowDefinitions><RowDefinition Height="70"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                            <Grid Margin="18,13"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="本场记录" FontSize="19" FontWeight="Bold" VerticalAlignment="Center"/><Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="导出 Excel  Ctrl+E" Command="{Binding ExportCommand}" VerticalAlignment="Center"/></Grid>
-                            <DataGrid x:Name="RecordsGrid" Grid.Row="1" ItemsSource="{Binding Checkins}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" SelectionUnit="Cell" PreviewMouseDoubleClick="RecordsGrid_PreviewMouseDoubleClick" PreviewKeyDown="RecordsGrid_PreviewKeyDown" MinWidth="0">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="序号" Binding="{Binding SequenceNo}" Width="55"/><DataGridTextColumn Header="时间" Binding="{Binding CheckinTime}" Width="78"/><DataGridTextColumn Header="呼号" Binding="{Binding Callsign}" Width="100"/><DataGridTextColumn Header="QTH" Binding="{Binding Qth}" Width="2*"/><DataGridTextColumn Header="设备" Binding="{Binding Device}" Width="1.4*"/><DataGridTextColumn Header="天线" Binding="{Binding Antenna}" Width="1.1*"/><DataGridTextColumn Header="功率" Binding="{Binding Power}" Width="70"/><DataGridTextColumn Header="信号" Binding="{Binding Signal}" Width="60"/><DataGridTextColumn Header="待修正" Binding="{Binding UnmatchedCount}" Width="65"/>
-                                </DataGrid.Columns>
-                            </DataGrid>
+                        <Grid x:Name="RecordsLayoutGrid">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition x:Name="RecordsListColumn" Width="1.8*" MinWidth="0"/>
+                                <ColumnDefinition x:Name="RecordDetailsColumn" Width="1*" MinWidth="0"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid Grid.Column="0" MinWidth="0">
+                                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                                <Grid Grid.Row="0" Margin="16,12">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="本场记录" FontSize="19" FontWeight="Bold"/>
+                                        <TextBlock Text="选择一条记录查看原文与已确认字段；双击单元格可编辑该字段。" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Button x:Name="ToggleRecordDetailsButton" Grid.Column="1" Style="{StaticResource BaseButton}" Content="收起详情" Margin="0,0,8,0" Click="ToggleRecordDetails_Click" AutomationProperties.Name="显示或收起记录详情"/>
+                                    <Button Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="导出 Excel  Ctrl+E" Command="{Binding ExportCommand}" AutomationProperties.Name="导出本场记录到 Excel"/>
+                                </Grid>
+                                <DataGrid x:Name="RecordsGrid" Grid.Row="1" ItemsSource="{Binding Checkins}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" SelectionUnit="Cell" PreviewMouseDoubleClick="RecordsGrid_PreviewMouseDoubleClick" PreviewKeyDown="RecordsGrid_PreviewKeyDown" SelectionChanged="RecordsGrid_SelectionChanged" MinWidth="0">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="序号" Binding="{Binding SequenceNo}" Width="55" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                                        <DataGridTextColumn Header="时间" Binding="{Binding CheckinTime}" Width="78" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                                        <DataGridTextColumn Header="呼号" Binding="{Binding Callsign}" Width="100"/>
+                                        <DataGridTextColumn Header="QTH" Binding="{Binding Qth}" Width="2*"/>
+                                        <DataGridTextColumn Header="设备" Binding="{Binding Device}" Width="1.4*"/>
+                                        <DataGridTextColumn Header="天线" Binding="{Binding Antenna}" Width="1.1*"/>
+                                        <DataGridTextColumn Header="功率" Binding="{Binding Power}" Width="70" ElementStyle="{StaticResource RightAlignedDataGridText}"/>
+                                        <DataGridTextColumn Header="信号" Binding="{Binding Signal}" Width="60" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                                        <DataGridTextColumn Header="待修正" Binding="{Binding UnmatchedCount}" Width="65" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Grid>
+                            <Border x:Name="RecordDetailsBorder" Grid.Column="1" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1,0,0,0" Background="{DynamicResource SurfaceAltBrush}" Padding="14">
+                                <Grid>
+                                    <StackPanel x:Name="RecordEmptyState" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="250">
+                                        <TextBlock Text="记录详情" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="选择列表中的记录后，可查看完整原文、未识别内容和字段值。" FontSize="12" Foreground="{DynamicResource EmptyBrush}" TextWrapping="Wrap" TextAlignment="Center" Margin="0,8,0,0"/>
+                                    </StackPanel>
+                                    <ScrollViewer x:Name="RecordSelectedState" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
+                                        <StackPanel>
+                                            <Grid Margin="0,0,0,12">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="选中记录" FontSize="11" Foreground="{DynamicResource MutedBrush}"/>
+                                                    <TextBlock Text="{Binding SequenceNo, StringFormat=序号 {0}}" FontSize="20" FontWeight="Bold" Margin="0,3,0,0"/>
+                                                </StackPanel>
+                                                <Button x:Name="EditSelectedFieldButton" Grid.Column="1" Style="{StaticResource BaseButton}" Content="编辑所选字段" Click="EditSelectedField_Click" IsEnabled="False" AutomationProperties.Name="编辑当前选中单元格对应的单一字段"/>
+                                            </Grid>
+                                            <TextBlock Text="{Binding Callsign, TargetNullValue=—}" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding CheckinTime, StringFormat=记录时间：{0}}" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,3,0,12"/>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="82"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                                <TextBlock Text="QTH" Foreground="{DynamicResource MutedBrush}" Margin="0,0,8,8"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding Qth, TargetNullValue=—}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                                <TextBlock Grid.Row="1" Text="设备" Foreground="{DynamicResource MutedBrush}" Margin="0,0,8,8"/>
+                                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Device, TargetNullValue=—}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                                <TextBlock Grid.Row="2" Text="天线" Foreground="{DynamicResource MutedBrush}" Margin="0,0,8,8"/>
+                                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Antenna, TargetNullValue=—}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                                <TextBlock Grid.Row="3" Text="功率" Foreground="{DynamicResource MutedBrush}" Margin="0,0,8,8"/>
+                                                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Power, TargetNullValue=—}" Margin="0,0,0,8"/>
+                                                <TextBlock Grid.Row="4" Text="信号" Foreground="{DynamicResource MutedBrush}" Margin="0,0,8,0"/>
+                                                <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding Signal, TargetNullValue=—}"/>
+                                            </Grid>
+                                            <TextBlock Text="原始输入" FontSize="11" FontWeight="SemiBold" Margin="0,14,0,5"/>
+                                            <TextBox Text="{Binding RawInput, Mode=OneWay}" Style="{StaticResource InputTextBox}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MaxHeight="88" AutomationProperties.Name="所选记录的原始输入"/>
+                                            <TextBlock Text="未识别内容" FontSize="11" FontWeight="SemiBold" Margin="0,12,0,5"/>
+                                            <Border Background="{DynamicResource WarningSoftBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="5" Padding="8">
+                                                <TextBlock Text="{Binding Unmatched, TargetNullValue=无}" Foreground="{DynamicResource WarningTextBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="record-unmatched-details"/>
+                                            </Border>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </Grid>
+                            </Border>
                         </Grid>
                     </Border>
                 </Grid>
@@ -180,7 +279,7 @@
                             </Grid>
                         </Border>
                         <Border Grid.Column="1" Style="{StaticResource CardBorder}" Padding="14">
-                            <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><TextBlock Text="地点包" FontSize="15" FontWeight="Bold"/><Grid Grid.Row="1" Margin="0,10,0,0"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><WrapPanel Margin="0,0,0,8"><Button Style="{StaticResource BaseButton}" Content="下载全省" Margin="0,0,6,0" Click="DownloadProvince_Click"/><Button Style="{StaticResource BaseButton}" Content="更新已安装" Click="UpdatePlaces_Click"/></WrapPanel><TreeView Grid.Row="1" ItemsSource="{Binding QthPackages}"><TreeView.ItemContainerStyle><Style TargetType="TreeViewItem"><Setter Property="IsExpanded" Value="True"/></Style></TreeView.ItemContainerStyle><TreeView.Resources><HierarchicalDataTemplate DataType="{x:Type local:QthPackageNode}" ItemsSource="{Binding Children}"><StackPanel Orientation="Horizontal"><TextBlock Text="{Binding Name}"/><TextBlock Text="  ·  " Foreground="{StaticResource MutedBrush}"/><TextBlock Text="{Binding Status}" Foreground="{StaticResource AccentBrush}"/><TextBlock Foreground="{StaticResource MutedBrush}"><Run Text="  "/><Run Text="{Binding Detail}"/></TextBlock></StackPanel></HierarchicalDataTemplate></TreeView.Resources></TreeView></Grid></Grid>
+                            <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><TextBlock Text="地点包" FontSize="15" FontWeight="Bold"/><Grid Grid.Row="1" Margin="0,10,0,0"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><WrapPanel Margin="0,0,0,8"><Button Style="{StaticResource BaseButton}" Content="下载全省" Margin="0,0,6,0" Click="DownloadProvince_Click"/><Button Style="{StaticResource BaseButton}" Content="更新已安装" Click="UpdatePlaces_Click"/></WrapPanel><TreeView Grid.Row="1" ItemsSource="{Binding QthPackages}"><TreeView.ItemContainerStyle><Style TargetType="TreeViewItem"><Setter Property="IsExpanded" Value="True"/></Style></TreeView.ItemContainerStyle><TreeView.Resources><HierarchicalDataTemplate DataType="{x:Type local:QthPackageNode}" ItemsSource="{Binding Children}"><StackPanel Orientation="Horizontal"><TextBlock Text="{Binding Name}"/><TextBlock Text="  ·  " Foreground="{DynamicResource MutedBrush}"/><TextBlock Text="{Binding Status}" Foreground="{DynamicResource AccentBrush}"/><TextBlock Foreground="{DynamicResource MutedBrush}"><Run Text="  "/><Run Text="{Binding Detail}"/></TextBlock></StackPanel></HierarchicalDataTemplate></TreeView.Resources></TreeView></Grid></Grid>
                         </Border>
                     </Grid>
                 </Grid>
@@ -196,8 +295,8 @@
                             <Border Style="{StaticResource CardBorder}" Padding="15" Margin="0,0,0,10">
                                 <StackPanel>
                                     <TextBlock Text="录制输入" FontSize="15" FontWeight="Bold"/>
-                                    <TextBlock Text="录制目标" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,12,0,4"/>
-                                    <Border Background="#F4F7FB" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="10">
+                                    <TextBlock Text="录制目标" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,12,0,4"/>
+                                    <Border Background="{DynamicResource SurfaceAltBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="10">
                                         <StackPanel>
                                             <TextBlock x:Name="RecordingTargetText" Text="HAM 点名助手窗口 · 正在读取窗口尺寸" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.AutomationId="recording-target"/>
                                         </StackPanel>
@@ -209,8 +308,8 @@
                                         <Button x:Name="TestMicrophoneButton" Style="{StaticResource BaseButton}" Content="测试麦克风" Click="TestMicrophone_Click" AutomationProperties.AutomationId="test-microphone"/>
                                     </WrapPanel>
                                     <ProgressBar x:Name="MicrophoneLevelBar" Height="8" Maximum="1" Value="0" Margin="0,12,0,4"/>
-                                    <TextBlock x:Name="MicrophoneStatusText" Text="尚未测试麦克风" FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
-                                    <TextBlock Text="输出文件（MP4）" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,13,0,4"/>
+                                    <TextBlock x:Name="MicrophoneStatusText" Text="尚未测试麦克风" FontSize="11" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/>
+                                    <TextBlock Text="输出文件（MP4）" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,13,0,4"/>
                                     <Grid MinWidth="0">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="0"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                         <TextBox x:Name="RecordingPathBox" Height="36" IsReadOnly="True" FontSize="12" Padding="10,6" VerticalContentAlignment="Center" Style="{StaticResource InputTextBox}" AutomationProperties.AutomationId="recording-output-path"/>
@@ -221,15 +320,15 @@
                             <Border Style="{StaticResource CardBorder}" Padding="15">
                                 <StackPanel>
                                     <TextBlock Text="录制状态" FontSize="15" FontWeight="Bold"/>
-                                    <TextBlock x:Name="RecordingStatusText" Text="未开始" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Margin="0,14,0,4" TextWrapping="Wrap" AutomationProperties.AutomationId="recording-status"/>
-                                    <TextBlock x:Name="RecordingStatsText" Text="等待开始" FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="RecordingStatusText" Text="未开始" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" Margin="0,14,0,4" TextWrapping="Wrap" AutomationProperties.AutomationId="recording-status"/>
+                                    <TextBlock x:Name="RecordingStatsText" Text="等待开始" FontSize="11" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/>
                                     <WrapPanel Margin="0,18,0,0">
                                         <Button x:Name="StartRecordingButton" Style="{StaticResource PrimaryButton}" Content="开始录制 MP4" Click="StartRecording_Click" AutomationProperties.AutomationId="start-recording"/>
                                         <Button x:Name="PauseRecordingButton" Style="{StaticResource BaseButton}" Content="暂停" IsEnabled="False" Click="PauseRecording_Click" Margin="7,0,0,0" AutomationProperties.AutomationId="pause-recording"/>
                                         <Button x:Name="StopRecordingButton" Style="{StaticResource BaseButton}" Content="停止并保存" IsEnabled="False" Click="StopRecording_Click" Margin="7,0,0,0" AutomationProperties.AutomationId="stop-recording"/>
                                     </WrapPanel>
-                                    <Border Background="{StaticResource WarningSoftBrush}" CornerRadius="8" Padding="10" Margin="0,18,0,0">
-                                        <TextBlock Text="隐私提示：视频只包含 HAM 点名助手窗口客户区；开始前仍请确认窗口内没有不应记录的账号、密钥或敏感内容。" FontSize="11" Foreground="#8A5A00" TextWrapping="Wrap"/>
+                                    <Border Background="{DynamicResource WarningSoftBrush}" CornerRadius="8" Padding="10" Margin="0,18,0,0">
+                                        <TextBlock Text="隐私提示：视频只包含 HAM 点名助手窗口客户区；开始前仍请确认窗口内没有不应记录的账号、密钥或敏感内容。" FontSize="11" Foreground="{DynamicResource WarningTextBrush}" TextWrapping="Wrap"/>
                                     </Border>
                                 </StackPanel>
                             </Border>
@@ -240,16 +339,33 @@
                 <Grid x:Name="SettingsPage" Tag="Settings" Visibility="Collapsed">
                     <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
                         <TextBlock Text="设置" FontSize="21" FontWeight="Bold" Margin="0,0,0,14"/>
-                        <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="数据安全" FontWeight="Bold"/><TextBlock Text="原生独立库" FontSize="11" Foreground="{StaticResource SuccessBrush}" Margin="0,5,0,0"/></StackPanel><TextBlock Grid.Column="1" Text="{Binding DatabasePath}" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}"/></Grid></Border>
+                        <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="数据安全" FontWeight="Bold"/><TextBlock Text="原生独立库" FontSize="11" Foreground="{DynamicResource SuccessBrush}" Margin="0,5,0,0"/></StackPanel><TextBlock Grid.Column="1" Text="{Binding DatabasePath}" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/></Grid></Border>
+                        <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="外观主题" FontWeight="Bold"/>
+                                    <TextBlock Text="高对比时始终优先使用系统颜色" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <ComboBox x:Name="ThemePreferenceComboBox" SelectedValuePath="Tag" Width="220" HorizontalAlignment="Left" AutomationProperties.Name="应用主题">
+                                        <ComboBoxItem Content="跟随系统" Tag="FollowSystem"/>
+                                        <ComboBoxItem Content="浅色" Tag="Light"/>
+                                        <ComboBoxItem Content="深色" Tag="Dark"/>
+                                    </ComboBox>
+                                    <TextBlock x:Name="ThemePreferenceStatusText" Text="新安装默认跟随 Windows 应用主题。" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,6,0,0" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
                         <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="过渡动画" FontWeight="Bold"/><CheckBox Grid.Column="1" Content="启用轻量页面切换和成功提示" IsChecked="{Binding AnimationsEnabled}" VerticalAlignment="Center"/></Grid></Border>
-                        <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><StackPanel><TextBlock Text="快捷键" FontSize="16" FontWeight="Bold"/><TextBlock Text="点击右侧组合键后直接按下新键；冲突会拒绝保存，主窗口和快速小窗共用提交键。" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,10" TextWrapping="Wrap"/><ItemsControl ItemsSource="{Binding ShortcutBindings}"><ItemsControl.ItemTemplate><DataTemplate><Grid Margin="0,3"><Grid.ColumnDefinitions><ColumnDefinition Width="175"/><ColumnDefinition Width="120"/><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"/><Button Grid.Column="1" Content="{Binding Gesture}" Tag="{Binding ActionKey}" Style="{StaticResource BaseButton}" Padding="10,5" Click="CaptureShortcut_Click"/><TextBlock Grid.Column="2" Text="{Binding Scope}" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/><TextBlock Grid.Column="3" Text="{Binding Description}" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl><TextBlock Text="冲突校验：同一作用范围不能重复；全局注册失败时保留旧快捷键。" FontSize="11" Foreground="{StaticResource SuccessBrush}" Margin="0,10,0,0"/><Button Content="恢复默认快捷键" Style="{StaticResource BaseButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="ResetShortcuts_Click"/></StackPanel></Border>
-                        <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="更新渠道" FontWeight="Bold"/><TextBlock Text="Native 1.0.20 · 本地候选版" FontSize="11" Foreground="{StaticResource SuccessBrush}" Margin="0,5,0,0"/></StackPanel><StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="GitHub Release · main/updates/latest.json · SHA-256" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/><TextBlock Text="每次启动后自动检查；联网失败不影响录入" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="0,3,0,0" TextWrapping="Wrap"/><TextBlock Text="{Binding UpdateStatus}" Foreground="{StaticResource SuccessBrush}" FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" AutomationProperties.AutomationId="startup-update-status"/></StackPanel><WrapPanel Grid.Column="2" VerticalAlignment="Center"><Button Content="赞助开发" Style="{StaticResource BaseButton}" Click="OpenSponsor_Click" Margin="12,0,6,0" AutomationProperties.AutomationId="open-sponsor"/><Button Content="关于 / 检查更新" Style="{StaticResource BaseButton}" Click="OpenAbout_Click" Margin="0" AutomationProperties.AutomationId="open-about"/></WrapPanel></Grid></Border>
+                        <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><StackPanel><TextBlock Text="快捷键" FontSize="16" FontWeight="Bold"/><TextBlock Text="点击右侧组合键后直接按下新键；冲突会拒绝保存，主窗口和快速小窗共用提交键。" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,5,0,10" TextWrapping="Wrap"/><ItemsControl ItemsSource="{Binding ShortcutBindings}"><ItemsControl.ItemTemplate><DataTemplate><Grid Margin="0,3"><Grid.ColumnDefinitions><ColumnDefinition Width="175"/><ColumnDefinition Width="120"/><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"/><Button Grid.Column="1" Content="{Binding Gesture}" Tag="{Binding ActionKey}" Style="{StaticResource BaseButton}" Padding="10,5" Click="CaptureShortcut_Click"/><TextBlock Grid.Column="2" Text="{Binding Scope}" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/><TextBlock Grid.Column="3" Text="{Binding Description}" Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl><TextBlock Text="冲突校验：同一作用范围不能重复；全局注册失败时保留旧快捷键。" FontSize="11" Foreground="{DynamicResource SuccessBrush}" Margin="0,10,0,0"/><Button Content="恢复默认快捷键" Style="{StaticResource BaseButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="ResetShortcuts_Click"/></StackPanel></Border>
+                        <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,11"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="155"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="更新渠道" FontWeight="Bold"/><TextBlock Text="Native 1.0.20 · 本地候选版" FontSize="11" Foreground="{DynamicResource SuccessBrush}" Margin="0,5,0,0"/></StackPanel><StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="GitHub Release · main/updates/latest.json · SHA-256" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/><TextBlock Text="每次启动后自动检查；联网失败不影响录入" Foreground="{DynamicResource MutedBrush}" FontSize="10" Margin="0,3,0,0" TextWrapping="Wrap"/><TextBlock Text="{Binding UpdateStatus}" Foreground="{DynamicResource SuccessBrush}" FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" AutomationProperties.AutomationId="startup-update-status"/></StackPanel><WrapPanel Grid.Column="2" VerticalAlignment="Center"><Button Content="赞助开发" Style="{StaticResource BaseButton}" Click="OpenSponsor_Click" Margin="12,0,6,0" AutomationProperties.AutomationId="open-sponsor"/><Button Content="关于 / 检查更新" Style="{StaticResource BaseButton}" Click="OpenAbout_Click" Margin="0" AutomationProperties.AutomationId="open-about"/></WrapPanel></Grid></Border>
                     </StackPanel></ScrollViewer>
                 </Grid>
             </Grid>
 
-            <Border Grid.Row="2" Background="#FDFEFF" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="16,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Ellipse Width="7" Height="7" Fill="{StaticResource SuccessBrush}" Margin="0,0,7,0"/><TextBlock Text="{Binding StatusMessage}" FontSize="11" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis"/></StackPanel><TextBlock Grid.Column="1" Text="{Binding TaskSummary}" FontSize="10" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/></Grid></Border>
-            <Border x:Name="SuccessFlash" Grid.RowSpan="3" Background="#2B0D8F69" IsHitTestVisible="False" Opacity="0"/>
+            <Border Grid.Row="2" Background="{DynamicResource HeaderBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" Padding="16,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Ellipse Width="7" Height="7" Fill="{DynamicResource SuccessBrush}" Margin="0,0,7,0"/><TextBlock Text="{Binding StatusMessage}" FontSize="11" Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis"/></StackPanel><TextBlock Grid.Column="1" Text="{Binding TaskSummary}" FontSize="10" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/></Grid></Border>
+            <Border x:Name="SuccessFlash" Grid.RowSpan="3" Background="{DynamicResource SuccessSoftBrush}" IsHitTestVisible="False" Opacity="0"/>
         </Grid>
     </Grid>
 </UserControl>

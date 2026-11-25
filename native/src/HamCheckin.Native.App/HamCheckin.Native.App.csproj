@@ -6,7 +6,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>HamCheckin.Native.App</RootNamespace>
     <AssemblyName>HAM点名助手</AssemblyName>
-    <ApplicationIcon>..\..\..\assets\icon.ico</ApplicationIcon>
+    <ApplicationIcon>Assets\logo-icon.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyTitle>HAM 点名助手 Windows 原生版</AssemblyTitle>
     <Product>HAM 点名助手 Windows 原生版</Product>
@@ -22,6 +22,7 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="Assets\logo-poster.jpg" />
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
     <ProjectReference Include="..\HamCheckin.Native.Core\HamCheckin.Native.Core.csproj" />
