@@ -2,12 +2,15 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using HamCheckin.Native.App.Infrastructure;
 using HamCheckin.Native.Core.Lan;
 using HamCheckin.Native.Core.Parsing;
 using HamCheckin.Native.Core.Storage;
 using HamCheckin.Native.LanServer;
+using QRCoder;
 
 namespace HamCheckin.Native.App.ViewModels;
 
@@ -40,6 +43,8 @@ public sealed class LanPanelViewModel : ObservableObject, IAsyncDisposable
     private string _errorMessage = string.Empty;
     private string _phoneSummary = "没有已连接手机";
     private LanAddressOption? _selectedAddress;
+    private ImageSource? _qrCodeImage;
+    private string? _qrPayload;
 
     public LanPanelViewModel(
         InputParser parser,
@@ -84,6 +89,7 @@ public sealed class LanPanelViewModel : ObservableObject, IAsyncDisposable
             if (SetProperty(ref _isRunning, value))
             {
                 NotifyActionAvailability();
+                UpdateQrCode();
             }
         }
     }
@@ -118,6 +124,7 @@ public sealed class LanPanelViewModel : ObservableObject, IAsyncDisposable
             if (SetProperty(ref _url, value))
             {
                 OnPropertyChanged(nameof(UrlDisplay));
+                UpdateQrCode();
             }
         }
     }
@@ -132,11 +139,31 @@ public sealed class LanPanelViewModel : ObservableObject, IAsyncDisposable
             if (SetProperty(ref _pin, value))
             {
                 OnPropertyChanged(nameof(PinDisplay));
+                UpdateQrCode();
             }
         }
     }
 
     public string PinDisplay => string.IsNullOrEmpty(Pin) ? "—" : Pin;
+
+    /// <summary>手机扫码连接用的二维码；仅服务运行且有地址/PIN 时非空。</summary>
+    public ImageSource? QrCodeImage
+    {
+        get => _qrCodeImage;
+        private set
+        {
+            if (SetProperty(ref _qrCodeImage, value))
+            {
+                OnPropertyChanged(nameof(HasQrCode));
+                OnPropertyChanged(nameof(QrPayload));
+            }
+        }
+    }
+
+    public bool HasQrCode => _qrCodeImage is not null;
+
+    /// <summary>二维码实际编码的内容；服务停止、缺少地址/PIN 或生成失败时为空。</summary>
+    public string? QrPayload => _qrCodeImage is null ? null : _qrPayload;
 
     public string StatusMessage
     {
@@ -440,6 +467,47 @@ public sealed class LanPanelViewModel : ObservableObject, IAsyncDisposable
     }
 
     private void RefreshTimer_Tick(object? sender, EventArgs e) => RefreshFromStores();
+
+    /// <summary>
+    /// 二维码内容固定为「地址/#pin=PIN」：PIN 放在 URL 片段里不会发送到服务器，
+    /// 手机页只在本地读取片段并预填输入框，仍需操作员在手机上点击配对。
+    /// </summary>
+    private void UpdateQrCode()
+    {
+        var payload = IsRunning && !string.IsNullOrEmpty(Url) && !string.IsNullOrEmpty(Pin)
+            ? $"{Url.TrimEnd('/')}/#pin={Pin}"
+            : null;
+        if (string.Equals(payload, _qrPayload, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _qrPayload = payload;
+        QrCodeImage = payload is null ? null : CreateQrBitmap(payload);
+    }
+
+    private BitmapImage? CreateQrBitmap(string payload)
+    {
+        try
+        {
+            const int modulePixels = 6;
+            using var generator = new QRCodeGenerator();
+            using var png = new PngByteQRCode(generator.CreateQrCode(payload, QRCodeGenerator.ECCLevel.Q));
+            using var stream = new MemoryStream(png.GetGraphic(modulePixels, drawQuietZones: true), writable: false);
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.StreamSource = stream;
+            bitmap.EndInit();
+            bitmap.Freeze();
+            return bitmap;
+        }
+        catch (Exception exception)
+        {
+            ErrorMessage = $"生成连接二维码失败：{exception.Message}";
+            return null;
+        }
+    }
 
     private void RefreshFromStores()
     {

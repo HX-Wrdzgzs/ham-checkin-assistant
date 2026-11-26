@@ -31,4 +31,7 @@
     <ProjectReference Include="..\HamCheckin.Native.Core\HamCheckin.Native.Core.csproj" />
     <ProjectReference Include="..\HamCheckin.Native.LanServer\HamCheckin.Native.LanServer.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+  </ItemGroup>
 </Project>

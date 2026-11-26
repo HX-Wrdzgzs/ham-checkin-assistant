@@ -36,6 +36,12 @@
 
   const dom = {};
 
+  function pinFromHash(hash) {
+    // 电脑端二维码把 PIN 放在片段里；片段不会随请求发送到服务器。
+    const match = /^#pin=(\d{1,6})$/.exec(hash || '');
+    return match ? match[1] : '';
+  }
+
   function byId(id) {
     return document.getElementById(id);
   }
@@ -514,6 +520,10 @@
     dom.pin.addEventListener('input', () => {
       dom.pin.value = dom.pin.value.replace(/\D/g, '').slice(0, PIN_LENGTH);
     });
+    const hashPin = pinFromHash(location.hash);
+    if (hashPin) {
+      dom.pin.value = hashPin;
+    }
     dom.pairForm.addEventListener('submit', onPairSubmit);
     dom.previewButton.addEventListener('click', onPreview);
     dom.submitButton.addEventListener('click', onSubmit);

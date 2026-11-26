@@ -7,6 +7,7 @@ using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation;
@@ -14,6 +15,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using HamCheckin.Native.App.ViewModels;
 using HamCheckin.Native.App.Views;
@@ -22,6 +24,7 @@ using HamCheckin.Native.Core.Catalogs;
 using HamCheckin.Native.Core.Lan;
 using HamCheckin.Native.Core.Parsing;
 using HamCheckin.Native.Core.Storage;
+using HamCheckin.Native.LanServer;
 using Microsoft.Data.Sqlite;
 using Xunit;
 
@@ -497,6 +500,260 @@ public sealed class LanPanelUiTests
         });
     }
 
+    [Fact]
+    public void QrCodeAppearsOnlyWhileListeningAndIsClearedAndListenerReleasedAfterStop()
+    {
+        RunOnUiThread(async () =>
+        {
+            var root = NewRoot("lan-panel-qr-lifecycle");
+            NativeStore? store = null;
+            LanPanelViewModel? panel = null;
+            try
+            {
+                store = new NativeStore(Path.Combine(root, "data", "ham_checkin_native.db"));
+                await store.InitializeAsync();
+                var session = await store.GetOrCreateFirstSessionAsync(new DateOnly(2026, 11, 25));
+                var snapshot = new LanSessionSnapshot(session.Id, session.Name, session.Date, session.Status);
+                panel = new LanPanelViewModel(CreateParser(), store, () => snapshot);
+
+                Assert.False(panel.HasQrCode);
+                Assert.Null(panel.QrCodeImage);
+                Assert.Null(panel.QrPayload);
+
+                await panel.StartForTestingAsync(IPAddress.Loopback, 0);
+                Assert.True(panel.IsRunning, Describe(panel));
+                Assert.Matches(@"^http://127\.0\.0\.1:\d+$", panel.Url);
+
+                var payload = panel.QrPayload;
+                Assert.NotNull(payload);
+                Assert.Equal(panel.Url.TrimEnd('/') + "/#pin=" + panel.Pin, payload);
+                var payloadUri = new Uri(payload!);
+                Assert.Equal(string.Empty, payloadUri.Query);
+                Assert.Equal("pin=" + panel.Pin, payloadUri.Fragment.TrimStart('#'));
+                Assert.True(panel.HasQrCode);
+
+                var image = Assert.IsAssignableFrom<BitmapImage>(panel.QrCodeImage);
+                Assert.True(image.IsFrozen);
+                Assert.True(image.PixelWidth > 0 && image.PixelHeight > 0);
+
+                await panel.StopAsync();
+                Assert.False(panel.IsRunning, Describe(panel));
+                Assert.Equal(string.Empty, panel.Url);
+                Assert.Equal(string.Empty, panel.Pin);
+                Assert.False(panel.HasQrCode);
+                Assert.Null(panel.QrCodeImage);
+                Assert.Null(panel.QrPayload);
+                await WaitForConnectionRefusedAsync(payloadUri.Port, TimeSpan.FromSeconds(8));
+            }
+            finally
+            {
+                if (panel is not null)
+                {
+                    await panel.DisposeAsync();
+                }
+
+                await CleanupStoreAsync(store, root);
+            }
+        });
+    }
+
+    [Fact]
+    public void RotatePinRebuildsPayloadAndFrozenImageWithoutOldPinOrPairToken()
+    {
+        RunOnUiThread(async () =>
+        {
+            var root = NewRoot("lan-panel-qr-rotate");
+            NativeStore? store = null;
+            LanPanelViewModel? panel = null;
+            try
+            {
+                store = new NativeStore(Path.Combine(root, "data", "ham_checkin_native.db"));
+                await store.InitializeAsync();
+                var session = await store.GetOrCreateFirstSessionAsync(new DateOnly(2026, 11, 25));
+                var snapshot = new LanSessionSnapshot(session.Id, session.Name, session.Date, session.Status);
+                panel = new LanPanelViewModel(CreateParser(), store, () => snapshot);
+
+                await panel.StartForTestingAsync(IPAddress.Loopback, 0);
+                Assert.True(panel.IsRunning, Describe(panel));
+                var oldPin = panel.Pin;
+                var oldPayload = panel.QrPayload;
+                Assert.NotNull(oldPayload);
+                var oldImage = Assert.IsAssignableFrom<BitmapImage>(panel.QrCodeImage);
+
+                string token;
+                using (var http = new HttpClient
+                {
+                    BaseAddress = new Uri(panel.Url),
+                    Timeout = TimeSpan.FromSeconds(15)
+                })
+                {
+                    token = await PairAsync(http, oldPin);
+                }
+
+                Assert.DoesNotContain(token, oldPayload!, StringComparison.Ordinal);
+
+                panel.RotatePin();
+                for (var attempt = 0; attempt < 3 && string.Equals(panel.Pin, oldPin, StringComparison.Ordinal); attempt++)
+                {
+                    panel.RotatePin();
+                }
+
+                Assert.True(panel.IsRunning, Describe(panel));
+                Assert.NotEqual(oldPin, panel.Pin);
+                Assert.Matches(@"^\d{6}$", panel.Pin);
+
+                var newPayload = panel.QrPayload;
+                Assert.NotNull(newPayload);
+                Assert.Equal(panel.Url.TrimEnd('/') + "/#pin=" + panel.Pin, newPayload);
+                Assert.Contains("#pin=" + panel.Pin, newPayload!, StringComparison.Ordinal);
+                Assert.DoesNotContain(oldPin, newPayload!, StringComparison.Ordinal);
+                Assert.DoesNotContain(token, newPayload!, StringComparison.Ordinal);
+                Assert.False(string.Equals(oldPayload, newPayload, StringComparison.Ordinal));
+
+                var newImage = Assert.IsAssignableFrom<BitmapImage>(panel.QrCodeImage);
+                Assert.NotSame(oldImage, newImage);
+                Assert.True(newImage.IsFrozen);
+                Assert.NotEqual(Fingerprint(oldImage), Fingerprint(newImage));
+            }
+            finally
+            {
+                if (panel is not null)
+                {
+                    await panel.DisposeAsync();
+                }
+
+                await CleanupStoreAsync(store, root);
+            }
+        });
+    }
+
+    [Fact]
+    public void MobilePageHashPrefillsPinWithoutPairingOrSubmittingAutomatically()
+    {
+        // 静态契约：仓库没有 JS 运行器，只检查手机页源码中的片段读取顺序。
+        var script = ReadLanAsset("HamCheckin.Native.LanServer.Assets.app.js");
+
+        Assert.Contains("function pinFromHash(hash)", script, StringComparison.Ordinal);
+        Assert.Contains("/^#pin=(\\d{1,6})$/.exec(hash || '')", script, StringComparison.Ordinal);
+        Assert.Equal(1, CountOccurrences(script, "pinFromHash(location.hash)"));
+        Assert.Contains("const hashPin = pinFromHash(location.hash);", script, StringComparison.Ordinal);
+        Assert.Contains("dom.pin.value = hashPin;", script, StringComparison.Ordinal);
+
+        var hashIndex = script.IndexOf(
+            "const hashPin = pinFromHash(location.hash);", StringComparison.Ordinal);
+        var pairListenerIndex = script.IndexOf(
+            "dom.pairForm.addEventListener('submit', onPairSubmit);",
+            hashIndex,
+            StringComparison.Ordinal);
+        Assert.True(pairListenerIndex > hashIndex, "hash 预填之后应注册显式配对表单监听。");
+
+        var prefillBlock = script[hashIndex..pairListenerIndex];
+        Assert.Contains("dom.pin.value = hashPin;", prefillBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("onPairSubmit", prefillBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("onSubmit", prefillBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("/api/pair", prefillBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("/api/submissions", prefillBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain(".click()", prefillBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("dispatchEvent", prefillBlock, StringComparison.Ordinal);
+
+        // 片段只用于本地预填；手机仍停在配对页等待显式点击“连接”。
+        Assert.Contains("showView('pair');", script, StringComparison.Ordinal);
+        Assert.Contains("dom.pin.focus();", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void QrImageIsVisibleOnlyWhileListeningWithAccessibleNamePlaceholderAndPinWarning()
+    {
+        RunOnUiThread(async () =>
+        {
+            var root = NewRoot("lan-panel-qr-view");
+            NativeStore? store = null;
+            LanPanelViewModel? panel = null;
+            MainView? view = null;
+            Window? window = null;
+            try
+            {
+                store = new NativeStore(Path.Combine(root, "data", "ham_checkin_native.db"));
+                await store.InitializeAsync();
+                var session = await store.GetOrCreateFirstSessionAsync(new DateOnly(2026, 11, 25));
+                var snapshot = new LanSessionSnapshot(session.Id, session.Name, session.Date, session.Status);
+                panel = new LanPanelViewModel(CreateParser(), store, () => snapshot);
+
+                view = new MainView { DataContext = new LanQrPanelHost(panel) };
+                window = new Window
+                {
+                    Width = 1_440,
+                    Height = 900,
+                    WindowStyle = WindowStyle.None,
+                    ShowInTaskbar = false,
+                    Content = view
+                };
+
+                window.Show();
+                view.ShowPage("Lan");
+                window.UpdateLayout();
+                view.UpdateLayout();
+
+                var lanPage = (Grid)view.FindName("LanPage")!;
+                Assert.Equal(Visibility.Visible, lanPage.Visibility);
+
+                var qrBorder = FindByAutomationId<Border>(lanPage, "lan-qr");
+                Assert.Equal("手机连接二维码", AutomationProperties.GetName(qrBorder));
+
+                var qrImage = Descendants(lanPage).OfType<Image>()
+                    .Single(image => string.Equals(
+                        AutomationProperties.GetName(image),
+                        "用手机相机扫描此二维码连接电脑",
+                        StringComparison.Ordinal));
+                var placeholder = Descendants(lanPage).OfType<TextBlock>()
+                    .Single(text => string.Equals(
+                        text.Text, "启动服务后显示二维码", StringComparison.Ordinal));
+                var pinWarning = Descendants(lanPage).OfType<TextBlock>()
+                    .Single(text => text.Text.Contains("请勿截图或转发", StringComparison.Ordinal));
+                var prefillHint = Descendants(lanPage).OfType<TextBlock>()
+                    .Single(text => text.Text.Contains("自动填入 PIN", StringComparison.Ordinal));
+                Assert.Contains("PIN", pinWarning.Text, StringComparison.Ordinal);
+                Assert.Contains("仍需在手机上点击", prefillHint.Text, StringComparison.Ordinal);
+
+                Assert.Equal(Visibility.Collapsed, qrImage.Visibility);
+                Assert.Null(qrImage.Source);
+                Assert.Equal(Visibility.Visible, placeholder.Visibility);
+
+                await panel.StartForTestingAsync(IPAddress.Loopback, 0);
+                Assert.True(panel.IsRunning, Describe(panel));
+                PumpUntil(
+                    () => qrImage.Source is not null && qrImage.Visibility == Visibility.Visible,
+                    TimeSpan.FromSeconds(5),
+                    Dispatcher.CurrentDispatcher);
+                window.UpdateLayout();
+                view.UpdateLayout();
+                Assert.Same(panel.QrCodeImage, qrImage.Source);
+                Assert.Equal(Visibility.Collapsed, placeholder.Visibility);
+
+                await panel.StopAsync();
+                PumpUntil(
+                    () => qrImage.Source is null && placeholder.Visibility == Visibility.Visible,
+                    TimeSpan.FromSeconds(5),
+                    Dispatcher.CurrentDispatcher);
+                window.UpdateLayout();
+                view.UpdateLayout();
+                Assert.Equal(Visibility.Collapsed, qrImage.Visibility);
+                Assert.Equal(Visibility.Visible, placeholder.Visibility);
+            }
+            finally
+            {
+                view?.Dispose();
+                window?.Close();
+                if (panel is not null)
+                {
+                    await panel.DisposeAsync();
+                }
+
+                await CleanupStoreAsync(store, root);
+            }
+        });
+    }
+
     private void RunOnUiThread(Func<Task> body)
     {
         ExceptionDispatchInfo? failure = null;
@@ -610,6 +867,36 @@ public sealed class LanPanelUiTests
         }
     }
 
+    private static string Fingerprint(BitmapSource bitmap)
+    {
+        var bytesPerPixel = Math.Max(1, (bitmap.Format.BitsPerPixel + 7) / 8);
+        var stride = bitmap.PixelWidth * bytesPerPixel;
+        var pixels = new byte[stride * bitmap.PixelHeight];
+        bitmap.CopyPixels(pixels, stride, 0);
+        return Convert.ToHexString(SHA256.HashData(pixels));
+    }
+
+    private static string ReadLanAsset(string resourceName)
+    {
+        using var stream = typeof(LanServerHost).Assembly.GetManifestResourceStream(resourceName);
+        Assert.NotNull(stream);
+        using var reader = new StreamReader(stream!);
+        return reader.ReadToEnd();
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
+    }
+
     private static InputParser CreateParser() => new(CatalogLoader.CreateBuiltIn());
 
     private static string NewRoot(string name)
@@ -712,4 +999,12 @@ public sealed class LanPanelUiTests
             }
         }
     }
+}
+
+/// <summary>仅测试用：把真实 LanPanelViewModel 暴露给 MainView 的 LanPanel 绑定。</summary>
+public sealed class LanQrPanelHost
+{
+    public LanQrPanelHost(LanPanelViewModel lanPanel) => LanPanel = lanPanel;
+
+    public LanPanelViewModel LanPanel { get; }
 }

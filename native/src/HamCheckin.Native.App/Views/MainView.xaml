@@ -390,6 +390,45 @@
                                             <TextBlock Text="{Binding LanPanel.PinDisplay}" FontSize="18" FontWeight="Bold" Margin="0,1,0,0" AutomationProperties.AutomationId="lan-pin"/>
                                         </StackPanel>
                                     </Grid>
+                                    <Grid Margin="0,12,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*" MinWidth="0"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Background="White" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="8" VerticalAlignment="Top"
+                                                AutomationProperties.Name="手机连接二维码" AutomationProperties.AutomationId="lan-qr">
+                                            <Grid Width="220" Height="220">
+                                                <Image Source="{Binding LanPanel.QrCodeImage}" Stretch="Uniform" AutomationProperties.Name="用手机相机扫描此二维码连接电脑">
+                                                    <Image.Style>
+                                                        <Style TargetType="Image">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding LanPanel.HasQrCode}" Value="False">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Image.Style>
+                                                </Image>
+                                                <TextBlock Text="启动服务后显示二维码" FontSize="11" Foreground="#666666" TextAlignment="Center" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding LanPanel.HasQrCode}" Value="False">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Grid>
+                                        </Border>
+                                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="用手机相机扫码会打开本页并自动填入 PIN，仍需在手机上点击“连接”完成配对。" FontSize="11" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/>
+                                            <TextBlock Text="二维码包含当前配对 PIN，请勿截图或转发；更换 PIN 后旧二维码立即失效。" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource WarningTextBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </Grid>
                                     <TextBlock Text="{Binding LanPanel.StatusMessage}" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,10,0,0" TextWrapping="Wrap" AutomationProperties.AutomationId="lan-status"/>
                                     <Border Background="{DynamicResource WarningSoftBrush}" CornerRadius="8" Padding="10" Margin="0,10,0,0">
                                         <Border.Style>
