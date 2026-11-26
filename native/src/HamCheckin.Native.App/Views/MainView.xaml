@@ -42,6 +42,9 @@
                     <RadioButton x:Name="RecordingNav" GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Recording" Checked="Nav_Checked" AutomationProperties.Name="录屏和麦克风" AutomationProperties.AutomationId="nav-recording" ToolTip="录屏 / 麦克风">
                         <StackPanel Orientation="Horizontal"><TextBlock Text="●" Width="25"/><TextBlock x:Name="RecordingNavLabel" Text="录屏 / 麦克风"/></StackPanel>
                     </RadioButton>
+                    <RadioButton GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Lan" Checked="Nav_Checked" AutomationProperties.Name="手机收件" AutomationProperties.AutomationId="nav-lan" ToolTip="手机收件">
+                        <StackPanel Orientation="Horizontal"><TextBlock Text="☎" Width="25"/><TextBlock x:Name="LanNavLabel" Text="手机收件"/></StackPanel>
+                    </RadioButton>
                     <RadioButton GroupName="Navigation" Style="{StaticResource NavRadio}" Tag="Settings" Checked="Nav_Checked" AutomationProperties.Name="设置" ToolTip="设置">
                         <StackPanel Orientation="Horizontal"><TextBlock Text="⚙" Width="25"/><TextBlock x:Name="SettingsNavLabel" Text="设置"/></StackPanel>
                     </RadioButton>
@@ -84,10 +87,26 @@
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="0"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <StackPanel>
+                                <!-- 固定预留待确认提示位（26 高 + 8 间距），出现/消失不推动输入框和提交按钮。 -->
+                                <Grid MinHeight="34">
+                                    <Button Click="LanPendingBanner_Click" Focusable="False" HorizontalAlignment="Left" MinHeight="26" Padding="10,2" Margin="0,0,0,8" Background="{DynamicResource WarningSoftBrush}" BorderBrush="{DynamicResource WarningTextBrush}" AutomationProperties.AutomationId="lan-pending-banner" AutomationProperties.Name="手机待确认">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource BaseButton}">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding LanPanel.HasPending}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                        <TextBlock Text="{Binding LanPanel.PendingCount, StringFormat=手机待确认 · {0} 条}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource WarningTextBrush}"/>
+                                    </Button>
+                                </Grid>
                                 <TextBlock Text="快速录入" FontWeight="SemiBold" FontSize="13"/>
                                 <TextBox x:Name="InputBox" Height="50" Margin="0,9,0,0" Style="{StaticResource InputTextBox}" IsEnabled="{Binding IsQuickInputAvailable}" PreviewKeyDown="InputBox_PreviewKeyDown" TextChanged="InputBox_TextChanged" GotKeyboardFocus="InputBox_GotKeyboardFocus" AutomationProperties.Name="快速点名输入" AutomationProperties.AutomationId="quick-input-main"/>
                             </StackPanel>
-                            <Button Grid.Column="1" Margin="12,27,0,20" MinWidth="96" Style="{StaticResource PrimaryButton}" Content="提交  Enter" Command="{Binding SubmitCommand}"/>
+                            <Button Grid.Column="1" Margin="12,61,0,20" MinWidth="96" Style="{StaticResource PrimaryButton}" Content="提交  Enter" Command="{Binding SubmitCommand}"/>
                         </Grid>
                     </Border>
 
@@ -330,6 +349,136 @@
                                     <Border Background="{DynamicResource WarningSoftBrush}" CornerRadius="8" Padding="10" Margin="0,18,0,0">
                                         <TextBlock Text="隐私提示：视频只包含 HAM 点名助手窗口客户区；开始前仍请确认窗口内没有不应记录的账号、密钥或敏感内容。" FontSize="11" Foreground="{DynamicResource WarningTextBrush}" TextWrapping="Wrap"/>
                                     </Border>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+
+                <Grid x:Name="LanPage" Tag="Lan" Visibility="Collapsed" MinWidth="0" ClipToBounds="True">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel MinWidth="0">
+                            <Border Style="{StaticResource CardBorder}" Padding="17" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="手机收件" FontSize="20" FontWeight="Bold"/>
+                                    <TextBlock Text="手机与电脑连接同一私有局域网后，在手机浏览器输入下方地址和 PIN。手机提交只进入内存待确认队列；操作员在本页确认后才写入本场 SQLite 记录。" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                    <TextBlock Text="未加密 HTTP，同网段可嗅探，仅限可信私有局域网" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource WarningTextBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardBorder}" Padding="15" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="局域网服务" FontSize="15" FontWeight="Bold"/>
+                                    <TextBlock Text="默认不启动，也不会随应用自动启动。" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,4,0,0"/>
+                                    <Grid Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="0"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <ComboBox Height="34" ItemsSource="{Binding LanPanel.AddressOptions}" SelectedItem="{Binding LanPanel.SelectedAddress, Mode=TwoWay}" DisplayMemberPath="Display" IsEnabled="{Binding LanPanel.CanStart}" AutomationProperties.Name="监听地址" AutomationProperties.AutomationId="lan-address"/>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
+                                            <Button Style="{StaticResource PrimaryButton}" Content="启动服务" Click="LanStart_Click" IsEnabled="{Binding LanPanel.CanStart}" AutomationProperties.AutomationId="lan-start"/>
+                                            <Button Style="{StaticResource BaseButton}" Content="停止" Click="LanStop_Click" IsEnabled="{Binding LanPanel.CanStop}" Margin="6,0,0,0" AutomationProperties.AutomationId="lan-stop"/>
+                                            <Button Style="{StaticResource BaseButton}" Content="更换 PIN" Click="LanRotatePin_Click" IsEnabled="{Binding LanPanel.CanRotatePin}" Margin="6,0,0,0" AutomationProperties.AutomationId="lan-rotate-pin"/>
+                                        </StackPanel>
+                                    </Grid>
+                                    <Grid Margin="0,12,0,0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="0"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="手机访问地址" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                                            <TextBlock Text="{Binding LanPanel.UrlDisplay}" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" Margin="0,3,0,0" TextWrapping="Wrap" AutomationProperties.AutomationId="lan-url"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Margin="18,0,0,0">
+                                            <TextBlock Text="配对 PIN" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                                            <TextBlock Text="{Binding LanPanel.PinDisplay}" FontSize="18" FontWeight="Bold" Margin="0,1,0,0" AutomationProperties.AutomationId="lan-pin"/>
+                                        </StackPanel>
+                                    </Grid>
+                                    <TextBlock Text="{Binding LanPanel.StatusMessage}" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,10,0,0" TextWrapping="Wrap" AutomationProperties.AutomationId="lan-status"/>
+                                    <Border Background="{DynamicResource WarningSoftBrush}" CornerRadius="8" Padding="10" Margin="0,10,0,0">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding LanPanel.HasError}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding LanPanel.ErrorMessage}" FontSize="11" Foreground="{DynamicResource WarningTextBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="lan-error"/>
+                                    </Border>
+                                    <Border Background="{DynamicResource SurfaceAltBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,10,0,0">
+                                        <TextBlock Text="首次监听时 Windows 防火墙可能询问是否允许访问；请只在可信的私有局域网使用，并选择“专用网络”。本程序不会自动修改防火墙规则，也不做 netsh、UPnP 或端口映射。" FontSize="11" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardBorder}" Padding="15" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="已连接手机" FontSize="15" FontWeight="Bold"/>
+                                    <TextBlock Text="{Binding LanPanel.PhoneSummary}" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,4,0,8"/>
+                                    <ItemsControl ItemsSource="{Binding LanPanel.ConnectedPhones}" AutomationProperties.AutomationId="lan-phones">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,0,0,6">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="0"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding DisplayLabel}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding DetailText}" FontSize="10" Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                    <Button Grid.Column="1" Style="{StaticResource BaseButton}" Content="断开" MinHeight="28" Padding="10,2" Tag="{Binding}" Click="LanRevokePhone_Click" AutomationProperties.AutomationId="lan-revoke"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardBorder}" Padding="15">
+                                <StackPanel>
+                                    <TextBlock Text="待确认提交" FontSize="15" FontWeight="Bold"/>
+                                    <TextBlock Text="手机原文与解析预览如下；点击“确认入册”才会写入 SQLite。Enter 不会确认。" FontSize="11" Foreground="{DynamicResource MutedBrush}" Margin="0,4,0,8" TextWrapping="Wrap"/>
+                                    <Border Background="{DynamicResource SurfaceAltBrush}" CornerRadius="8" Padding="12">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding LanPanel.HasPending}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="暂无待确认的手机提交。服务启动后，手机提交会出现在这里。" FontSize="11" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/>
+                                    </Border>
+                                    <ItemsControl ItemsSource="{Binding LanPanel.PendingItems}" AutomationProperties.AutomationId="lan-pending-list">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Background="{DynamicResource SurfaceAltBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,8">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding HeaderText}" FontSize="10" Foreground="{DynamicResource MutedBrush}"/>
+                                                        <TextBlock Text="{Binding RawText}" FontSize="16" FontWeight="SemiBold" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                                        <TextBlock Text="{Binding ParsedLineOne}" FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                                                        <TextBlock Text="{Binding ParsedLineTwo}" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                                                        <TextBlock Text="{Binding UnmatchedText}" FontSize="11" Foreground="{DynamicResource WarningTextBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                                            <Button Style="{StaticResource PrimaryButton}" Content="{Binding ApproveButtonText}" IsEnabled="{Binding CanDecide}" Click="LanApprove_Click" Tag="{Binding}" AutomationProperties.AutomationId="lan-approve" AutomationProperties.Name="确认入册"/>
+                                                            <Button Style="{StaticResource BaseButton}" Content="拒绝" IsEnabled="{Binding CanDecide}" Click="LanReject_Click" Tag="{Binding}" Margin="6,0,0,0" AutomationProperties.AutomationId="lan-reject" AutomationProperties.Name="拒绝提交"/>
+                                                            <ProgressBar IsIndeterminate="True" Width="70" Height="5" Margin="10,0,0,0" VerticalAlignment="Center">
+                                                                <ProgressBar.Style>
+                                                                    <Style TargetType="ProgressBar">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </ProgressBar.Style>
+                                                            </ProgressBar>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
                                 </StackPanel>
                             </Border>
                         </StackPanel>

@@ -1,6 +1,6 @@
 # 手机内网点名（设计/实现状态）
 
-状态：**分阶段实现中，未发布**。当前仓库包含 S2 服务骨架（Kestrel、配对/令牌、待确认队列、回环测试），尚未接入 WPF「手机收件」页面，也不会自动启动监听。
+状态：**S3 已实现，未发布，未做真实手机/局域网验收**。仓库包含 S2 服务骨架（Kestrel、配对/令牌、待确认队列、回环测试）和 S3 WPF「手机收件」页面（启动/停止、地址选择、PIN/URL、已连接手机、待确认列表、确认/拒绝和快速页待确认提示）；App 已引用 LanServer 并显式引用 `Microsoft.AspNetCore.App` 共享框架。不会自动启动监听；真实手机与局域网联调仍属 S4。
 
 ## 目标
 
@@ -52,12 +52,15 @@ PC 作为唯一数据主机，手机浏览器只负责输入、预览和提交�
 ```text
 native/src/HamCheckin.Native.Core/Lan/        契约、队列、PIN/令牌、限流、批准服务
 native/src/HamCheckin.Native.LanServer/       Kestrel 宿主、端点、内嵌手机页面
+native/src/HamCheckin.Native.App/ViewModels/LanPanelViewModel.cs  「手机收件」页面状态、启动/停止与确认入口
+native/src/HamCheckin.Native.App/Views/MainView.xaml              「手机收件」页面、快速页待确认提示
 native/tests/HamCheckin.Native.Tests/Lan*     回环端点/队列/鉴权/生命周期测试
+native/tests/HamCheckin.Native.UiTests/LanPanelUiTests.cs         WPF 页面与回环 UI 测试
 ```
 
-## 当前未完成
+## 当前状态与未完成
 
-- S3：WPF「手机收件」页面、启动/停止、地址选择、PIN/URL、已连接手机、待确认列表、确认/拒绝和快速页待确认提示。
+- S3 代码已接入：WPF「手机收件」页面、启动/停止、地址选择、PIN/URL、已连接手机、待确认列表、确认/拒绝和快速页待确认提示均由 App→LanServer 实现；真实手机/局域网验收未进行。
 - S4：真实手机/局域网联调、防火墙提示、PC 休眠/切网、二维码（另需依赖决策）和现场验收。
-- 打包说明：S3 接入后 App 会引用 `Microsoft.AspNetCore.App` 共享框架；自包含发布需重新测量体积和运行时前置条件。
+- 打包说明：App 项目已就地声明 `<FrameworkReference Include="Microsoft.AspNetCore.App" />`（WPF 进程内托管 Kestrel），运行时需要 ASP.NET Core 10 共享框架；自包含/单文件发布的体积和运行时前置条件尚未测量。
 - 真实 DPI/移动端浏览器/读屏、Windows 10/11 局域网矩阵仍为 `NOT_RUN`/`NOT_VERIFIED`。

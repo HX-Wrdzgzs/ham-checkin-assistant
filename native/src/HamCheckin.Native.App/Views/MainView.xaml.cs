@@ -98,6 +98,7 @@ public partial class MainView : UserControl, IDisposable
         RecordsNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         CatalogNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         RecordingNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        LanNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         SettingsNavLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         LocalStatusTitle.Text = compact ? "●" : "●  本地录入";
         LocalStatusCard.Padding = compact ? new Thickness(8, 10, 8, 10) : new Thickness(11);
@@ -408,7 +409,7 @@ public partial class MainView : UserControl, IDisposable
 
         var pageChanged = !string.Equals(_lastShownPage, pageName, StringComparison.Ordinal);
         _lastShownPage = pageName;
-        var pages = new[] { QuickPage, RecordsPage, CatalogPage, RecordingPage, SettingsPage };
+        var pages = new[] { QuickPage, RecordsPage, CatalogPage, RecordingPage, LanPage, SettingsPage };
         foreach (var page in pages)
         {
             page.Visibility = string.Equals(page.Tag as string, pageName, StringComparison.Ordinal)
@@ -465,6 +466,51 @@ public partial class MainView : UserControl, IDisposable
     private void SelectNav(string page)
     {
         ShowPage(page);
+    }
+
+    private void LanPendingBanner_Click(object sender, RoutedEventArgs e) => ShowPage("Lan");
+
+    private async void LanStart_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is not null)
+        {
+            await _viewModel.LanPanel.StartAsync();
+        }
+    }
+
+    private async void LanStop_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is not null)
+        {
+            await _viewModel.LanPanel.StopAsync();
+        }
+    }
+
+    private void LanRotatePin_Click(object sender, RoutedEventArgs e) =>
+        _viewModel?.LanPanel.RotatePin();
+
+    private void LanRevokePhone_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: LanPhoneRowViewModel phone })
+        {
+            _viewModel?.LanPanel.RevokePhone(phone);
+        }
+    }
+
+    private async void LanApprove_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel is not null && sender is FrameworkElement { Tag: LanPendingRowViewModel item })
+        {
+            await _viewModel.LanPanel.ApproveAsync(item);
+        }
+    }
+
+    private void LanReject_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: LanPendingRowViewModel item })
+        {
+            _viewModel?.LanPanel.Reject(item);
+        }
     }
 
     private void RefreshRecordingDevices_Click(object sender, RoutedEventArgs e) => RefreshRecordingDevices();

@@ -16,6 +16,8 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
+    <!-- S3 回环测试在进程内启动 Kestrel；该框架引用不会经由 App 项目传递到测试宿主。 -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\..\src\HamCheckin.Native.App\HamCheckin.Native.App.csproj" />
   </ItemGroup>
 </Project>

@@ -22,9 +22,13 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
   <ItemGroup>
+    <!-- S3：App 进程内通过 LanServer 启动 Kestrel；显式引用 ASP.NET Core 共享框架，
+         不依赖项目引用的传递框架引用。 -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Resource Include="Assets\logo-poster.jpg" />
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
     <ProjectReference Include="..\HamCheckin.Native.Core\HamCheckin.Native.Core.csproj" />
+    <ProjectReference Include="..\HamCheckin.Native.LanServer\HamCheckin.Native.LanServer.csproj" />
   </ItemGroup>
 </Project>

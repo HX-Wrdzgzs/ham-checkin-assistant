@@ -11,6 +11,8 @@
 
 - 2026-11-25：加入手机内网点名 S2 服务骨架：Kestrel/LanServer、7 个回环端点、PIN/令牌、内存待确认队列与 PC 批准后才写 SQLite、内嵌手机页；App 尚未引用或自动启动。SDK 10.0.401 Release 构建 0 errors；LAN 66 + Native 308 + UI 64 = 372 passed / 0 failed / 0 skipped。真实 LAN、S3 收件页和手机实测未完成。
 
+- 2026-11-26：接入“手机收件”PC 页面：显式启动/停止私网服务、地址/端口/PIN/URL、已连接手机、待确认列表、逐条确认/拒绝和快速页待确认提示；批准前不写 SQLite，`WriteCommitted` 不显示为已确认，App 运行时包含 `Microsoft.AspNetCore.App`。SDK 10.0.401 Release 构建 0 errors；Native 308 + UI 70 = **378/378 passed**。真实手机/局域网联调、自包含发布体积和现场验收仍未完成。
+
 ### 修复
 
 - 2026-11-22：关于页删除“Windows 原生版 · 快速、离线、键盘优先”副标题；版本、更新渠道和数据位置等内容保留。UI 测试与隔离视觉树断言通过。

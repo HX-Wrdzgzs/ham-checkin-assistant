@@ -7,6 +7,7 @@ using HamCheckin.Native.App.Infrastructure;
 using HamCheckin.Native.Core;
 using HamCheckin.Native.Core.Catalogs;
 using HamCheckin.Native.Core.Export;
+using HamCheckin.Native.Core.Lan;
 using HamCheckin.Native.Core.Memory;
 using HamCheckin.Native.Core.Parsing;
 using HamCheckin.Native.Core.Storage;
@@ -94,6 +95,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _catalogDataRoot = catalogDataRoot;
         ImportLegacyDatabase = importLegacyDatabase;
         _miitSyncService = new MiitCatalogSyncService();
+        LanPanel = new LanPanelViewModel(
+            _parser,
+            store,
+            () => CurrentSessionSnapshot,
+            RefreshAfterLanApprovalAsync);
         _draftService.Changed += DraftService_Changed;
         SubmitCommand = new AsyncRelayCommand(
             SubmitAsync,
@@ -135,6 +141,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public ObservableCollection<QthPackageNode> QthPackages { get; } = new();
     public ObservableCollection<string> QthCandidates { get; } = new();
     public ObservableCollection<CallsignHintChip> CallsignHints { get; } = new();
+    public LanPanelViewModel LanPanel { get; }
 
     public ICommand SubmitCommand { get; }
     public ICommand SearchCatalogCommand { get; }
@@ -183,6 +190,19 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public string UpdateStatus { get => _updateStatus; private set => SetProperty(ref _updateStatus, value); }
     public string DatabasePath { get => _databasePath; private set => SetProperty(ref _databasePath, value); }
     public string CurrentPage { get => _currentPage; set => SetProperty(ref _currentPage, value); }
+
+    /// <summary>手机批准路径在点击时读取的场次快照；不参与解析热路径。</summary>
+    internal LanSessionSnapshot? CurrentSessionSnapshot
+    {
+        get
+        {
+            var session = _session;
+            return session is null
+                ? null
+                : new LanSessionSnapshot(session.Id, session.Name, session.Date, session.Status);
+        }
+    }
+
     public long LastParseMicroseconds { get => _lastParseMicroseconds; private set => SetProperty(ref _lastParseMicroseconds, value); }
     public int NextSequence { get => _nextSequence; private set => SetProperty(ref _nextSequence, value); }
     public bool IsCatalogBusy { get => _isCatalogBusy; private set => SetProperty(ref _isCatalogBusy, value); }
@@ -1441,6 +1461,53 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     // races can be exercised without driving the user's desktop.
     internal Task SubmitForTestingAsync() => SubmitAsync();
 
+    /// <summary>
+    /// 手机提交写入 SQLite 后刷新本场列表。只刷新批准时的目标场次；用户已切换
+    /// 场次时不把旧场次的记录混进当前列表。
+    /// </summary>
+    private async Task RefreshAfterLanApprovalAsync(LanApprovalResult result)
+    {
+        if (_store is null || result.Checkin is null)
+        {
+            return;
+        }
+
+        var sessionId = result.Checkin.SessionId;
+        if (_session?.Id != sessionId)
+        {
+            TaskSummary = "后台已保存手机记录到其他场次";
+            return;
+        }
+
+        var rows = await _store.LoadRecentAsync(sessionId, 300).ConfigureAwait(true);
+        var session = await _store.GetSessionAsync(sessionId).ConfigureAwait(true);
+
+        // await 期间操作员可能已切换场次：保持当前页面，不把列表与会话切回旧场次。
+        if (_session?.Id != sessionId)
+        {
+            TaskSummary = "手机记录已保存到其他场次，本页未刷新";
+            return;
+        }
+
+        Checkins.Clear();
+        foreach (var row in rows)
+        {
+            Checkins.Add(row);
+        }
+        OnPropertyChanged(nameof(RecentCheckins));
+        if (session is not null)
+        {
+            ApplySession(session);
+        }
+        StatusMessage = result.Status switch
+        {
+            LanApprovalStatus.Approved => $"手机提交已确认入册：第 {result.Checkin.SequenceNo} 条",
+            LanApprovalStatus.WriteCommitted =>
+                $"已写入第 {result.Checkin.SequenceNo} 条，但待确认状态未更新，请在“本场记录”中核对",
+            _ => "手机提交状态未确认，请在“本场记录”中核对"
+        };
+    }
+
     private void SearchCatalog()
     {
         CatalogResults.Clear();
@@ -1590,11 +1657,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _callsignMemoryCancellation?.Cancel();
         _callsignMemoryCancellation?.Dispose();
         _callsignMemoryCancellation = null;
+        await LanPanel.DisposeAsync().ConfigureAwait(false);
         if (_store is not null)
         {
-            await _store.DisposeAsync();
+            await _store.DisposeAsync().ConfigureAwait(false);
         }
-        await _miitSyncService.DisposeAsync();
+        await _miitSyncService.DisposeAsync().ConfigureAwait(false);
     }
 
     // SelectedQth* 是应用提示前用户显式选择的 QTH 标记；当时没有选择则为 -1/空。
