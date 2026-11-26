@@ -1,5 +1,13 @@
 # Windows 原生版开发验收记录
 
+## 当前工作树：2026-11-26 手机收件 S2/S3（未发布）
+
+- 实现：Kestrel/LanServer 7 端点、PIN/令牌、内存待确认队列、审批租约与幂等写、内嵌手机页；WPF「手机收件」页（启动/停止、地址/PIN/URL、已连接手机、待确认列表、确认/拒绝、快速页横幅）。默认不启动；批准前不写 SQLite。
+- 构建/测试：.NET SDK 10.0.401；Release `--no-restore` 构建 0 errors；LAN 66/66、Native 308 + UI 70 = **378/378 passed / 0 failed / 0 skipped**；日志 `s3-build.log`、`s3-targeted.log`、`s3-full2.log`、`s2-lan-tests.log`。
+- 隔离界面：`NAT-lan-page-20261126-195854.png`（手机收件页，未启动，端口 8731–8740 无监听）。
+- 未验证：真实手机/局域网、防火墙提示、PC 休眠/切网、自包含单文件体积/ASP.NET Core 运行时前置；这些仍属 S4，`UI NOT VERIFIED`。
+- 边界：未连接真实手机、未访问生产数据/用户配置，未修改防火墙或发布。
+
 ## 当前工作树：2026-11-22 呼号历史提示 S1 与关于页修正（未发布）
 
 - 验证日期：2026-11-22；Windows 11 build 26300 x64；工作树 dirty，未暂存、未提交。
